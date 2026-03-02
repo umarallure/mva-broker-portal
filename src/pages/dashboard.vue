@@ -26,7 +26,6 @@ const isSuperAdmin = computed(() => auth.state.value.profile?.role === 'super_ad
 const isAdmin = computed(() => auth.state.value.profile?.role === 'admin')
 const isAdminOrSuper = computed(() => isSuperAdmin.value || isAdmin.value)
 
-// ── State ──
 const loading = ref(true)
 
 type RetainerRow = {
@@ -52,7 +51,6 @@ const orderCount = ref(0)
 
 const invoices = ref<InvoiceRowWithLawyerName[]>([])
 
-// ── Computed stats ──
 const totalInvoiced = computed(() => invoices.value.reduce((s, i) => s + Number(i.total_amount), 0))
 const pendingInvoiceAmount = computed(() => invoices.value.filter(i => i.status === 'pending').reduce((s, i) => s + Number(i.total_amount), 0))
 const paidInvoiceAmount = computed(() => invoices.value.filter(i => i.status === 'paid').reduce((s, i) => s + Number(i.total_amount), 0))
@@ -65,7 +63,6 @@ const fulfillmentPercent = computed(() => {
   return Math.round((filled / total) * 100)
 })
 
-// ── Helpers ──
 const formatMoney = (n: number) => {
   try {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
@@ -151,7 +148,6 @@ const orderFillPercent = (o: OrderRow) => {
   return Math.round((o.quota_filled / o.quota_total) * 100)
 }
 
-// ── Data loading ──
 const load = async () => {
   loading.value = true
   try {
@@ -159,7 +155,6 @@ const load = async () => {
     const userId = auth.state.value.user?.id ?? null
     const role = auth.state.value.profile?.role ?? null
 
-    // Retainers
     let retainerQb = supabase
       .from('daily_deal_flow')
       .select('id,submission_id,insured_name,client_phone_number,lead_vendor,date,status,assigned_attorney_id,created_at,invoice_id', { count: 'exact' })
@@ -174,14 +169,12 @@ const load = async () => {
     retainers.value = (retainerData ?? []) as RetainerRow[]
     retainerCount.value = rCount ?? 0
 
-    // Orders
     if (userId) {
       const ordersData = await listOrdersForLawyer({ lawyerId: userId })
       orders.value = ordersData.slice(0, 5)
       orderCount.value = ordersData.length
     }
 
-    // Invoices
     const invFilters: { lawyer_id?: string; status?: InvoiceStatus } = {}
     if (role === 'lawyer' && userId) {
       invFilters.lawyer_id = userId

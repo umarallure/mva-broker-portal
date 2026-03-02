@@ -114,7 +114,6 @@ router.beforeEach(async (to, from) => {
     return true
   }
 
-  // Accounts role: can only access invoicing + settlements + settings
   if (isLoggedIn && isAccounts) {
     const allowed = [
       '/invoicing',
