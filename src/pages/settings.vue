@@ -28,7 +28,7 @@ const links = [[{
 }]] satisfies NavigationMenuItem[][]
 
 const showCompletionMeter = computed(() => {
-  return route.path !== '/settings' && route.path.startsWith('/settings/')
+  return route.path.startsWith('/settings/')
 })
 </script>
 

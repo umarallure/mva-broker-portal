@@ -35,7 +35,7 @@ const router = createRouter({
       path: '/settings',
       component: () => import('./pages/settings.vue'),
       children: [
-        { path: '', component: () => import('./pages/settings/index.vue') },
+        { path: '', redirect: '/settings/attorney-profile' },
         { path: 'attorney-profile', component: () => import('./pages/settings/attorney-profile.vue') },
         { path: 'expertise', component: () => import('./pages/settings/expertise.vue') },
         { path: 'capacity', component: () => import('./pages/settings/capacity.vue') }

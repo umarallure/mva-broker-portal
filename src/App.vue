@@ -110,7 +110,7 @@ const links = computed(() => [[
         exact: true,
         onSelect: () => { open.value = false }
       }, {
-        label: 'Capacity & Performance',
+        label: 'Pricing',
         to: '/settings/capacity',
         exact: true,
         onSelect: () => { open.value = false }

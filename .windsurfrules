@@ -1,0 +1,18 @@
+# Lawyer Portal — Windsurf Rules (Orchestrator)
+
+Before executing any coding task, you MUST look inside the `.windsurf/skills/` directory and read the specific `.md` file that applies to the current task. Do not proceed until you have loaded the relevant skill into your context.
+
+## Available Skills
+
+| File | When to load |
+|---|---|
+| `vue-components.md` | Creating or editing any `.vue` Single File Component |
+| `supabase-data.md` | Writing Supabase queries, migrations, or RLS policies |
+| `composables.md` | Creating or consuming a `use*.ts` composable |
+| `typescript-standards.md` | Writing any `.ts` or `.vue` file (always load) |
+| `routing-and-api.md` | Adding pages/routes or Vercel serverless functions |
+| `clean-code-standards.md` | Before implementing features or refactoring (always load) |
+| `testing-and-validation.md` | Before marking any task as complete (always load) |
+| `modular-architecture.md` | When structuring features or creating reusable components |
+
+Load **typescript-standards**, **clean-code-standards**, and **testing-and-validation** for every task — they always apply.
