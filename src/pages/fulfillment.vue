@@ -489,11 +489,6 @@ const onDropToStage = async (targetStage: StageKey) => {
                       <div class="truncate text-sm font-semibold text-highlighted group-hover:text-[var(--ap-accent)] transition-colors">{{ order.clientName }}</div>
                       <div class="mt-0.5 text-[11px] text-muted">{{ order.phone }}</div>
                     </div>
-                    <span
-                      class="inline-flex shrink-0 items-center rounded-md bg-[var(--ap-card-border)] px-1.5 py-0.5 text-[10px] font-semibold text-muted"
-                    >
-                      {{ order.status }}
-                    </span>
                   </div>
 
                   <div class="mt-2 flex items-center justify-between gap-2">

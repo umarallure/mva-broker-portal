@@ -19,6 +19,7 @@ type QualifiedDealRow = {
   submission_id: string | null
   insured_name: string | null
   client_phone_number: string | null
+  state: string | null
   lead_vendor: string | null
   payment_status: string | null
   assigned_attorney_id: string | null
@@ -52,6 +53,7 @@ const viewMode = ref<ViewMode>('kanban')
 const selectedStatus = ref<'all' | InvoiceStatus>('all')
 const filterVendor = ref('')
 const filterAttorney = ref('')
+const filterState = ref<'all' | string>('all')
 const filterDateStart = ref('')
 const filterDueDate = ref<'all' | 'today' | 'yesterday' | 'this_week'>('all')
 
@@ -70,6 +72,45 @@ const qualifiedDeals = ref<QualifiedDealRow[]>([])
 const qualifiedDealCenterIdMap = ref(new Map<string, string>())
 const qualifiedDealVendorNameMap = ref(new Map<string, string>())
 const qualifiedDealLawyerNameMap = ref(new Map<string, string>())
+
+const dealStateMap = ref(new Map<string, string>())
+
+const normalizeState = (v: unknown) => {
+  const s = String(v ?? '').trim().toUpperCase()
+  if (!s) return ''
+  return s.length > 2 ? s.slice(0, 2) : s
+}
+
+const getDealState = (d: { state?: string | null }) => {
+  return normalizeState(d.state ?? '')
+}
+
+const stateOptions = computed(() => {
+  if (isPublisherMode.value) return []
+
+  const states = new Set<string>()
+  qualifiedDeals.value.forEach((d) => {
+    const s = getDealState(d)
+    if (s) states.add(s)
+  })
+
+  invoices.value.forEach((inv) => {
+    const ids = (inv.deal_ids ?? []).map(String)
+    ids.forEach((id) => {
+      const s = normalizeState(dealStateMap.value.get(id) ?? '')
+      if (s) states.add(s)
+    })
+  })
+
+  return ['all', ...Array.from(states).sort((a, b) => a.localeCompare(b))]
+})
+
+const stateSelectItems = computed(() =>
+  stateOptions.value.map((s) => ({
+    label: s === 'all' ? 'All States' : s,
+    value: s
+  }))
+)
 
 const attorneyOptions = computed(() => {
   const names = invoices.value
@@ -104,6 +145,13 @@ const filteredInvoices = computed(() => {
   return invoices.value.filter((inv) => {
     const ds = getDisplayStatus(inv)
     if (selectedStatus.value !== 'all' && ds !== selectedStatus.value) return false
+
+    if (!isPublisherMode.value && filterState.value !== 'all') {
+      const want = normalizeState(filterState.value)
+      const dealIds = (inv.deal_ids ?? []).map(String)
+      const has = dealIds.some((id) => normalizeState(dealStateMap.value.get(id) ?? '') === want)
+      if (!has) return false
+    }
 
     if (filterVendor.value && isPublisherMode.value) {
       const vendorQ = filterVendor.value.trim().toLowerCase()
@@ -153,6 +201,12 @@ const filteredQualifiedDeals = computed(() => {
   const attorneyQ = filterAttorney.value.trim().toLowerCase()
 
   return qualifiedDeals.value.filter((d) => {
+    if (!isPublisherMode.value && filterState.value !== 'all') {
+      const want = normalizeState(filterState.value)
+      const s = getDealState(d)
+      if (s !== want) return false
+    }
+
     if (isPublisherMode.value && vendorQ) {
       const vn = String(d.lead_vendor ?? '').toLowerCase()
       if (!vn.includes(vendorQ)) return false
@@ -362,7 +416,7 @@ const load = async () => {
     // Load Qualified/Payable leads for the Billable (pending) column
     let dealsQb = supabase
       .from('daily_deal_flow')
-      .select('id,submission_id,insured_name,client_phone_number,lead_vendor,payment_status,assigned_attorney_id,invoice_id,publisher_invoice_id,created_at')
+      .select('id,submission_id,insured_name,client_phone_number,state,lead_vendor,payment_status,assigned_attorney_id,invoice_id,publisher_invoice_id,created_at')
       .order('created_at', { ascending: false })
 
     if (filterDateStart.value) {
@@ -456,13 +510,14 @@ const load = async () => {
     if (allDealIds.length) {
       const { data: deals, error: dealsError } = await supabase
         .from('daily_deal_flow')
-        .select('id,insured_name')
+        .select('id,insured_name,state')
         .in('id', allDealIds)
 
       if (dealsError) throw new Error(dealsError.message)
 
-      const dealRows = (deals ?? []) as unknown as Array<{ id: string; insured_name: string | null }>
+      const dealRows = (deals ?? []) as unknown as Array<{ id: string; insured_name: string | null; state: string | null }>
       const nameMap = new Map(dealRows.map((r) => [String(r.id), String(r.insured_name ?? '').trim()]))
+      dealStateMap.value = new Map(dealRows.map((r) => [String(r.id), getDealState(r)]))
 
       data.forEach((inv) => {
         const dealIds = (inv.deal_ids ?? []).map(String)
@@ -473,6 +528,8 @@ const load = async () => {
 
         inv.lead_names = [...new Set(names)].join(' · ')
       })
+    } else {
+      dealStateMap.value = new Map()
     }
 
     if (isPublisherMode.value) {
@@ -553,6 +610,7 @@ watch(isPublisherMode, () => {
   selectedStatus.value = 'all'
   filterVendor.value = ''
   filterAttorney.value = ''
+  filterState.value = 'all'
   load()
 })
 
@@ -661,6 +719,10 @@ watch([selectedStatus], () => {
 })
 
 watch([query, filterVendor, filterAttorney, filterDateStart, filterDueDate], () => {
+  page.value = 1
+})
+
+watch([filterState], () => {
   page.value = 1
 })
 
@@ -832,6 +894,26 @@ watch(pageCount, () => {
               create-item
               class="w-44 [&_input]:rounded-xl [&_input]:border-[var(--ap-card-border)] [&_input]:bg-[var(--ap-card-hover)]"
               placeholder="Filter by attorney..."
+            />
+
+            <USelect
+              v-if="!isPublisherMode"
+              v-model="filterState"
+              :items="stateSelectItems"
+              class="w-44 [&_button]:rounded-xl [&_button]:border-[var(--ap-card-border)] [&_button]:bg-[var(--ap-card-hover)]"
+              value-key="value"
+              label-key="label"
+            />
+
+            <UButton
+              v-if="!isPublisherMode && filterState !== 'all'"
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-x"
+              size="sm"
+              class="rounded-xl"
+              title="Clear state filter"
+              @click="filterState = 'all'"
             />
 
             <UInput
