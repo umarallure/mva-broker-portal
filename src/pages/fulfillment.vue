@@ -36,6 +36,9 @@ const ALL_ORDERS_VALUE = '__ALL__'
 const orders = ref<OrderRow[]>([])
 const leads = ref<FulfillmentOrder[]>([])
 
+const dragLeadId = ref<string | null>(null)
+const dragFromStage = ref<StageKey | null>(null)
+
 const auth = useAuth()
 const router = useRouter()
 
@@ -43,9 +46,18 @@ const totalOrdersCount = ref(0)
 
 const normalize = (v: unknown) => String(v ?? '').trim().toLowerCase()
 
+const stageKeyToLabel = (key: StageKey) => {
+  const found = STAGES.find(s => s.key === key)
+  return found?.label ?? key
+}
+
 const getStatusText = (row: Record<string, unknown>) => {
   const raw = row.status ?? row.retainer_status ?? row.deal_status ?? row.lead_status ?? '—'
-  return String(raw ?? '—')
+  const str = String(raw ?? '—')
+  const normalized = normalize(str)
+  const stageKey = STAGES.find(s => s.key === normalized)?.key
+  if (stageKey) return stageKeyToLabel(stageKey)
+  return str
 }
 
 const getSignedDate = (row: Record<string, unknown>) => {
@@ -245,6 +257,62 @@ const orderOptions = computed(() => {
 const openLead = (lead: FulfillmentOrder) => {
   router.push(`/retainers/${lead.id}`)
 }
+
+const toast = useToast()
+
+const onDragStartLead = (lead: FulfillmentOrder) => {
+  dragLeadId.value = lead.id
+  dragFromStage.value = lead.stage
+}
+
+const onDragEndLead = () => {
+  dragLeadId.value = null
+  dragFromStage.value = null
+}
+
+const onDropToStage = async (targetStage: StageKey) => {
+  const leadId = dragLeadId.value
+  const fromStage = dragFromStage.value
+  if (!leadId || !fromStage) return
+  if (fromStage === targetStage) return
+
+  const idx = leads.value.findIndex(l => l.id === leadId)
+  if (idx < 0) return
+
+  const prevStage = leads.value[idx].stage
+  const prevStatus = leads.value[idx].status
+
+  leads.value[idx] = {
+    ...leads.value[idx],
+    stage: targetStage,
+    status: stageKeyToLabel(targetStage)
+  }
+
+  try {
+    const { error } = await supabase
+      .from('daily_deal_flow')
+      .update({ status: targetStage })
+      .eq('id', leadId)
+
+    if (error) throw error
+  } catch (err) {
+    leads.value[idx] = {
+      ...leads.value[idx],
+      stage: prevStage,
+      status: prevStatus
+    }
+
+    const msg = err instanceof Error ? err.message : 'Unable to update stage'
+    toast.add({
+      title: 'Error',
+      description: msg,
+      icon: 'i-lucide-x',
+      color: 'error'
+    })
+  } finally {
+    onDragEndLead()
+  }
+}
 </script>
 
 <template>
@@ -374,6 +442,8 @@ const openLead = (lead: FulfillmentOrder) => {
               v-for="stage in STAGES"
               :key="stage.key"
               class="flex min-w-0 flex-1 flex-col rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)]"
+              @dragover.prevent
+              @drop.prevent="onDropToStage(stage.key)"
             >
               <div class="flex items-center justify-between border-b border-[var(--ap-card-border)] px-4 py-3">
                 <div class="flex items-center gap-2.5">
@@ -409,6 +479,9 @@ const openLead = (lead: FulfillmentOrder) => {
                   v-for="order in (ordersByStage.get(stage.key) ?? [])"
                   :key="order.id"
                   class="group cursor-pointer rounded-xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-3 transition-all duration-200 hover:border-[var(--ap-accent)]/20 hover:bg-[var(--ap-accent)]/[0.03]"
+                  draggable="true"
+                  @dragstart="onDragStartLead(order)"
+                  @dragend="onDragEndLead"
                   @click="openLead(order)"
                 >
                   <div class="flex items-start justify-between gap-2">
