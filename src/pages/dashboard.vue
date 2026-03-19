@@ -137,7 +137,16 @@ const getFulfillmentRetainerStatusLabel = (status: string | null) => {
   return null
 }
 
+const getOrderDisplayStatus = (order: OrderRow) => {
+  if (order.status === 'OPEN') {
+    return order.quota_filled > 0 ? 'In Progress' : 'Pending'
+  }
+  return order.status
+}
+
 const getOrderStatusColor = (status: string) => {
+  if (status === 'Pending') return 'text-green-400 bg-green-500/10'
+  if (status === 'In Progress') return 'text-amber-400 bg-amber-500/10'
   if (status === 'OPEN') return 'text-[var(--ap-accent)] bg-[var(--ap-accent)]/10'
   if (status === 'FULFILLED') return 'text-green-400 bg-green-500/10'
   return 'text-muted bg-[var(--ap-card-divide)]'
@@ -630,9 +639,9 @@ onMounted(() => {
                 </div>
                 <span
                   class="inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold"
-                  :class="getOrderStatusColor(order.status)"
+                  :class="getOrderStatusColor(getOrderDisplayStatus(order))"
                 >
-                  {{ order.status }}
+                  {{ getOrderDisplayStatus(order) }}
                 </span>
               </div>
 

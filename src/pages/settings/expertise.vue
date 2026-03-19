@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import * as z from 'zod'
-import { computed, onMounted, ref, type Ref } from 'vue'
+import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import type { FormSubmitEvent } from '@nuxt/ui'
 
@@ -8,8 +8,10 @@ import { useAuth } from '../../composables/useAuth'
 import { useAttorneyProfile } from '../../composables/useAttorneyProfile'
 import UnsavedChangesModal from '../../components/settings/UnsavedChangesModal.vue'
 
+const MAX_LICENSED_STATES = 5
+
 const expertiseSchema = z.object({
-  licensedStates: z.array(z.string()).min(1, 'At least one state is required'),
+  licensedStates: z.array(z.string()).min(1, 'At least one state is required').max(MAX_LICENSED_STATES, `You can select a maximum of ${MAX_LICENSED_STATES} states. Please contact your account manager to increase this limit.`),
   primaryCity: z.string().min(2, 'Primary physical location is required'),
   countiesCovered: z.string().optional(),
   federalCourts: z.string().optional(),
@@ -79,6 +81,19 @@ const injuryCategoryOptions = [
   'Burn Injuries',
   'Wrongful Death'
 ]
+
+// Enforce max licensed states - trim back to limit if user somehow exceeds
+watch(() => profile.value.licensedStates, (newVal) => {
+  if (newVal && newVal.length > MAX_LICENSED_STATES) {
+    profile.value.licensedStates = newVal.slice(0, MAX_LICENSED_STATES)
+    toast.add({
+      title: 'State limit reached',
+      description: `You can have a maximum of ${MAX_LICENSED_STATES} states. Please contact your account manager to increase this limit.`,
+      icon: 'i-lucide-alert-triangle',
+      color: 'warning'
+    })
+  }
+}, { deep: true })
 
 onMounted(async () => {
   await auth.init()
@@ -279,7 +294,10 @@ onBeforeRouteLeave((_to, _from, next) => {
         <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
           <div class="min-w-0 flex-1">
             <label class="text-sm font-medium text-highlighted">Licensed States <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Select all states where you are licensed to practice</p>
+            <p class="mt-0.5 text-xs text-muted">Select states where you are licensed to practice (max {{ MAX_LICENSED_STATES }})</p>
+            <p v-if="(profile.licensedStates?.length ?? 0) >= MAX_LICENSED_STATES" class="mt-1.5 text-xs text-amber-500 font-medium">
+              You have reached the maximum of {{ MAX_LICENSED_STATES }} states. To add more states, please contact your account manager.
+            </p>
           </div>
           <div class="w-full sm:w-72">
             <UInputMenu

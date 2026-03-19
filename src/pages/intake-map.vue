@@ -18,6 +18,7 @@ type StateOrders = {
 
 const auth = useAuth()
 const router = useRouter()
+const toast = useToast()
 const loading = ref(false)
 const tooltip = ref({ open: false, x: 0, y: 0, state: null as StateOrders | null, myOrder: null as OrderRow | null, blocked: false })
 const mapRoot = ref<HTMLDivElement | null>(null)
@@ -98,10 +99,75 @@ const getMyOrderBadgeColor = (stateCode: string) => {
 }
 
 const getMyOrderBadgeLabel = (stateCode: string) => {
-  if (hasOpenOrderForStateCode(stateCode)) return hasProgressInOpenOrdersForStateCode(stateCode) ? 'In progress' : 'Open (0% progress)'
+  if (hasOpenOrderForStateCode(stateCode)) return hasProgressInOpenOrdersForStateCode(stateCode) ? 'In Progress' : 'Pending'
   if (hasClosedOrderForStateCode(stateCode)) return 'Fulfilled / Expired'
   return 'No orders'
 }
+
+// Display-friendly status for orders
+const getOrderDisplayStatus = (order: OrderRow) => {
+  if (order.status === 'OPEN') {
+    return order.quota_filled > 0 ? 'In Progress' : 'Pending'
+  }
+  return order.status
+}
+
+// ── Stats ──────────────────────────────────────────────────────────────────
+const allOrders = computed(() => [...myOpenOrders.value, ...myClosedOrders.value])
+const statsTotal = computed(() => allOrders.value.length)
+const statsOpen = computed(() => myOpenOrders.value.length)
+const statsPending = computed(() => myOpenOrders.value.filter(o => (o.quota_filled ?? 0) === 0).length)
+const statsCompleted = computed(() => myClosedOrders.value.filter(o => o.status === 'FULFILLED').length)
+
+// ── Order filters ──────────────────────────────────────────────────────────
+const filterCategory = ref<string>('all')
+const filterState = ref<string>('all')
+const filterExpiry = ref<string>('all')
+
+const orderStateFilterOptions = computed(() => {
+  const codes = new Set<string>()
+  allOrders.value.forEach(o => {
+    ;(o.target_states ?? []).forEach(s => {
+      const code = String(s || '').trim().toUpperCase()
+      if (code) codes.add(code)
+    })
+  })
+  return [
+    { label: 'All states', value: 'all' },
+    ...Array.from(codes).sort().map(c => ({ label: c, value: c }))
+  ]
+})
+
+const filteredOrders = computed(() => {
+  let orders = allOrders.value
+
+  if (filterCategory.value !== 'all') {
+    orders = orders.filter(o => normalizeCaseType(String(o.case_type || '')) === filterCategory.value)
+  }
+
+  if (filterState.value !== 'all') {
+    orders = orders.filter(o =>
+      (o.target_states ?? []).some(s => String(s || '').trim().toUpperCase() === filterState.value)
+    )
+  }
+
+  if (filterExpiry.value !== 'all') {
+    const now = new Date()
+    if (filterExpiry.value === 'no_expiry') {
+      orders = orders.filter(o => new Date(o.expires_at || '').getFullYear() >= 2099)
+    } else {
+      const days = Number(filterExpiry.value)
+      const cutoff = new Date()
+      cutoff.setDate(cutoff.getDate() + days)
+      orders = orders.filter(o => {
+        const exp = new Date(o.expires_at || '')
+        return exp >= now && exp <= cutoff
+      })
+    }
+  }
+
+  return orders
+})
 
 const refreshMyOrders = async () => {
   const userId = auth.state.value.user?.id ?? null
@@ -281,7 +347,7 @@ const orderVerifyError = computed(() => {
 
 const orderForm = ref({
   stateCode: '' as string,
-  caseCategory: 'Motor Vehicle Accident' as string,
+  caseCategory: 'Consumer Cases (MVA)' as string,
   injurySeverity: [] as string[],
   liabilityStatus: 'clear_only' as 'clear_only' | 'disputed_ok',
   insuranceStatus: 'insured_only' as 'insured_only' | 'uninsured_ok',
@@ -289,10 +355,18 @@ const orderForm = ref({
   languages: ['English'] as string[],
   noPriorAttorney: true as boolean,
   quotaTotal: 0 as number,
-  expiresInDays: 7 as 7 | 14 | 30 | 60
+  expiresInDays: 30 as number
 })
 
 const createOrderSubmitting = ref(false)
+
+// Auto-adjust quota when switching category (Commercial max is 1)
+watch(() => orderForm.value.caseCategory, (newCat) => {
+  const max = newCat === 'Commercial Cases' ? 1 : 5
+  if (orderForm.value.quotaTotal > max) {
+    orderForm.value.quotaTotal = max
+  }
+})
 
 const selectedStateName = computed(() => {
   const code = String(orderForm.value.stateCode || '').trim().toUpperCase()
@@ -300,20 +374,114 @@ const selectedStateName = computed(() => {
   return US_STATES.find(s => s.code === code)?.name ?? code
 })
 
+const maxQuotaForCategory = computed(() => {
+  return orderForm.value.caseCategory === 'Commercial Cases' ? 1 : 5
+})
+
 const quotaError = computed(() => {
   const raw = Number(orderForm.value.quotaTotal)
-  if (!Number.isFinite(raw) || raw <= 5) return null
+  const max = maxQuotaForCategory.value
+  if (!Number.isFinite(raw) || raw <= max) return null
 
   const stateCode = String(orderForm.value.stateCode || '').trim().toUpperCase()
   if (!stateCode) return 'Select a state for placing this order.'
 
-  return `Maximum 5 cases are allowed per order in ${selectedStateName.value}. Please reduce your quota to 5 or less.`
+  if (max === 1) {
+    return `Commercial Cases allow only 1 case per order. Please set quota to 1.`
+  }
+  return `Maximum ${max} cases are allowed per order in ${selectedStateName.value}. Please reduce your quota to ${max} or less.`
+})
+
+// Normalize legacy case type names to current category names
+const normalizeCaseType = (caseType: string): string => {
+  const t = caseType.trim().toLowerCase()
+  if (t.includes('motor vehicle') || t.includes('mva') || t.includes('consumer')) {
+    return 'Consumer Cases (MVA)'
+  }
+  if (t.includes('commercial')) {
+    return 'Commercial Cases'
+  }
+  return caseType.trim()
+}
+
+// Compute which case categories the attorney already has in the selected state (normalized)
+const existingCaseTypesForSelectedState = computed(() => {
+  const stateCode = String(orderForm.value.stateCode || '').trim().toUpperCase()
+  if (!stateCode) return new Set<string>()
+  const types = new Set<string>()
+  myOpenOrders.value.forEach((o) => {
+    const matchesState = (o.target_states ?? []).some(
+      (s) => String(s || '').trim().toUpperCase() === stateCode
+    )
+    if (matchesState) types.add(normalizeCaseType(String(o.case_type || '')))
+  })
+  return types
+})
+
+// Count how many open orders the attorney has in the selected state
+const openOrderCountForSelectedState = computed(() => {
+  const stateCode = String(orderForm.value.stateCode || '').trim().toUpperCase()
+  if (!stateCode) return 0
+  return myOpenOrders.value.filter((o) =>
+    (o.target_states ?? []).some((s) => String(s || '').trim().toUpperCase() === stateCode)
+  ).length
+})
+
+// Validation: prevent duplicate case type in same state
+const duplicateCaseTypeError = computed(() => {
+  const stateCode = String(orderForm.value.stateCode || '').trim().toUpperCase()
+  if (!stateCode) return null
+  const caseType = String(orderForm.value.caseCategory || '').trim()
+  if (!caseType) return null
+
+  if (existingCaseTypesForSelectedState.value.has(caseType)) {
+    return `A "${caseType}" order is already open in ${selectedStateName.value}. Please select another case category to create an order.`
+  }
+  return null
+})
+
+// Validation: max 2 orders per state (one per case category)
+const maxOrdersPerStateError = computed(() => {
+  const stateCode = String(orderForm.value.stateCode || '').trim().toUpperCase()
+  if (!stateCode) return null
+
+  if (openOrderCountForSelectedState.value >= 2) {
+    return `You already have 2 orders in ${selectedStateName.value} (maximum allowed). You cannot create more orders in this state.`
+  }
+  return null
+})
+
+// Validation: 5-state ordering limit (new state only)
+const maxOrderStatesError = computed(() => {
+  const stateCode = String(orderForm.value.stateCode || '').trim().toUpperCase()
+  if (!stateCode) return null
+  if (!canOrderInState(stateCode)) {
+    return `You already have active orders in ${MAX_ORDER_STATES} states (the maximum allowed). To place orders in a new state, please close or wait for existing orders to expire, or contact your account manager.`
+  }
+  return null
+})
+
+// Combined order validation error
+const orderValidationError = computed(() => {
+  return maxOrderStatesError.value || maxOrdersPerStateError.value || duplicateCaseTypeError.value || quotaError.value || null
+})
+
+// Show toast whenever a validation error becomes active
+watch(orderValidationError, (err) => {
+  if (err) {
+    toast.add({
+      title: 'Order restriction',
+      description: err,
+      icon: 'i-lucide-alert-triangle',
+      color: 'error'
+    })
+  }
 })
 
 const resetOrderForm = () => {
   orderForm.value = {
     stateCode: '',
-    caseCategory: 'Motor Vehicle Accident',
+    caseCategory: 'Consumer Cases (MVA)',
     injurySeverity: [],
     liabilityStatus: 'clear_only',
     insuranceStatus: 'insured_only',
@@ -321,7 +489,7 @@ const resetOrderForm = () => {
     languages: ['English'],
     noPriorAttorney: true,
     quotaTotal: 0,
-    expiresInDays: 7
+    expiresInDays: 30
   }
 }
 
@@ -363,20 +531,19 @@ const goToCreateOrderStep2 = () => {
 const injurySeverityOptions = [
   { label: 'Minor', value: 'minor' },
   { label: 'Moderate', value: 'moderate' },
-  { label: 'Severe', value: 'severe' },
-  { label: 'Catastrophic', value: 'catastrophic' }
+  { label: 'Severe', value: 'severe' }
 ]
 
 const caseCategoryOptions = [
-  { label: 'MVA', value: 'Motor Vehicle Accident' },
-  { label: 'Commercial injury', value: 'Commercial injury' },
+  { label: 'Consumer Cases (MVA)', value: 'Consumer Cases (MVA)' },
+  { label: 'Commercial Cases', value: 'Commercial Cases' },
 ]
 
 const expirationOptions = [
-  { label: 'In 7 days', value: 7 },
-  { label: 'In 14 days', value: 14 },
   { label: 'In 30 days', value: 30 },
-  { label: 'In 60 days', value: 60 }
+  { label: 'In 60 days', value: 60 },
+  { label: 'In 90 days', value: 90 },
+  { label: 'No expiration date', value: 0 }
 ]
 
 const liabilityOptions = [
@@ -396,8 +563,7 @@ const medicalTreatmentOptions = [
 ]
 
 const languageOptions = [
-  'English',
-  'Spanish'
+  'English'
 ]
 
 const multiSelectUi = {
@@ -406,12 +572,58 @@ const multiSelectUi = {
   itemTrailingIcon: 'hidden'
 }
 
+// Count open orders per state for filtering
+const openOrderCountByStateCode = computed(() => {
+  const map = new Map<string, number>()
+  myOpenOrders.value.forEach((o) => {
+    ;(o.target_states ?? []).forEach((s) => {
+      const code = String(s || '').trim().toUpperCase()
+      if (!code) return
+      map.set(code, (map.get(code) ?? 0) + 1)
+    })
+  })
+  return map
+})
+
+// ═══ 5-STATE ORDERING LIMIT ═══
+// Attorney can have open orders in at most 5 distinct states at a time.
+const MAX_ORDER_STATES = 5
+
+// Distinct state codes that currently have at least one open order
+const activeOrderStateCodes = computed(() => {
+  const codes = new Set<string>()
+  myOpenOrders.value.forEach((o) => {
+    ;(o.target_states ?? []).forEach((s) => {
+      const code = String(s || '').trim().toUpperCase()
+      if (code) codes.add(code)
+    })
+  })
+  return codes
+})
+
+const activeOrderStateCount = computed(() => activeOrderStateCodes.value.size)
+const isAtMaxOrderStates = computed(() => activeOrderStateCount.value >= MAX_ORDER_STATES)
+
+// Whether the attorney can place an order in this specific state
+// They can if: the state already has orders (not a new state) OR they haven't hit the 5-state cap
+const canOrderInState = (stateCode: string) => {
+  const code = String(stateCode || '').trim().toUpperCase()
+  if (!code) return false
+  // Already has orders in this state → always allowed (subject to per-state caps)
+  if (activeOrderStateCodes.value.has(code)) return true
+  // New state → only if under 5-state cap
+  return !isAtMaxOrderStates.value
+}
+
 const orderStateOptions = computed(() => {
   return US_STATES
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name))
     .filter((s) => !blockedStateSet.value.has(s.code))
-    .filter((s) => !hasOpenOrderForStateCode(s.code))
+    // Max 2 orders per state (one per case category)
+    .filter((s) => (openOrderCountByStateCode.value.get(s.code) ?? 0) < 2)
+    // 5-state limit: only allow states that already have orders OR if under cap
+    .filter((s) => canOrderInState(s.code))
     .map((s) => ({ label: `${s.name} (${s.code})`, value: s.code }))
 })
 
@@ -422,24 +634,40 @@ const submitCreateOrder = async () => {
   const stateCode = String(orderForm.value.stateCode || '').trim().toUpperCase()
   if (!stateCode) return false
 
-  if (hasOpenOrderForStateCode(stateCode)) return false
+  // Enforce: 5-state ordering limit
+  if (!canOrderInState(stateCode)) return false
+
+  // Enforce: max 2 orders per state
+  if (openOrderCountForSelectedState.value >= 2) return false
+
+  // Enforce: no duplicate case type in same state
+  const caseType = String(orderForm.value.caseCategory || '').trim()
+  if (existingCaseTypesForSelectedState.value.has(caseType)) return false
 
   const quotaTotal = Number(orderForm.value.quotaTotal)
+  const maxQuota = maxQuotaForCategory.value
   if (!Number.isFinite(quotaTotal) || quotaTotal <= 0) return false
-  if (quotaTotal > 5) return false
+  if (quotaTotal > maxQuota) return false
 
   const expiresInDays = Number(orderForm.value.expiresInDays)
-  if (![7, 14, 30, 60].includes(expiresInDays)) return false
+  if (![0, 30, 60, 90].includes(expiresInDays)) return false
 
-  const expiresAt = new Date()
-  expiresAt.setDate(expiresAt.getDate() + expiresInDays)
+  // If 0 (no expiration), set a far-future date
+  let expiresAt: string
+  if (expiresInDays === 0) {
+    expiresAt = new Date('2099-12-31T23:59:59.999Z').toISOString()
+  } else {
+    const d = new Date()
+    d.setDate(d.getDate() + expiresInDays)
+    expiresAt = d.toISOString()
+  }
 
   await createOrder({
     lawyer_id: userId,
     target_states: [stateCode],
-    case_type: String(orderForm.value.caseCategory || '').trim(),
+    case_type: caseType,
     quota_total: Math.round(quotaTotal),
-    expires_at: expiresAt.toISOString(),
+    expires_at: expiresAt,
     criteria: {
       injury_severity: orderForm.value.injurySeverity,
       liability_status: orderForm.value.liabilityStatus,
@@ -462,12 +690,35 @@ const submitCreateOrder = async () => {
 
 const handleCreateOrderSubmit = async (close: () => void) => {
   if (createOrderSubmitting.value) return
-  if (quotaError.value) return
+  if (orderValidationError.value) {
+    toast.add({
+      title: 'Order restriction',
+      description: orderValidationError.value,
+      icon: 'i-lucide-alert-triangle',
+      color: 'error'
+    })
+    return
+  }
 
   createOrderSubmitting.value = true
   try {
     const created = await submitCreateOrder()
-    if (created) close()
+    if (created) {
+      toast.add({
+        title: 'Order created',
+        description: 'Your order has been placed successfully.',
+        icon: 'i-lucide-check-circle',
+        color: 'success'
+      })
+      close()
+    }
+  } catch (err) {
+    toast.add({
+      title: 'Failed to create order',
+      description: err instanceof Error ? err.message : 'An unexpected error occurred.',
+      icon: 'i-lucide-x-circle',
+      color: 'error'
+    })
   } finally {
     createOrderSubmitting.value = false
   }
@@ -673,11 +924,22 @@ const handleStateClick = (evt: Event) => {
 
   if (blockedStateSet.value.has(normalizedCode)) return
 
-  const existing = myOrderByStateCode.value.get(normalizedCode) ?? null
-  if (existing) {
-    router.push(`/orders/${existing.id}`)
+  const stateOrders = openOrdersForStateCode(normalizedCode)
+
+  // If state has 2 orders (max per state), navigate to the first one
+  if (stateOrders.length >= 2) {
+    router.push(`/orders/${stateOrders[0].id}?state=${normalizedCode}`)
     return
   }
+
+  // If state has 1 order — navigate to it (user can use Create Order for 2nd)
+  if (stateOrders.length === 1) {
+    router.push(`/orders/${stateOrders[0].id}?state=${normalizedCode}`)
+    return
+  }
+
+  // No orders in this state — check 5-state limit
+  if (!canOrderInState(normalizedCode)) return
 
   openCreateOrderForState(state.code)
 }
@@ -785,7 +1047,7 @@ watch(myClosedOrders, () => {
 <template>
   <UDashboardPanel id="intake-map">
     <template #header>
-      <UDashboardNavbar title="Intake Map">
+      <UDashboardNavbar title="Order Map">
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
@@ -824,6 +1086,28 @@ watch(myClosedOrders, () => {
                 Create Order
               </UButton>
             </span>
+          </UTooltip>
+          <UTooltip v-else-if="isAtMaxOrderStates && orderStateOptions.length === 0" :text="`You have active orders in ${activeOrderStateCount} states (max ${MAX_ORDER_STATES}) and all are at full capacity. Contact your account manager to increase your state limit.`">
+            <span class="inline-flex opacity-50 cursor-not-allowed">
+              <UButton
+                color="primary"
+                variant="solid"
+                icon="i-lucide-plus"
+                disabled
+              >
+                Create Order
+              </UButton>
+            </span>
+          </UTooltip>
+          <UTooltip v-else-if="isAtMaxOrderStates && orderStateOptions.length > 0" :text="`State limit reached (${activeOrderStateCount}/${MAX_ORDER_STATES}). You can only add orders in your existing states.`">
+            <UButton
+              color="primary"
+              variant="solid"
+              icon="i-lucide-plus"
+              @click="openCreateOrder"
+            >
+              Create Order
+            </UButton>
           </UTooltip>
           <UButton
             v-else
@@ -877,7 +1161,7 @@ watch(myClosedOrders, () => {
               <div>
                 <p class="text-lg font-semibold text-highlighted">Locked until Onboarding is Completed</p>
                 <p class="mt-2 text-sm text-muted">
-                  This page is currently locked. Please complete your onboarding process to access the Intake Map.
+                  This page is currently locked. Please complete your onboarding process to access the Order Map.
                 </p>
                 <p class="mt-4 text-sm text-muted">
                   Schedule a meeting with your account manager to complete onboarding:
@@ -899,6 +1183,35 @@ watch(myClosedOrders, () => {
             </div>
           </div>
         </div>
+        <!-- ═══ 5-State Limit Banner ═══ -->
+        <div
+          v-if="isAtMaxOrderStates && !isAccountInactive"
+          class="flex items-center gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] px-5 py-3.5"
+        >
+          <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/10">
+            <UIcon name="i-lucide-alert-triangle" class="text-base text-amber-400" />
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-semibold text-highlighted">
+              Order state limit reached
+            </p>
+            <p class="mt-0.5 text-xs text-muted">
+              You have active orders in <span class="font-semibold text-amber-400">{{ activeOrderStateCount }}/{{ MAX_ORDER_STATES }}</span> states — the maximum allowed.
+              New orders cannot be placed until existing orders expire or are fulfilled.
+              To increase your state limit, please contact your account manager.
+            </p>
+          </div>
+          <div class="shrink-0 text-right">
+            <div class="flex items-center gap-1.5">
+              <template v-for="code in [...activeOrderStateCodes].slice(0, 5)" :key="code">
+                <span class="inline-flex items-center rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold text-amber-400">
+                  {{ code }}
+                </span>
+              </template>
+            </div>
+          </div>
+        </div>
+
         <UAlert
           v-if="blockMode"
           color="neutral"
@@ -910,7 +1223,7 @@ watch(myClosedOrders, () => {
         <UModal
           v-if="createOrderOpen"
           :open="true"
-          title="Create Intake Order"
+          title="Create Order"
           :dismissible="false"
           :ui="{ content: 'sm:max-w-4xl', body: 'p-0' }"
           @update:open="handleCreateOrderOpenUpdate"
@@ -976,14 +1289,6 @@ watch(myClosedOrders, () => {
               </div>
 
               <div v-else class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-                <UAlert
-                  v-if="quotaError"
-                  color="error"
-                  variant="subtle"
-                  title="Quota limit"
-                  :description="quotaError"
-                  class="mb-4"
-                />
 
                 <div class="grid gap-4 sm:grid-cols-2">
                   <UFormField label="State" required>
@@ -1104,10 +1409,10 @@ watch(myClosedOrders, () => {
                       v-model.number="orderForm.quotaTotal"
                       type="number"
                       min="1"
-                      max="5"
+                      :max="maxQuotaForCategory"
                     />
                     <div class="mt-1 text-xs text-muted">
-                      Maximum 5 cases per order.
+                      Maximum {{ maxQuotaForCategory }} {{ maxQuotaForCategory === 1 ? 'case' : 'cases' }} per order for {{ orderForm.caseCategory }}.
                     </div>
                   </UFormField>
 
@@ -1123,7 +1428,7 @@ watch(myClosedOrders, () => {
                           type="radio"
                           name="expiresInDays"
                           class="h-4 w-4"
-                          @change="() => { orderForm.expiresInDays = opt.value as 7 | 14 | 30 | 60 }"
+                          @change="() => { orderForm.expiresInDays = opt.value }"
                         >
                         <span class="text-sm">
                           {{ opt.label }}
@@ -1174,7 +1479,7 @@ watch(myClosedOrders, () => {
                   color="primary"
                   variant="solid"
                   :loading="createOrderSubmitting"
-                  :disabled="createOrderSubmitting || !!quotaError || !String(orderForm.stateCode || '').trim() || Number(orderForm.quotaTotal) <= 0"
+                  :disabled="createOrderSubmitting || !!orderValidationError || !String(orderForm.stateCode || '').trim() || Number(orderForm.quotaTotal) <= 0"
                   @click="async () => { await handleCreateOrderSubmit(close) }"
                 >
                   Create
@@ -1183,21 +1488,6 @@ watch(myClosedOrders, () => {
             </div>
           </template>
         </UModal>
-
-        <!-- ═══ Stat Card ═══ -->
-        <div class="grid gap-4 sm:grid-cols-3">
-          <div class="group overflow-hidden rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5 transition-all duration-300 hover:border-blue-500/30 hover:bg-blue-500/[0.03]">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-muted">My Open Orders (All States)</p>
-                <p class="mt-1.5 text-3xl font-bold text-highlighted">{{ totalOpenOrders }}</p>
-              </div>
-              <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10">
-                <UIcon name="i-lucide-activity" class="text-xl text-blue-400" />
-              </div>
-            </div>
-          </div>
-        </div>
 
         <!-- ═══ Legend & Filter ═══ -->
         <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5">
@@ -1209,7 +1499,18 @@ watch(myClosedOrders, () => {
                 </div>
                 <h3 class="text-sm font-semibold text-highlighted">My order volume by state</h3>
               </div>
-              <USelect v-model="mapFilter" :items="mapFilterOptions" size="sm" />
+              <div class="flex items-center gap-3">
+                <span
+                  class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
+                  :class="isAtMaxOrderStates
+                    ? 'border-amber-500/20 bg-amber-500/10 text-amber-400'
+                    : 'border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] text-muted'"
+                >
+                  <UIcon :name="isAtMaxOrderStates ? 'i-lucide-alert-triangle' : 'i-lucide-map-pin'" class="text-[10px]" />
+                  {{ activeOrderStateCount }}/{{ MAX_ORDER_STATES }} states
+                </span>
+                <USelect v-model="mapFilter" :items="mapFilterOptions" size="sm" />
+              </div>
             </div>
             <div class="grid gap-3 sm:grid-cols-5">
               <div class="flex items-center gap-2">
@@ -1218,11 +1519,11 @@ watch(myClosedOrders, () => {
               </div>
               <div class="flex items-center gap-2">
                 <div class="size-4 rounded-full bg-green-500" />
-                <span class="text-xs text-muted">Open (0% progress)</span>
+                <span class="text-xs text-muted">Pending</span>
               </div>
               <div class="flex items-center gap-2">
                 <div class="size-4 rounded-full bg-yellow-500" />
-                <span class="text-xs text-muted">In progress</span>
+                <span class="text-xs text-muted">In Progress</span>
               </div>
               <div class="flex items-center gap-2">
                 <div class="size-4 rounded-full bg-red-500" />
@@ -1290,42 +1591,141 @@ watch(myClosedOrders, () => {
                   Expires: {{ String(tooltip.myOrder.expires_at || '').slice(0, 10) }}
                 </div>
               </div>
+              <!-- State limit warning for states with no orders -->
+              <div
+                v-if="!tooltip.blocked && tooltip.state.openOrders === 0 && isAtMaxOrderStates"
+                class="mt-2 rounded-lg bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-medium text-amber-400"
+              >
+                Cannot order here — state limit reached ({{ activeOrderStateCount }}/{{ MAX_ORDER_STATES }}). Contact your account manager to increase this limit.
+              </div>
+              <!-- Per-state capacity info for states with orders -->
+              <div
+                v-else-if="!tooltip.blocked && tooltip.state.openOrders >= 2"
+                class="mt-2 rounded-lg bg-blue-500/10 px-2.5 py-1.5 text-[11px] font-medium text-blue-400"
+              >
+                This state is at full capacity (2/2 orders — one per case category).
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- ═══ My Open Orders List ═══ -->
-        <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] overflow-hidden">
-          <!-- Header -->
-          <div class="flex items-center justify-between border-b border-[var(--ap-card-border)] px-5 py-4">
-            <div class="flex items-center gap-3">
-              <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10">
-                <UIcon name="i-lucide-shopping-cart" class="text-sm text-blue-400" />
-              </div>
-              <div>
-                <h3 class="text-sm font-semibold text-highlighted">My Open Orders</h3>
-                <p class="text-[11px] text-muted">Your currently active intake orders</p>
-              </div>
+        <!-- ═══ Stats Cards ═══ -->
+        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-5 py-4">
+            <div class="flex items-center gap-2 mb-2">
+              <UIcon name="i-lucide-layers" class="text-sm text-muted" />
+              <span class="text-[11px] font-semibold uppercase tracking-wider text-muted">Total Orders</span>
             </div>
-            <span class="inline-flex items-center rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] px-3 py-1 text-xs font-semibold text-muted">
-              {{ myOpenOrders.length }} orders
-            </span>
+            <div class="text-2xl font-bold text-highlighted tabular-nums">{{ statsTotal }}</div>
+          </div>
+          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-5 py-4">
+            <div class="flex items-center gap-2 mb-2">
+              <UIcon name="i-lucide-circle-dot" class="text-sm text-blue-400" />
+              <span class="text-[11px] font-semibold uppercase tracking-wider text-muted">Open Orders</span>
+            </div>
+            <div class="text-2xl font-bold text-blue-400 tabular-nums">{{ statsOpen }}</div>
+          </div>
+          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-5 py-4">
+            <div class="flex items-center gap-2 mb-2">
+              <UIcon name="i-lucide-clock" class="text-sm text-green-400" />
+              <span class="text-[11px] font-semibold uppercase tracking-wider text-muted">Pending</span>
+            </div>
+            <div class="text-2xl font-bold text-green-400 tabular-nums">{{ statsPending }}</div>
+          </div>
+          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-5 py-4">
+            <div class="flex items-center gap-2 mb-2">
+              <UIcon name="i-lucide-check-circle" class="text-sm text-amber-400" />
+              <span class="text-[11px] font-semibold uppercase tracking-wider text-muted">Completed</span>
+            </div>
+            <div class="text-2xl font-bold text-amber-400 tabular-nums">{{ statsCompleted }}</div>
+          </div>
+        </div>
+
+        <!-- ═══ Orders Section ═══ -->
+        <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] overflow-hidden">
+          <!-- Header + Filters -->
+          <div class="border-b border-[var(--ap-card-border)] px-5 py-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10">
+                  <UIcon name="i-lucide-shopping-cart" class="text-sm text-blue-400" />
+                </div>
+                <div>
+                  <h3 class="text-sm font-semibold text-highlighted">My Orders</h3>
+                  <p class="text-[11px] text-muted">All your orders — open and closed</p>
+                </div>
+              </div>
+              <span class="inline-flex items-center rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] px-3 py-1 text-xs font-semibold text-muted">
+                {{ filteredOrders.length }} / {{ statsTotal }} orders
+              </span>
+            </div>
+
+            <!-- Filter Row -->
+            <div class="flex flex-wrap items-center gap-2">
+              <!-- Case Category -->
+              <USelect
+                v-model="filterCategory"
+                :items="[
+                  { label: 'All categories', value: 'all' },
+                  { label: 'Consumer Cases (MVA)', value: 'Consumer Cases (MVA)' },
+                  { label: 'Commercial Cases', value: 'Commercial Cases' },
+                ]"
+                value-key="value"
+                label-key="label"
+                size="sm"
+                class="w-48"
+              />
+              <!-- State -->
+              <USelect
+                v-model="filterState"
+                :items="orderStateFilterOptions"
+                value-key="value"
+                label-key="label"
+                size="sm"
+                class="w-36"
+              />
+              <!-- Expiry -->
+              <USelect
+                v-model="filterExpiry"
+                :items="[
+                  { label: 'Any expiry', value: 'all' },
+                  { label: 'Next 30 days', value: '30' },
+                  { label: 'Next 60 days', value: '60' },
+                  { label: 'Next 90 days', value: '90' },
+                  { label: 'No expiry date', value: 'no_expiry' },
+                ]"
+                value-key="value"
+                label-key="label"
+                size="sm"
+                class="w-40"
+              />
+              <!-- Reset -->
+              <UButton
+                v-if="filterCategory !== 'all' || filterState !== 'all' || filterExpiry !== 'all'"
+                icon="i-lucide-x"
+                size="sm"
+                color="neutral"
+                variant="ghost"
+                label="Reset"
+                @click="filterCategory = 'all'; filterState = 'all'; filterExpiry = 'all'"
+              />
+            </div>
           </div>
 
           <!-- Empty -->
-          <div v-if="myOpenOrders.length === 0" class="flex items-center justify-center p-10">
+          <div v-if="filteredOrders.length === 0" class="flex items-center justify-center p-10">
             <div class="text-center">
               <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/10 mb-3">
                 <UIcon name="i-lucide-shopping-cart" class="text-xl text-blue-400/50" />
               </div>
-              <p class="text-sm text-muted">No open orders</p>
+              <p class="text-sm text-muted">No orders match the selected filters</p>
             </div>
           </div>
 
-          <!-- Orders -->
+          <!-- Orders List -->
           <div v-else class="divide-y divide-[var(--ap-card-divide)]">
             <div
-              v-for="order in myOpenOrders"
+              v-for="order in filteredOrders"
               :key="order.id"
               class="group cursor-pointer px-5 py-4 transition-all duration-200 hover:bg-[var(--ap-accent)]/[0.04]"
               @click="router.push(`/orders/${order.id}`)"
@@ -1333,22 +1733,33 @@ watch(myClosedOrders, () => {
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0">
                   <div class="text-sm font-semibold text-highlighted group-hover:text-[var(--ap-accent)] transition-colors">
-                    {{ order.case_type }}
+                    {{ normalizeCaseType(order.case_type || '') }}
                     <span v-if="order.case_subtype" class="text-muted">— {{ order.case_subtype }}</span>
                   </div>
                   <div class="mt-1 text-[11px] text-muted">
-                    States:
-                    {{ (order.target_states || []).map(s => String(s || '').toUpperCase()).join(', ') || '—' }}
+                    States: {{ (order.target_states || []).map(s => String(s || '').toUpperCase()).join(', ') || '—' }}
                   </div>
                 </div>
 
-                <div class="min-w-[170px]">
-                  <div class="flex items-center justify-end gap-2">
+                <div class="min-w-[180px]">
+                  <div class="flex items-center justify-end gap-2 flex-wrap">
+                    <!-- Status badge -->
+                    <span
+                      class="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold"
+                      :class="{
+                        'bg-amber-500/10 text-amber-400': getOrderDisplayStatus(order) === 'In Progress',
+                        'bg-green-500/10 text-green-400': getOrderDisplayStatus(order) === 'Pending',
+                        'bg-blue-500/10 text-blue-400': order.status === 'FULFILLED',
+                        'bg-red-500/10 text-red-400': order.status === 'EXPIRED',
+                      }"
+                    >
+                      {{ order.status === 'FULFILLED' ? 'Completed' : order.status === 'EXPIRED' ? 'Expired' : getOrderDisplayStatus(order) }}
+                    </span>
                     <span class="inline-flex items-center rounded-md bg-blue-500/10 px-2 py-0.5 text-[11px] font-semibold text-blue-400">
                       Quota {{ order.quota_filled }}/{{ order.quota_total }}
                     </span>
                     <span class="inline-flex items-center rounded-md bg-[var(--ap-card-divide)] px-2 py-0.5 text-[11px] font-medium text-muted">
-                      Expires {{ String(order.expires_at || '').slice(0, 10) }}
+                      {{ new Date(order.expires_at || '').getFullYear() >= 2099 ? 'No expiry' : `Expires ${String(order.expires_at || '').slice(0, 10)}` }}
                     </span>
                   </div>
 

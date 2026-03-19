@@ -1,40 +1,88 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../composables/useAuth'
-import type { OrderRow } from '../lib/orders'
+import { listOrdersForLawyer, listOpenOrdersForLawyer, type OrderRow } from '../lib/orders'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuth()
 
-const id = computed(() => route.params.id as string)
+// ── All orders ────────────────────────────────────────────────────────────
+const allOrders = ref<OrderRow[]>([])
+const loadingOrders = ref(false)
 
-const loading = ref(false)
-const error = ref<string | null>(null)
-const order = ref<OrderRow | null>(null)
-
-const quotaTotal = computed(() => Number(order.value?.quota_total ?? 0))
-const quotaFilled = computed(() => Number(order.value?.quota_filled ?? 0))
-const progressPercent = computed(() => {
-  const total = quotaTotal.value
-  const filled = quotaFilled.value
-  if (!Number.isFinite(total) || total <= 0) return 0
-  if (!Number.isFinite(filled) || filled <= 0) return 0
-  return Math.max(0, Math.min(100, Math.round((filled / total) * 100)))
+// ── State filter from query param (e.g. ?state=AR from map click) ──────────
+const stateFilter = computed(() => {
+  const s = route.query.state
+  return s ? String(s).trim().toUpperCase() : null
 })
 
-const statusColor = computed(() => {
-  const s = order.value?.status ?? null
-  if (s === 'OPEN') return 'success'
-  if (s === 'FULFILLED') return 'primary'
+const visibleOrders = computed(() => {
+  if (!stateFilter.value) return allOrders.value
+  return allOrders.value.filter(o =>
+    (o.target_states ?? []).some(s => String(s || '').trim().toUpperCase() === stateFilter.value)
+  )
+})
+
+// ── Selected order ─────────────────────────────────────────────────────────
+const selectedOrderId = ref<string>(route.params.id as string)
+const selectedOrder = computed(() => allOrders.value.find(o => o.id === selectedOrderId.value) ?? null)
+
+// ── Leads/retainers ────────────────────────────────────────────────────────
+type Lead = {
+  id: string
+  clientName: string
+  phone: string
+  state: string
+  date: string
+  status: string
+  signedDate?: string
+}
+
+const leads = ref<Lead[]>([])
+const loadingLeads = ref(false)
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+const normalizeCaseType = (t: string) => {
+  const lower = t.trim().toLowerCase()
+  if (lower.includes('motor vehicle') || lower.includes('mva') || lower.includes('consumer')) return 'Consumer Cases (MVA)'
+  if (lower.includes('commercial')) return 'Commercial Cases'
+  return t.trim()
+}
+
+const displayStatus = (order: OrderRow) => {
+  if (order.status === 'OPEN') return order.quota_filled > 0 ? 'In Progress' : 'Pending'
+  if (order.status === 'FULFILLED') return 'Completed'
+  return order.status
+}
+
+const statusColor = (order: OrderRow) => {
+  const s = displayStatus(order)
+  if (s === 'Pending') return 'success'
+  if (s === 'In Progress') return 'warning'
+  if (s === 'Completed') return 'primary'
   if (s === 'EXPIRED') return 'error'
   return 'neutral'
-})
+}
 
+const progressPercent = (order: OrderRow) => {
+  const total = Number(order.quota_total ?? 0)
+  const filled = Number(order.quota_filled ?? 0)
+  if (!total || total <= 0) return 0
+  return Math.max(0, Math.min(100, Math.round((filled / total) * 100)))
+}
+
+const expiresLabel = (order: OrderRow) => {
+  const d = new Date(order.expires_at || '')
+  if (d.getFullYear() >= 2099) return 'No expiry'
+  return String(order.expires_at || '').slice(0, 10)
+}
+
+// ── Criteria helpers ────────────────────────────────────────────────────────
 const criteria = computed(() => {
-  const raw = order.value?.criteria ?? null
+  const raw = selectedOrder.value?.criteria ?? null
   if (!raw || typeof raw !== 'object') return null
   return raw as Record<string, unknown>
 })
@@ -47,18 +95,9 @@ const toStringArray = (v: unknown) => {
 
 const criteriaLanguages = computed(() => toStringArray(criteria.value?.languages))
 const criteriaInjurySeverities = computed(() => toStringArray(criteria.value?.injury_severity))
-const criteriaLiability = computed(() => {
-  const v = criteria.value?.liability_status
-  return v ? String(v) : null
-})
-const criteriaInsurance = computed(() => {
-  const v = criteria.value?.insurance_status
-  return v ? String(v) : null
-})
-const criteriaMedical = computed(() => {
-  const v = criteria.value?.medical_treatment
-  return v ? String(v) : null
-})
+const criteriaLiability = computed(() => criteria.value?.liability_status ? String(criteria.value.liability_status) : null)
+const criteriaInsurance = computed(() => criteria.value?.insurance_status ? String(criteria.value.insurance_status) : null)
+const criteriaMedical = computed(() => criteria.value?.medical_treatment ? String(criteria.value.medical_treatment) : null)
 const criteriaNoPriorAttorney = computed(() => {
   const v = criteria.value?.no_prior_attorney
   if (typeof v === 'boolean') return v
@@ -66,49 +105,124 @@ const criteriaNoPriorAttorney = computed(() => {
   return null
 })
 
-const headerTitle = computed(() => {
-  if (!order.value) return 'Order details'
-  const states = (order.value.target_states || []).map(s => String(s || '').toUpperCase()).join(', ') || '—'
-  return `Order (${states})`
-})
-
-const load = async () => {
-  loading.value = true
-  error.value = null
-
+// ── Load leads for selected order ───────────────────────────────────────────
+const loadLeads = async (orderId: string) => {
+  if (!orderId) { leads.value = []; return }
+  loadingLeads.value = true
+  leads.value = []
   try {
-    await auth.init()
+    // Step 1: get lead_ids from order_fulfillments
+    const { data: fulfillmentRows, error: fErr } = await supabase
+      .from('order_fulfillments')
+      .select('lead_id')
+      .eq('order_id', orderId)
+      .limit(500)
+    if (fErr) throw fErr
 
-    const userId = auth.state.value.user?.id ?? null
-    const role = auth.state.value.profile?.role ?? null
+    const leadIds = (fulfillmentRows ?? [])
+      .map(r => String((r as { lead_id?: string | null }).lead_id ?? '').trim())
+      .filter(Boolean)
 
-    let qb = supabase
-      .from('orders')
-      .select('id,lawyer_id,target_states,case_type,case_subtype,criteria,quota_total,quota_filled,status,expires_at,created_at')
-      .eq('id', id.value)
+    if (!leadIds.length) return
 
-    if (role === 'lawyer' && userId) {
-      qb = qb.eq('lawyer_id', userId)
-    }
+    // Step 2: get submission_ids from leads
+    const { data: leadsRows, error: lErr } = await supabase
+      .from('leads')
+      .select('id,submission_id')
+      .in('id', leadIds)
+    if (lErr) throw lErr
 
-    const { data, error: supaError } = await qb.maybeSingle()
-    if (supaError) throw supaError
+    const leadIdToSub = new Map<string, string>()
+    ;(leadsRows ?? []).forEach((r: Record<string, unknown>) => {
+      const lid = String(r.id ?? '').trim()
+      const sid = String(r.submission_id ?? '').trim()
+      if (lid && sid) leadIdToSub.set(lid, sid)
+    })
 
-    if (!data) {
-      error.value = 'Order not found'
-      order.value = null
-      return
-    }
+    const submissionIds = [...new Set([...leadIdToSub.values()].filter(Boolean))]
+    if (!submissionIds.length) return
 
-    order.value = data as OrderRow
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Failed to load order'
-    error.value = msg
-    order.value = null
+    // Step 3: get deal details from daily_deal_flow
+    const { data: ddfRows, error: dErr } = await supabase
+      .from('daily_deal_flow')
+      .select('*')
+      .in('submission_id', submissionIds)
+    if (dErr) throw dErr
+
+    const ddfBySub = new Map<string, Record<string, unknown>>()
+    ;(ddfRows ?? []).forEach((r: Record<string, unknown>) => {
+      const sid = String(r.submission_id ?? '').trim()
+      if (sid && !ddfBySub.has(sid)) ddfBySub.set(sid, r)
+    })
+
+    const getSignedDate = (r: Record<string, unknown>) =>
+      r.date_signed ?? r.signed_date ?? r.retainer_signed_date ?? r.retainer_signed_at ?? r.signed_at ?? null
+
+    leads.value = leadIds
+      .map(leadId => {
+        const sid = leadIdToSub.get(leadId)
+        if (!sid) return null
+        const row = ddfBySub.get(sid)
+        if (!row) return null
+        const signed = getSignedDate(row)
+        return {
+          id: String(row.id ?? leadId),
+          clientName: String(row.insured_name ?? row.customer_full_name ?? '—'),
+          phone: String(row.client_phone_number ?? row.phone_number ?? '—'),
+          state: String(row.state ?? row.state_code ?? '—'),
+          date: String(row.date ?? row.created_at ?? '').slice(0, 10) || '—',
+          status: String(row.status ?? row.retainer_status ?? '—'),
+          signedDate: signed ? String(signed).slice(0, 10) : undefined,
+        } as Lead
+      })
+      .filter((x): x is Lead => Boolean(x))
+  } catch {
+    leads.value = []
   } finally {
-    loading.value = false
+    loadingLeads.value = false
   }
 }
+
+// ── Initial load ────────────────────────────────────────────────────────────
+const load = async () => {
+  loadingOrders.value = true
+  try {
+    await auth.init()
+    const userId = auth.state.value.user?.id ?? null
+    if (!userId) return
+
+    const [open, closed] = await Promise.all([
+      listOpenOrdersForLawyer(userId),
+      listOrdersForLawyer({ lawyerId: userId, statuses: ['FULFILLED', 'EXPIRED'] })
+    ])
+    allOrders.value = [...open, ...closed]
+
+    // Default to route param
+    if (!selectedOrderId.value && allOrders.value.length) {
+      selectedOrderId.value = allOrders.value[0].id
+    }
+
+    if (selectedOrderId.value) {
+      await loadLeads(selectedOrderId.value)
+    }
+  } finally {
+    loadingOrders.value = false
+  }
+}
+
+const selectOrder = async (order: OrderRow) => {
+  selectedOrderId.value = order.id
+  const query = stateFilter.value ? { state: stateFilter.value } : {}
+  router.replace({ path: `/orders/${order.id}`, query })
+  await loadLeads(order.id)
+}
+
+watch(() => route.params.id, (newId) => {
+  if (newId && newId !== selectedOrderId.value) {
+    selectedOrderId.value = newId as string
+    loadLeads(newId as string)
+  }
+})
 
 onMounted(load)
 </script>
@@ -116,7 +230,7 @@ onMounted(load)
 <template>
   <UDashboardPanel id="order-details">
     <template #header>
-      <UDashboardNavbar :title="headerTitle">
+      <UDashboardNavbar title="Order Details">
         <template #leading>
           <UButton
             color="neutral"
@@ -124,16 +238,15 @@ onMounted(load)
             icon="i-lucide-arrow-left"
             @click="router.push('/intake-map')"
           >
-            Back
+            Order Map
           </UButton>
         </template>
-
         <template #right>
           <UButton
             color="neutral"
             variant="outline"
             icon="i-lucide-refresh-cw"
-            :loading="loading"
+            :loading="loadingOrders"
             @click="load"
           >
             Refresh
@@ -143,197 +256,248 @@ onMounted(load)
     </template>
 
     <template #body>
-      <UAlert
-        v-if="error"
-        color="error"
-        variant="subtle"
-        title="Unable to load order"
-        :description="error"
-      />
-
-      <div v-else-if="loading" class="flex h-full min-h-64 items-center justify-center">
+      <div v-if="loadingOrders && !allOrders.length" class="flex h-full min-h-64 items-center justify-center">
         <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-dimmed" />
       </div>
 
-      <div v-else-if="order" class="space-y-4">
-        <div class="grid gap-4 lg:grid-cols-3">
-          <UCard class="lg:col-span-2">
-            <div class="flex flex-wrap items-start justify-between gap-4">
-              <div class="min-w-0">
-                <div class="text-sm text-muted">
-                  Case
-                </div>
-                <div class="mt-1 text-xl font-semibold">
-                  {{ order.case_type }}
-                  <span v-if="order.case_subtype" class="text-muted">— {{ order.case_subtype }}</span>
-                </div>
-                <div class="mt-2 flex flex-wrap items-center gap-2">
-                  <UBadge :color="statusColor" variant="subtle" :label="order.status" />
-                  <UBadge color="neutral" variant="subtle" :label="`Expires ${String(order.expires_at || '').slice(0, 10)}`" />
-                  <UBadge color="neutral" variant="subtle" :label="`Created ${String(order.created_at || '').slice(0, 10)}`" />
-                </div>
-              </div>
+      <div v-else class="flex h-full gap-0">
 
-              <div class="min-w-[240px]">
-                <div class="text-sm text-muted">
-                  Target states
-                </div>
-                <div class="mt-1 flex flex-wrap gap-2">
-                  <UBadge
-                    v-for="s in (order.target_states || []).map(x => String(x || '').toUpperCase()).filter(Boolean)"
-                    :key="s"
-                    color="primary"
-                    variant="subtle"
-                    :label="s"
-                  />
-                  <span v-if="(order.target_states || []).length === 0" class="text-sm text-muted">—</span>
-                </div>
+        <!-- ══ Left: Orders List ══ -->
+        <div class="w-72 shrink-0 border-r border-[var(--ap-card-border)] flex flex-col overflow-hidden">
+          <div class="border-b border-[var(--ap-card-border)] px-4 py-3">
+            <div class="flex items-center justify-between">
+              <p class="text-xs font-semibold uppercase tracking-wider text-muted">
+                {{ stateFilter ? `Orders — ${stateFilter}` : 'All Orders' }}
+              </p>
+              <UButton
+                v-if="stateFilter"
+                icon="i-lucide-x"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                @click="router.replace(`/orders/${selectedOrderId}`)"
+              />
+            </div>
+            <p class="mt-0.5 text-[11px] text-muted">{{ visibleOrders.length }} / {{ allOrders.length }}</p>
+          </div>
+
+          <div class="flex-1 overflow-y-auto">
+            <div
+              v-for="order in visibleOrders"
+              :key="order.id"
+              class="cursor-pointer border-b border-[var(--ap-card-border)] px-4 py-3 transition-colors"
+              :class="selectedOrderId === order.id
+                ? 'bg-[var(--ap-accent)]/10 border-l-2 border-l-[var(--ap-accent)]'
+                : 'hover:bg-[var(--ap-card-divide)]'"
+              @click="selectOrder(order)"
+            >
+              <div class="text-xs font-semibold text-highlighted truncate">
+                {{ normalizeCaseType(order.case_type || '') }}
+              </div>
+              <div class="mt-1 text-[11px] text-muted">
+                {{ (order.target_states || []).map(s => String(s).toUpperCase()).join(', ') || '—' }}
+              </div>
+              <div class="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                <span
+                  class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                  :class="{
+                    'bg-green-500/10 text-green-400': displayStatus(order) === 'Pending',
+                    'bg-amber-500/10 text-amber-400': displayStatus(order) === 'In Progress',
+                    'bg-blue-500/10 text-blue-400': displayStatus(order) === 'Completed',
+                    'bg-red-500/10 text-red-400': order.status === 'EXPIRED',
+                  }"
+                >
+                  {{ displayStatus(order) }}
+                </span>
+                <span class="text-[10px] text-muted tabular-nums">{{ order.quota_filled }}/{{ order.quota_total }}</span>
               </div>
             </div>
-          </UCard>
 
-          <UCard>
-            <div class="space-y-3">
-              <div class="text-sm font-medium">
-                Order summary
-              </div>
-
-              <div class="grid gap-3">
-                <div class="flex items-center justify-between">
-                  <div class="text-xs text-muted">
-                    Quota
-                  </div>
-                  <div class="text-sm font-semibold tabular-nums">
-                    {{ quotaFilled }}/{{ quotaTotal }}
-                  </div>
-                </div>
-
-                <div class="h-2 w-full overflow-hidden rounded bg-muted/70 ring-1 ring-inset ring-default">
-                  <div
-                    class="h-full rounded bg-primary transition-all"
-                    :style="{ width: `${progressPercent}%` }"
-                  />
-                </div>
-
-                <div class="flex items-center justify-between">
-                  <div class="text-xs text-muted">
-                    Progress
-                  </div>
-                  <div class="text-sm font-semibold tabular-nums">
-                    {{ progressPercent }}%
-                  </div>
-                </div>
-              </div>
+            <div v-if="!allOrders.length" class="flex flex-col items-center justify-center p-8 text-center">
+              <UIcon name="i-lucide-inbox" class="mb-2 text-2xl text-muted/40" />
+              <p class="text-xs text-muted">No orders yet</p>
             </div>
-          </UCard>
+          </div>
         </div>
 
-        <UCard>
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <div class="text-sm font-medium">
-                Criteria
-              </div>
-              <div class="mt-1 text-xs text-muted">
-                Requirements used to qualify leads for this order.
-              </div>
-            </div>
+        <!-- ══ Right: Order Detail ══ -->
+        <div class="flex-1 min-w-0 overflow-y-auto px-6 py-5 space-y-5">
+          <div v-if="!selectedOrder" class="flex h-full min-h-48 items-center justify-center">
+            <p class="text-sm text-muted">Select an order from the list</p>
           </div>
 
-          <div class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div class="rounded-lg border border-default bg-elevated p-3">
-              <div class="text-xs text-muted">
-                Languages
-              </div>
-              <div class="mt-2 flex flex-wrap gap-2">
-                <UBadge
-                  v-for="l in criteriaLanguages"
-                  :key="l"
-                  color="primary"
-                  variant="subtle"
-                  :label="l"
-                />
-                <span v-if="criteriaLanguages.length === 0" class="text-sm text-muted">—</span>
+          <template v-else>
+            <!-- Header card -->
+            <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5">
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div class="min-w-0">
+                  <div class="text-xs text-muted uppercase tracking-wider">Case Type</div>
+                  <div class="mt-1 text-xl font-bold text-highlighted">
+                    {{ normalizeCaseType(selectedOrder.case_type || '') }}
+                  </div>
+                  <div class="mt-2 flex flex-wrap items-center gap-2">
+                    <UBadge :color="statusColor(selectedOrder)" variant="subtle" :label="displayStatus(selectedOrder)" />
+                    <UBadge color="neutral" variant="subtle" :label="`Expires: ${expiresLabel(selectedOrder)}`" />
+                    <UBadge color="neutral" variant="subtle" :label="`Created: ${String(selectedOrder.created_at || '').slice(0, 10)}`" />
+                  </div>
+                </div>
+
+                <div>
+                  <div class="text-xs text-muted uppercase tracking-wider mb-1">Target States</div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <UBadge
+                      v-for="s in (selectedOrder.target_states || []).map(x => String(x || '').toUpperCase()).filter(Boolean)"
+                      :key="s"
+                      color="primary"
+                      variant="subtle"
+                      :label="s"
+                    />
+                    <span v-if="!(selectedOrder.target_states || []).length" class="text-sm text-muted">—</span>
+                  </div>
+                </div>
+
+                <!-- Quota progress -->
+                <div class="w-full sm:w-56">
+                  <div class="flex items-center justify-between text-xs mb-1.5">
+                    <span class="text-muted">Quota Progress</span>
+                    <span class="font-semibold tabular-nums text-highlighted">{{ selectedOrder.quota_filled }}/{{ selectedOrder.quota_total }}</span>
+                  </div>
+                  <div class="h-2 w-full overflow-hidden rounded-full bg-[var(--ap-card-border)]">
+                    <div
+                      class="h-full rounded-full transition-all"
+                      :class="progressPercent(selectedOrder) >= 100 ? 'bg-green-400' : 'bg-[var(--ap-accent)]'"
+                      :style="{ width: `${progressPercent(selectedOrder)}%` }"
+                    />
+                  </div>
+                  <div class="mt-1 text-right text-[11px] text-muted">{{ progressPercent(selectedOrder) }}%</div>
+                </div>
               </div>
             </div>
 
-            <div class="rounded-lg border border-default bg-elevated p-3">
-              <div class="text-xs text-muted">
-                Injury severity
+            <!-- Criteria -->
+            <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] overflow-hidden">
+              <div class="border-b border-[var(--ap-card-border)] px-5 py-3">
+                <div class="flex items-center gap-2">
+                  <UIcon name="i-lucide-sliders-horizontal" class="text-sm text-muted" />
+                  <span class="text-xs font-semibold uppercase tracking-wider text-muted">Order Criteria</span>
+                </div>
               </div>
-              <div class="mt-2 flex flex-wrap gap-2">
-                <UBadge
-                  v-for="s in criteriaInjurySeverities"
-                  :key="s"
-                  color="warning"
-                  variant="subtle"
-                  :label="s"
-                />
-                <span v-if="criteriaInjurySeverities.length === 0" class="text-sm text-muted">—</span>
-              </div>
-            </div>
-
-            <div class="rounded-lg border border-default bg-elevated p-3">
-              <div class="text-xs text-muted">
-                Liability status
-              </div>
-              <div class="mt-2">
-                <UBadge
-                  v-if="criteriaLiability"
-                  color="neutral"
-                  variant="subtle"
-                  :label="criteriaLiability"
-                />
-                <span v-else class="text-sm text-muted">—</span>
-              </div>
-            </div>
-
-            <div class="rounded-lg border border-default bg-elevated p-3">
-              <div class="text-xs text-muted">
-                Insurance status
-              </div>
-              <div class="mt-2">
-                <UBadge
-                  v-if="criteriaInsurance"
-                  color="neutral"
-                  variant="subtle"
-                  :label="criteriaInsurance"
-                />
-                <span v-else class="text-sm text-muted">—</span>
-              </div>
-            </div>
-
-            <div class="rounded-lg border border-default bg-elevated p-3">
-              <div class="text-xs text-muted">
-                Medical treatment
-              </div>
-              <div class="mt-2">
-                <UBadge
-                  v-if="criteriaMedical"
-                  color="neutral"
-                  variant="subtle"
-                  :label="criteriaMedical"
-                />
-                <span v-else class="text-sm text-muted">—</span>
+              <div class="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
+                  <div class="text-[11px] text-muted mb-1.5">Languages</div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <UBadge v-for="l in criteriaLanguages" :key="l" color="primary" variant="subtle" size="sm" :label="l" />
+                    <span v-if="!criteriaLanguages.length" class="text-xs text-muted">—</span>
+                  </div>
+                </div>
+                <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
+                  <div class="text-[11px] text-muted mb-1.5">Injury Severity</div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <UBadge v-for="s in criteriaInjurySeverities" :key="s" color="warning" variant="subtle" size="sm" :label="s" />
+                    <span v-if="!criteriaInjurySeverities.length" class="text-xs text-muted">—</span>
+                  </div>
+                </div>
+                <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
+                  <div class="text-[11px] text-muted mb-1.5">Liability Status</div>
+                  <UBadge v-if="criteriaLiability" color="neutral" variant="subtle" size="sm" :label="criteriaLiability" />
+                  <span v-else class="text-xs text-muted">—</span>
+                </div>
+                <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
+                  <div class="text-[11px] text-muted mb-1.5">Insurance Status</div>
+                  <UBadge v-if="criteriaInsurance" color="neutral" variant="subtle" size="sm" :label="criteriaInsurance" />
+                  <span v-else class="text-xs text-muted">—</span>
+                </div>
+                <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
+                  <div class="text-[11px] text-muted mb-1.5">Medical Treatment</div>
+                  <UBadge v-if="criteriaMedical" color="neutral" variant="subtle" size="sm" :label="criteriaMedical" />
+                  <span v-else class="text-xs text-muted">—</span>
+                </div>
+                <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
+                  <div class="text-[11px] text-muted mb-1.5">Client Requirements</div>
+                  <UBadge
+                    v-if="criteriaNoPriorAttorney !== null"
+                    :color="criteriaNoPriorAttorney ? 'success' : 'neutral'"
+                    variant="subtle"
+                    size="sm"
+                    :label="criteriaNoPriorAttorney ? 'No prior attorney' : 'Prior attorney allowed'"
+                  />
+                  <span v-else class="text-xs text-muted">—</span>
+                </div>
               </div>
             </div>
 
-            <div class="rounded-lg border border-default bg-elevated p-3">
-              <div class="text-xs text-muted">
-                Client requirements
+            <!-- Leads / Retainers -->
+            <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] overflow-hidden">
+              <div class="flex items-center justify-between border-b border-[var(--ap-card-border)] px-5 py-3">
+                <div class="flex items-center gap-2">
+                  <UIcon name="i-lucide-users" class="text-sm text-[var(--ap-accent)]" />
+                  <span class="text-xs font-semibold uppercase tracking-wider text-muted">Leads / Retainers</span>
+                </div>
+                <span class="inline-flex items-center rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] px-2.5 py-1 text-[11px] font-semibold text-muted">
+                  {{ leads.length }} assigned
+                </span>
               </div>
-              <div class="mt-2">
-                <UBadge
-                  v-if="criteriaNoPriorAttorney !== null"
-                  :color="criteriaNoPriorAttorney ? 'success' : 'neutral'"
-                  variant="subtle"
-                  :label="criteriaNoPriorAttorney ? 'No prior attorney' : 'Prior attorney allowed'"
-                />
-                <span v-else class="text-sm text-muted">—</span>
+
+              <!-- Loading -->
+              <div v-if="loadingLeads" class="flex items-center justify-center p-8">
+                <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin text-dimmed" />
+              </div>
+
+              <!-- Empty -->
+              <div v-else-if="!leads.length" class="flex flex-col items-center justify-center p-8 text-center">
+                <div class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--ap-accent)]/10">
+                  <UIcon name="i-lucide-users" class="text-lg text-[var(--ap-accent)]/50" />
+                </div>
+                <p class="text-sm text-muted">No leads assigned to this order yet</p>
+              </div>
+
+              <!-- Table -->
+              <div v-else class="overflow-x-auto">
+                <table class="w-full text-xs">
+                  <thead>
+                    <tr class="border-b border-[var(--ap-card-border)]">
+                      <th class="px-4 py-2.5 text-left font-semibold text-muted uppercase tracking-wider">Client</th>
+                      <th class="px-4 py-2.5 text-left font-semibold text-muted uppercase tracking-wider">Phone</th>
+                      <th class="px-4 py-2.5 text-left font-semibold text-muted uppercase tracking-wider">State</th>
+                      <th class="px-4 py-2.5 text-left font-semibold text-muted uppercase tracking-wider">Date</th>
+                      <th class="px-4 py-2.5 text-left font-semibold text-muted uppercase tracking-wider">Status</th>
+                      <th class="px-4 py-2.5 text-left font-semibold text-muted uppercase tracking-wider">Signed</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-[var(--ap-card-divide)]">
+                    <tr
+                      v-for="lead in leads"
+                      :key="lead.id"
+                      class="transition-colors hover:bg-[var(--ap-card-divide)]"
+                    >
+                      <td class="px-4 py-3 font-medium text-highlighted">{{ lead.clientName }}</td>
+                      <td class="px-4 py-3 text-muted tabular-nums">{{ lead.phone }}</td>
+                      <td class="px-4 py-3">
+                        <UBadge color="primary" variant="subtle" size="sm" :label="lead.state.toUpperCase()" />
+                      </td>
+                      <td class="px-4 py-3 text-muted tabular-nums">{{ lead.date }}</td>
+                      <td class="px-4 py-3">
+                        <span
+                          class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize"
+                          :class="lead.status.toLowerCase().includes('sign')
+                            ? 'bg-green-500/10 text-green-400'
+                            : lead.status.toLowerCase().includes('drop') || lead.status.toLowerCase().includes('cancel')
+                              ? 'bg-red-500/10 text-red-400'
+                              : lead.status.toLowerCase().includes('success') || lead.status.toLowerCase().includes('qualif')
+                                ? 'bg-blue-500/10 text-blue-400'
+                                : 'bg-[var(--ap-card-divide)] text-muted'"
+                        >
+                          {{ lead.status }}
+                        </span>
+                      </td>
+                      <td class="px-4 py-3 text-muted tabular-nums">{{ lead.signedDate ?? '—' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
-          </div>
-        </UCard>
+          </template>
+        </div>
       </div>
     </template>
   </UDashboardPanel>

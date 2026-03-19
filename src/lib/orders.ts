@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 
-export type OrderStatus = 'OPEN' | 'FULFILLED' | 'EXPIRED'
+export type OrderStatus = 'OPEN' | 'FULFILLED' | 'EXPIRED' | 'IN_PROGRESS' | 'PENDING'
 
 export type OrderRow = {
   id: string
@@ -61,7 +61,7 @@ export async function createOrder(input: {
 export async function listOpenOrdersForLawyer(lawyerId: string) {
   const { data, error } = await supabase
     .from('orders')
-    .select('id,lawyer_id,target_states,case_type,case_subtype,quota_total,quota_filled,status,expires_at,created_at')
+    .select('id,lawyer_id,target_states,case_type,case_subtype,criteria,quota_total,quota_filled,status,expires_at,created_at')
     .eq('lawyer_id', lawyerId)
     .eq('status', 'OPEN')
     .order('created_at', { ascending: false })
@@ -76,7 +76,7 @@ export async function listOrdersForLawyer(input: {
 }) {
   let qb = supabase
     .from('orders')
-    .select('id,lawyer_id,target_states,case_type,case_subtype,quota_total,quota_filled,status,expires_at,created_at')
+    .select('id,lawyer_id,target_states,case_type,case_subtype,criteria,quota_total,quota_filled,status,expires_at,created_at')
     .eq('lawyer_id', input.lawyerId)
     .order('created_at', { ascending: false })
 

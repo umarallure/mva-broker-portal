@@ -33,7 +33,7 @@ const links = computed(() => [[
     to: '/dashboard',
     onSelect: () => { open.value = false }
   }, {
-    label: 'Intake Map',
+    label: 'Order Map',
     icon: 'i-lucide-map',
     to: '/intake-map',
     onSelect: () => { open.value = false }
