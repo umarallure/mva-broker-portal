@@ -109,12 +109,14 @@ const links = computed(() => [[
         to: '/settings/expertise',
         exact: true,
         onSelect: () => { open.value = false }
-      }, {
-        label: 'Pricing',
-        to: '/settings/capacity',
-        exact: true,
-        onSelect: () => { open.value = false }
       }] : [])
+      // TODO: re-enable with pricing redesign
+      // , {
+      //   label: 'Pricing',
+      //   to: '/settings/capacity',
+      //   exact: true,
+      //   onSelect: () => { open.value = false }
+      // }
     ]
   }
 ]] satisfies NavigationMenuItem[][])

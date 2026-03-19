@@ -37,8 +37,9 @@ const router = createRouter({
       children: [
         { path: '', redirect: '/settings/attorney-profile' },
         { path: 'attorney-profile', component: () => import('./pages/settings/attorney-profile.vue') },
-        { path: 'expertise', component: () => import('./pages/settings/expertise.vue') },
-        { path: 'capacity', component: () => import('./pages/settings/capacity.vue') }
+        { path: 'expertise', component: () => import('./pages/settings/expertise.vue') }
+        // TODO: re-enable with pricing redesign
+        // { path: 'capacity', component: () => import('./pages/settings/capacity.vue') }
       ]
     },
     { path: '/:pathMatch(.*)*', component: () => import('./pages/not-found.vue') }

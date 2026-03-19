@@ -20,12 +20,15 @@ const links = [[{
   icon: 'i-lucide-map-pin',
   to: '/settings/expertise',
   exact: true
-}], [{
-  label: 'Pricing',
-  icon: 'i-lucide-activity',
-  to: '/settings/capacity',
-  exact: true
-}]] satisfies NavigationMenuItem[][]
+}]
+// TODO: re-enable with pricing redesign
+// , [{
+//   label: 'Pricing',
+//   icon: 'i-lucide-activity',
+//   to: '/settings/capacity',
+//   exact: true
+// }]
+] satisfies NavigationMenuItem[][]
 
 const showCompletionMeter = computed(() => {
   return route.path.startsWith('/settings/')
