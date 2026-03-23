@@ -444,7 +444,7 @@ const confirmDrop = async () => {
 <template>
   <UDashboardPanel id="retainers">
     <template #header>
-      <UDashboardNavbar title="Retainers">
+      <UDashboardNavbar title="My Customers">
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>

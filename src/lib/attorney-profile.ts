@@ -94,6 +94,7 @@ export interface AttorneyProfileData {
   payment_window_days?: number | null
   pricing_tier?: PricingTierKey | null
 
+  order_limit?: number | null
   retainer_contract_document_path?: string | null
   retainer_contract_document_name?: string | null
   retainer_contract_document_mime_type?: string | null

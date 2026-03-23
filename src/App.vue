@@ -38,7 +38,7 @@ const links = computed(() => [[
     to: '/intake-map',
     onSelect: () => { open.value = false }
   }, {
-    label: 'Retainers',
+    label: 'My Customers',
     icon: 'i-lucide-briefcase',
     to: '/retainers',
     onSelect: () => { open.value = false }
