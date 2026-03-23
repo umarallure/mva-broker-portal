@@ -43,6 +43,15 @@ export const PRICING_TIER_OPTIONS = Object.values(PRICING_TIERS).map(tier => ({
   value: tier.key
 }))
 
+export const RETAINER_CONTRACT_DOCUMENT_BUCKET = 'retainer-contract-documents'
+export const RETAINER_CONTRACT_DOCUMENT_MAX_SIZE_BYTES = 10 * 1024 * 1024
+export const RETAINER_CONTRACT_DOCUMENT_ALLOWED_MIME_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+] as const
+export const RETAINER_CONTRACT_DOCUMENT_ACCEPT = '.pdf,.doc,.docx'
+
 export interface AttorneyProfileData {
   // Tab 1: General Information
   profile_photo_url?: string | null
@@ -84,6 +93,140 @@ export interface AttorneyProfileData {
   upfront_payment_percentage?: number | null
   payment_window_days?: number | null
   pricing_tier?: PricingTierKey | null
+
+  retainer_contract_document_path?: string | null
+  retainer_contract_document_name?: string | null
+  retainer_contract_document_mime_type?: string | null
+  retainer_contract_document_size_bytes?: number | null
+  retainer_contract_document_uploaded_at?: string | null
+}
+
+const RETAINER_CONTRACT_DOCUMENT_EXTENSION_BY_MIME: Record<string, string> = {
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx'
+}
+
+const normalizeRetainerContractDocumentMimeType = (file: File) => {
+  if (RETAINER_CONTRACT_DOCUMENT_ALLOWED_MIME_TYPES.includes(file.type as typeof RETAINER_CONTRACT_DOCUMENT_ALLOWED_MIME_TYPES[number])) {
+    return file.type
+  }
+
+  const extension = file.name.split('.').pop()?.toLowerCase() ?? ''
+  switch (extension) {
+    case 'pdf':
+      return 'application/pdf'
+    case 'doc':
+      return 'application/msword'
+    case 'docx':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    default:
+      return file.type
+  }
+}
+
+export const buildRetainerContractDocumentPath = (userId: string) => {
+  return `${userId}/retainer-contract-document`
+}
+
+export const validateRetainerContractDocument = (file: File) => {
+  const normalizedMimeType = normalizeRetainerContractDocumentMimeType(file)
+  if (!RETAINER_CONTRACT_DOCUMENT_ALLOWED_MIME_TYPES.includes(normalizedMimeType as typeof RETAINER_CONTRACT_DOCUMENT_ALLOWED_MIME_TYPES[number])) {
+    return 'Upload a PDF, DOC, or DOCX file.'
+  }
+
+  if (file.size > RETAINER_CONTRACT_DOCUMENT_MAX_SIZE_BYTES) {
+    return `Upload a document smaller than ${Math.round(RETAINER_CONTRACT_DOCUMENT_MAX_SIZE_BYTES / (1024 * 1024))}MB.`
+  }
+
+  return null
+}
+
+export const formatDocumentFileSize = (bytes?: number | null) => {
+  if (!bytes || bytes <= 0) return 'Unknown size'
+
+  if (bytes < 1024) return `${bytes} B`
+
+  const kb = bytes / 1024
+  if (kb < 1024) return `${Math.round(kb)} KB`
+
+  const mb = kb / 1024
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`
+}
+
+export const getRetainerContractDocumentKind = (mimeType?: string | null, fileName?: string | null) => {
+  const normalizedMimeType = (mimeType ?? '').toLowerCase()
+  const normalizedFileName = (fileName ?? '').toLowerCase()
+
+  if (normalizedMimeType === 'application/pdf' || normalizedFileName.endsWith('.pdf')) {
+    return 'pdf'
+  }
+
+  if (
+    normalizedMimeType === 'application/msword'
+    || normalizedMimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    || normalizedFileName.endsWith('.doc')
+    || normalizedFileName.endsWith('.docx')
+  ) {
+    return 'word'
+  }
+
+  return 'document'
+}
+
+export async function uploadRetainerContractDocument(userId: string, file: File) {
+  const validationError = validateRetainerContractDocument(file)
+  if (validationError) {
+    throw new Error(validationError)
+  }
+
+  const path = buildRetainerContractDocumentPath(userId)
+  const mimeType = normalizeRetainerContractDocumentMimeType(file)
+
+  const { error } = await supabase.storage
+    .from(RETAINER_CONTRACT_DOCUMENT_BUCKET)
+    .upload(path, file, {
+      cacheControl: '3600',
+      upsert: true,
+      contentType: mimeType
+    })
+
+  if (error) {
+    throw new Error(error.message || 'Failed to upload retainer contract document')
+  }
+
+  const extension = RETAINER_CONTRACT_DOCUMENT_EXTENSION_BY_MIME[mimeType]
+  const normalizedName = file.name.trim() || `retainer-contract-document.${extension ?? 'pdf'}`
+
+  return {
+    path,
+    name: normalizedName,
+    mimeType,
+    sizeBytes: file.size,
+    uploadedAt: new Date().toISOString()
+  }
+}
+
+export async function deleteRetainerContractDocument(path: string) {
+  const { error } = await supabase.storage
+    .from(RETAINER_CONTRACT_DOCUMENT_BUCKET)
+    .remove([path])
+
+  if (error) {
+    throw new Error(error.message || 'Failed to delete retainer contract document')
+  }
+}
+
+export async function getRetainerContractDocumentSignedUrl(path: string, expiresInSeconds = 60 * 30) {
+  const { data, error } = await supabase.storage
+    .from(RETAINER_CONTRACT_DOCUMENT_BUCKET)
+    .createSignedUrl(path, expiresInSeconds)
+
+  if (error) {
+    throw new Error(error.message || 'Failed to open retainer contract document')
+  }
+
+  return data.signedUrl
 }
 
 /**

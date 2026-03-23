@@ -41,10 +41,8 @@ onMounted(async () => {
   }
 })
 
-async function onSubmit(event: FormSubmitEvent<CapacitySchema>) {
-  if (!userId.value) return
-
-  void event
+async function submitCapacitySection() {
+  if (!userId.value) return false
 
   saving.value = true
   try {
@@ -61,6 +59,7 @@ async function onSubmit(event: FormSubmitEvent<CapacitySchema>) {
       icon: 'i-lucide-check',
       color: 'success'
     })
+    return true
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unable to update profile'
     toast.add({
@@ -69,18 +68,24 @@ async function onSubmit(event: FormSubmitEvent<CapacitySchema>) {
       icon: 'i-lucide-x',
       color: 'error'
     })
+    return false
   } finally {
     saving.value = false
   }
 }
 
+async function onSubmit(event: FormSubmitEvent<CapacitySchema>) {
+  void event
+  await submitCapacitySection()
+}
+
 async function onNext() {
-  await onSubmit({} as FormSubmitEvent<CapacitySchema>)
+  await submitCapacitySection()
 }
 
 async function onBack() {
-  await onSubmit({} as FormSubmitEvent<CapacitySchema>)
-  if (!saving.value) {
+  const saved = await submitCapacitySection()
+  if (saved) {
     attorneyProfile.startEditing()
     router.push('/settings/expertise')
   }

@@ -4,13 +4,13 @@ import { useRoute } from 'vue-router'
 import type { NavigationMenuItem } from '@nuxt/ui'
 import ProfileCompletionMeter from '../components/settings/ProfileCompletionMeter.vue'
 import { useAuth } from '../composables/useAuth'
-import { useAttorneyProfile } from '../composables/useAttorneyProfile'
+import { useAttorneyProfile, type AttorneyProfileState } from '../composables/useAttorneyProfile'
 
 const route = useRoute()
 const auth = useAuth()
 const attorneyProfile = useAttorneyProfile()
 
-const attorneyProfileData = computed(() => attorneyProfile.state.value)
+const attorneyProfileData = computed(() => attorneyProfile.state.value as unknown as Partial<AttorneyProfileState>)
 const isAccounts = computed(() => auth.state.value.profile?.role === 'accounts')
 
 const links = computed(() => {
@@ -34,6 +34,11 @@ const links = computed(() => {
     label: 'Expertise & Jurisdiction',
     icon: 'i-lucide-map-pin',
     to: '/settings/expertise',
+    exact: true
+  }, {
+    label: 'Retainer Contract Document',
+    icon: 'i-lucide-file-text',
+    to: '/settings/retainer-contract-document',
     exact: true
   }])
 

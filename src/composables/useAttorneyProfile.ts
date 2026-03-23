@@ -35,6 +35,56 @@ export interface AttorneyProfileState {
   upfrontPaymentPercentage?: number
   paymentWindowDays?: number
   pricingTier?: PricingTierKey
+
+  // Tab 4: Retainer Contract Document
+  retainerContractDocumentPath?: string
+  retainerContractDocumentName?: string
+  retainerContractDocumentMimeType?: string
+  retainerContractDocumentSizeBytes?: number
+  retainerContractDocumentUploadedAt?: string
+}
+
+export const ATTORNEY_PROFILE_REQUIRED_FIELDS: Array<keyof AttorneyProfileState> = [
+  'fullName',
+  'firmName',
+  'barNumber',
+  'languages',
+  'directPhone',
+  'officeAddress',
+  'licensedStates',
+  'primaryCity',
+  'primaryPracticeFocus',
+  'injuryCategories',
+  'retainerContractDocumentPath'
+]
+
+export const ATTORNEY_PROFILE_OPTIONAL_FIELDS: Array<keyof AttorneyProfileState> = [
+  'bio',
+  'yearsExperience',
+  'websiteUrl',
+  'preferredContact',
+  'assistantName',
+  'assistantEmail',
+  'countiesCovered',
+  'federalCourts',
+  'exclusionaryCriteria',
+  'minimumCaseValue',
+  'blockedStates',
+  'caseRatePerDeal',
+  'upfrontPaymentPercentage',
+  'paymentWindowDays',
+  'pricingTier'
+]
+
+export const isAttorneyProfileFieldFilled = (
+  profileData: Partial<AttorneyProfileState> | undefined,
+  field: keyof AttorneyProfileState
+) => {
+  const value = profileData?.[field]
+  return value !== undefined
+    && value !== null
+    && value !== ''
+    && (!Array.isArray(value) || value.length > 0)
 }
 
 const _useAttorneyProfile = () => {
@@ -85,6 +135,11 @@ const _useAttorneyProfile = () => {
     if ('upfrontPaymentPercentage' in data) out.upfront_payment_percentage = data.upfrontPaymentPercentage ?? null
     if ('paymentWindowDays' in data) out.payment_window_days = data.paymentWindowDays ?? null
     if ('pricingTier' in data) out.pricing_tier = (data.pricingTier ?? null) as AttorneyProfileData['pricing_tier']
+    if ('retainerContractDocumentPath' in data) out.retainer_contract_document_path = data.retainerContractDocumentPath ?? null
+    if ('retainerContractDocumentName' in data) out.retainer_contract_document_name = data.retainerContractDocumentName ?? null
+    if ('retainerContractDocumentMimeType' in data) out.retainer_contract_document_mime_type = data.retainerContractDocumentMimeType ?? null
+    if ('retainerContractDocumentSizeBytes' in data) out.retainer_contract_document_size_bytes = data.retainerContractDocumentSizeBytes ?? null
+    if ('retainerContractDocumentUploadedAt' in data) out.retainer_contract_document_uploaded_at = data.retainerContractDocumentUploadedAt ?? null
 
     return out
   }
@@ -96,7 +151,7 @@ const _useAttorneyProfile = () => {
       firmName: dbProfile.firm_name || '',
       barNumber: dbProfile.bar_association_number || '',
       bio: dbProfile.professional_bio || '',
-      yearsExperience: dbProfile.years_experience || undefined,
+      yearsExperience: dbProfile.years_experience ?? undefined,
       languages: dbProfile.languages_spoken || [],
       primaryEmail: dbProfile.primary_email || '',
       directPhone: dbProfile.direct_phone || '',
@@ -113,11 +168,16 @@ const _useAttorneyProfile = () => {
       primaryPracticeFocus: dbProfile.primary_practice_focus || '',
       injuryCategories: dbProfile.injury_categories || [],
       exclusionaryCriteria: dbProfile.exclusionary_criteria || [],
-      minimumCaseValue: dbProfile.minimum_case_value || undefined,
+      minimumCaseValue: dbProfile.minimum_case_value ?? undefined,
       caseRatePerDeal: dbProfile.case_rate_per_deal ?? undefined,
       upfrontPaymentPercentage: dbProfile.upfront_payment_percentage ?? undefined,
       paymentWindowDays: dbProfile.payment_window_days ?? undefined,
-      pricingTier: dbProfile.pricing_tier || undefined
+      pricingTier: dbProfile.pricing_tier || undefined,
+      retainerContractDocumentPath: dbProfile.retainer_contract_document_path || '',
+      retainerContractDocumentName: dbProfile.retainer_contract_document_name || '',
+      retainerContractDocumentMimeType: dbProfile.retainer_contract_document_mime_type || '',
+      retainerContractDocumentSizeBytes: dbProfile.retainer_contract_document_size_bytes ?? undefined,
+      retainerContractDocumentUploadedAt: dbProfile.retainer_contract_document_uploaded_at || ''
     }
   }
 
@@ -157,31 +217,36 @@ const _useAttorneyProfile = () => {
       // Map frontend fields to database fields
       const dbData: Partial<AttorneyProfileData> = {
         profile_photo_url: mergedData.profilePhoto || null,
-        full_name: mergedData.fullName!,
-        firm_name: mergedData.firmName!,
-        bar_association_number: mergedData.barNumber!,
+        full_name: mergedData.fullName ?? '',
+        firm_name: mergedData.firmName ?? '',
+        bar_association_number: mergedData.barNumber ?? '',
         professional_bio: mergedData.bio || null,
-        years_experience: mergedData.yearsExperience || null,
+        years_experience: mergedData.yearsExperience ?? null,
         languages_spoken: mergedData.languages || [],
-        primary_email: mergedData.primaryEmail!,
-        direct_phone: mergedData.directPhone!,
-        office_address: mergedData.officeAddress!,
+        primary_email: mergedData.primaryEmail ?? '',
+        direct_phone: mergedData.directPhone ?? '',
+        office_address: mergedData.officeAddress ?? '',
         website_url: mergedData.websiteUrl || null,
         preferred_contact_method: mergedData.preferredContact || null,
         assistant_name: mergedData.assistantName || null,
         assistant_email: mergedData.assistantEmail || null,
         licensed_states: mergedData.licensedStates || [],
-        primary_city: mergedData.primaryCity!,
+        primary_city: mergedData.primaryCity ?? '',
         counties_covered: mergedData.countiesCovered || [],
         federal_court_admissions: mergedData.federalCourts || null,
-        primary_practice_focus: mergedData.primaryPracticeFocus!,
+        primary_practice_focus: mergedData.primaryPracticeFocus ?? '',
         injury_categories: mergedData.injuryCategories || [],
         exclusionary_criteria: mergedData.exclusionaryCriteria || [],
-        minimum_case_value: mergedData.minimumCaseValue || null,
-        case_rate_per_deal: mergedData.caseRatePerDeal || null,
-        upfront_payment_percentage: mergedData.upfrontPaymentPercentage || null,
-        payment_window_days: mergedData.paymentWindowDays || null,
-        pricing_tier: (mergedData.pricingTier || null) as AttorneyProfileData['pricing_tier']
+        minimum_case_value: mergedData.minimumCaseValue ?? null,
+        case_rate_per_deal: mergedData.caseRatePerDeal ?? null,
+        upfront_payment_percentage: mergedData.upfrontPaymentPercentage ?? null,
+        payment_window_days: mergedData.paymentWindowDays ?? null,
+        pricing_tier: (mergedData.pricingTier || null) as AttorneyProfileData['pricing_tier'],
+        retainer_contract_document_path: mergedData.retainerContractDocumentPath || null,
+        retainer_contract_document_name: mergedData.retainerContractDocumentName || null,
+        retainer_contract_document_mime_type: mergedData.retainerContractDocumentMimeType || null,
+        retainer_contract_document_size_bytes: mergedData.retainerContractDocumentSizeBytes ?? null,
+        retainer_contract_document_uploaded_at: mergedData.retainerContractDocumentUploadedAt || null
       }
 
       const profile = await saveAttorneyProfile(userId, dbData)
@@ -253,34 +318,17 @@ const _useAttorneyProfile = () => {
   }
 
   const completionPercentage = computed(() => {
-    const requiredFields = [
-      'fullName', 'firmName', 'barNumber', 'languages', 'directPhone',
-      'officeAddress', 'licensedStates', 'primaryCity', 'primaryPracticeFocus',
-      'injuryCategories'
-    ]
-
-    const optionalFields = [
-      'bio', 'yearsExperience', 'websiteUrl', 'preferredContact',
-      'assistantName', 'assistantEmail', 'countiesCovered', 'federalCourts',
-      'exclusionaryCriteria', 'minimumCaseValue', 'blockedStates',
-      'caseRatePerDeal', 'upfrontPaymentPercentage', 'paymentWindowDays', 'pricingTier'
-    ]
-
     let filledRequired = 0
     let filledOptional = 0
 
-    requiredFields.forEach(field => {
-      const value = state.value[field as keyof AttorneyProfileState]
-      if (value !== undefined && value !== null && value !== '' &&
-          (!Array.isArray(value) || value.length > 0)) {
+    ATTORNEY_PROFILE_REQUIRED_FIELDS.forEach((field) => {
+      if (isAttorneyProfileFieldFilled(state.value, field)) {
         filledRequired++
       }
     })
 
-    optionalFields.forEach(field => {
-      const value = state.value[field as keyof AttorneyProfileState]
-      if (value !== undefined && value !== null && value !== '' &&
-          (!Array.isArray(value) || value.length > 0)) {
+    ATTORNEY_PROFILE_OPTIONAL_FIELDS.forEach((field) => {
+      if (isAttorneyProfileFieldFilled(state.value, field)) {
         filledOptional++
       }
     })
@@ -288,8 +336,8 @@ const _useAttorneyProfile = () => {
     const requiredWeight = 0.7
     const optionalWeight = 0.3
 
-    const requiredScore = (filledRequired / requiredFields.length) * requiredWeight
-    const optionalScore = (filledOptional / optionalFields.length) * optionalWeight
+    const requiredScore = (filledRequired / ATTORNEY_PROFILE_REQUIRED_FIELDS.length) * requiredWeight
+    const optionalScore = (filledOptional / ATTORNEY_PROFILE_OPTIONAL_FIELDS.length) * optionalWeight
 
     return Math.round((requiredScore + optionalScore) * 100)
   })

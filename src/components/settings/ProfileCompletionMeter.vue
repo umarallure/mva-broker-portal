@@ -1,69 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-
-interface ProfileData {
-  // Tab 1: General Information
-  fullName?: string
-  firmName?: string
-  barNumber?: string
-  bio?: string
-  yearsExperience?: number | string
-  languages?: readonly string[]
-  directPhone?: string
-  officeAddress?: string
-  websiteUrl?: string
-  preferredContact?: string
-  assistantName?: string
-  assistantEmail?: string
-  
-  // Tab 2: Expertise & Jurisdiction
-  licensedStates?: readonly string[]
-  primaryCity?: string
-  countiesCovered?: readonly string[]
-  federalCourts?: string
-  primaryPracticeFocus?: string
-  injuryCategories?: readonly string[]
-  exclusionaryCriteria?: readonly string[]
-  minimumCaseValue?: number | string
-  
-  // Tab 3: Capacity & Performance
-  caseRatePerDeal?: number | string
-  upfrontPaymentPercentage?: number | string
-  paymentWindowDays?: number | string
-}
+import {
+  ATTORNEY_PROFILE_OPTIONAL_FIELDS,
+  ATTORNEY_PROFILE_REQUIRED_FIELDS,
+  isAttorneyProfileFieldFilled,
+  type AttorneyProfileState
+} from '../../composables/useAttorneyProfile'
 
 const props = defineProps<{
-  profileData?: ProfileData
+  profileData?: Partial<AttorneyProfileState>
 }>()
 
-const requiredFields = [
-  'fullName',
-  'firmName',
-  'barNumber',
-  'languages',
-  'directPhone',
-  'officeAddress',
-  'licensedStates',
-  'primaryCity',
-  'primaryPracticeFocus',
-  'injuryCategories'
-]
-
-const optionalFields = [
-  'bio',
-  'yearsExperience',
-  'websiteUrl',
-  'preferredContact',
-  'assistantName',
-  'assistantEmail',
-  'countiesCovered',
-  'federalCourts',
-  'exclusionaryCriteria',
-  'minimumCaseValue',
-  'caseRatePerDeal',
-  'upfrontPaymentPercentage',
-  'paymentWindowDays'
-]
+const requiredFields = ATTORNEY_PROFILE_REQUIRED_FIELDS
+const optionalFields = ATTORNEY_PROFILE_OPTIONAL_FIELDS
 
 const completionPercentage = computed(() => {
   if (!props.profileData) return 0
@@ -71,18 +20,14 @@ const completionPercentage = computed(() => {
   let filledRequired = 0
   let filledOptional = 0
   
-  requiredFields.forEach(field => {
-    const value = props.profileData?.[field as keyof ProfileData]
-    if (value !== undefined && value !== null && value !== '' && 
-        (!Array.isArray(value) || value.length > 0)) {
+  requiredFields.forEach((field) => {
+    if (isAttorneyProfileFieldFilled(props.profileData, field)) {
       filledRequired++
     }
   })
   
-  optionalFields.forEach(field => {
-    const value = props.profileData?.[field as keyof ProfileData]
-    if (value !== undefined && value !== null && value !== '' && 
-        (!Array.isArray(value) || value.length > 0)) {
+  optionalFields.forEach((field) => {
+    if (isAttorneyProfileFieldFilled(props.profileData, field)) {
       filledOptional++
     }
   })
@@ -155,19 +100,11 @@ const completionMessage = computed(() => {
     <div class="mt-3 flex items-center gap-5 text-xs text-muted">
       <div class="flex items-center gap-1.5">
         <UIcon name="i-lucide-check-circle" class="size-3.5 text-green-400/70" />
-        <span>{{ requiredFields.filter(f => {
-          const value = profileData?.[f as keyof ProfileData]
-          return value !== undefined && value !== null && value !== '' &&
-                 (!Array.isArray(value) || value.length > 0)
-        }).length }} / {{ requiredFields.length }} Required</span>
+        <span>{{ requiredFields.filter(field => isAttorneyProfileFieldFilled(profileData, field)).length }} / {{ requiredFields.length }} Required</span>
       </div>
       <div class="flex items-center gap-1.5">
         <UIcon name="i-lucide-star" class="size-3.5 text-amber-400/70" />
-        <span>{{ optionalFields.filter(f => {
-          const value = profileData?.[f as keyof ProfileData]
-          return value !== undefined && value !== null && value !== '' &&
-                 (!Array.isArray(value) || value.length > 0)
-        }).length }} / {{ optionalFields.length }} Optional</span>
+        <span>{{ optionalFields.filter(field => isAttorneyProfileFieldFilled(profileData, field)).length }} / {{ optionalFields.length }} Optional</span>
       </div>
     </div>
   </div>

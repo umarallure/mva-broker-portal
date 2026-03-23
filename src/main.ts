@@ -42,7 +42,8 @@ const router = createRouter({
           component: () => import('./pages/settings/team-profile.vue'),
           meta: { requiresTeamProfileAccess: true }
         },
-        { path: 'expertise', component: () => import('./pages/settings/expertise.vue') }
+        { path: 'expertise', component: () => import('./pages/settings/expertise.vue') },
+        { path: 'retainer-contract-document', component: () => import('./pages/settings/retainer-contract-document.vue') }
         // TODO: re-enable with pricing redesign
         // { path: 'capacity', component: () => import('./pages/settings/capacity.vue') }
       ]

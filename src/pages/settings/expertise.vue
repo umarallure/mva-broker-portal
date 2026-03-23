@@ -108,10 +108,8 @@ onMounted(async () => {
   }
 })
 
-async function onSubmit(_event: FormSubmitEvent<ExpertiseSchema>) {
-  if (!userId.value) return
-
-  void _event
+async function submitExpertiseSection() {
+  if (!userId.value) return false
 
   attorneyProfile.draft.value.countiesCovered = (profile.value.countiesCovered ?? '')
     .split(',')
@@ -142,6 +140,7 @@ async function onSubmit(_event: FormSubmitEvent<ExpertiseSchema>) {
       icon: 'i-lucide-check',
       color: 'success'
     })
+    return true
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unable to update profile'
     toast.add({
@@ -150,22 +149,28 @@ async function onSubmit(_event: FormSubmitEvent<ExpertiseSchema>) {
       icon: 'i-lucide-x',
       color: 'error'
     })
+    return false
   } finally {
     saving.value = false
   }
 }
 
+async function onSubmit(_event: FormSubmitEvent<ExpertiseSchema>) {
+  void _event
+  await submitExpertiseSection()
+}
+
 async function onNext() {
-  await onSubmit({} as FormSubmitEvent<ExpertiseSchema>)
-  if (!saving.value) {
+  const saved = await submitExpertiseSection()
+  if (saved) {
     attorneyProfile.startEditing()
-    router.push('/settings/capacity')
+    router.push('/settings/retainer-contract-document')
   }
 }
 
 async function onBack() {
-  await onSubmit({} as FormSubmitEvent<ExpertiseSchema>)
-  if (!saving.value) {
+  const saved = await submitExpertiseSection()
+  if (saved) {
     attorneyProfile.startEditing()
     router.push('/settings/attorney-profile')
   }
