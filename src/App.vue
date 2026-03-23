@@ -114,6 +114,11 @@ const links = computed(() => [[
         to: '/settings/expertise',
         exact: true,
         onSelect: () => { open.value = false }
+      }, {
+        label: 'Retainer Contract Document',
+        to: '/settings/retainer-contract-document',
+        exact: true,
+        onSelect: () => { open.value = false }
       }] : [])
       // TODO: re-enable with pricing redesign
       // , {
