@@ -9,9 +9,9 @@ import { supabase } from '../lib/supabase'
 type StageKey = 'returned_back' | 'signed_retainers' | 'dropped_retainers' | 'successful_cases'
 
 const STAGES: { key: StageKey, label: string }[] = [
-  { key: 'returned_back', label: 'Returned Back' },
   { key: 'signed_retainers', label: 'Signed Retainers' },
-  { key: 'dropped_retainers', label: 'Dropped Retainers' },
+  { key: 'returned_back', label: 'Returned Back (14 days window)' },
+  { key: 'dropped_retainers', label: 'Dropped Retainers (Unsuccessfull cases)' },
   { key: 'successful_cases', label: 'Successfull Cases' }
 ]
 
@@ -318,7 +318,7 @@ const onDropToStage = async (targetStage: StageKey) => {
 <template>
   <UDashboardPanel id="fulfillment">
     <template #header>
-      <UDashboardNavbar title="Fulfillment Centers - Order Processing">
+      <UDashboardNavbar title="Fulfillment - Order Processing">
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
@@ -353,18 +353,6 @@ const onDropToStage = async (targetStage: StageKey) => {
             </div>
           </div>
 
-          <div class="group overflow-hidden rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5 transition-all duration-300 hover:border-amber-500/30 hover:bg-amber-500/[0.03]">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-muted">Returned Back</p>
-                <p class="mt-1.5 text-3xl font-bold text-amber-400">{{ returnedCount }}</p>
-              </div>
-              <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/10">
-                <UIcon name="i-lucide-arrow-left-circle" class="text-xl text-amber-400" />
-              </div>
-            </div>
-          </div>
-
           <div class="group overflow-hidden rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5 transition-all duration-300 hover:border-green-500/30 hover:bg-green-500/[0.03]">
             <div class="flex items-center justify-between">
               <div>
@@ -377,10 +365,22 @@ const onDropToStage = async (targetStage: StageKey) => {
             </div>
           </div>
 
+          <div class="group overflow-hidden rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5 transition-all duration-300 hover:border-amber-500/30 hover:bg-amber-500/[0.03]">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-xs font-medium uppercase tracking-wider text-muted">Returned Back (14 days window)</p>
+                <p class="mt-1.5 text-3xl font-bold text-amber-400">{{ returnedCount }}</p>
+              </div>
+              <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/10">
+                <UIcon name="i-lucide-arrow-left-circle" class="text-xl text-amber-400" />
+              </div>
+            </div>
+          </div>
+
           <div class="group overflow-hidden rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5 transition-all duration-300 hover:border-red-500/30 hover:bg-red-500/[0.03]">
             <div class="flex items-center justify-between">
               <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-muted">Dropped</p>
+                <p class="text-xs font-medium uppercase tracking-wider text-muted">Dropped (Unsuccessfull cases)</p>
                 <p class="mt-1.5 text-3xl font-bold text-red-400">{{ droppedCount }}</p>
               </div>
               <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10">
