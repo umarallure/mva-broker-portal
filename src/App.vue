@@ -105,6 +105,11 @@ const links = computed(() => [[
         exact: true,
         onSelect: () => { open.value = false }
       }, {
+        label: 'Team Profile',
+        to: '/settings/team-profile',
+        exact: true,
+        onSelect: () => { open.value = false }
+      }, {
         label: 'Expertise & Jurisdiction',
         to: '/settings/expertise',
         exact: true,

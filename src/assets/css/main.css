@@ -57,6 +57,10 @@ body {
   font-family: var(--font-sans);
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 button,
 input,
 select,

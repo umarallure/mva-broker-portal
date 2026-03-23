@@ -3,32 +3,50 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import type { NavigationMenuItem } from '@nuxt/ui'
 import ProfileCompletionMeter from '../components/settings/ProfileCompletionMeter.vue'
+import { useAuth } from '../composables/useAuth'
 import { useAttorneyProfile } from '../composables/useAttorneyProfile'
 
 const route = useRoute()
+const auth = useAuth()
 const attorneyProfile = useAttorneyProfile()
 
 const attorneyProfileData = computed(() => attorneyProfile.state.value)
+const isAccounts = computed(() => auth.state.value.profile?.role === 'accounts')
 
-const links = [[{
-  label: 'Attorney Profile',
-  icon: 'i-lucide-briefcase',
-  to: '/settings/attorney-profile',
-  exact: true
-}], [{
-  label: 'Expertise & Jurisdiction',
-  icon: 'i-lucide-map-pin',
-  to: '/settings/expertise',
-  exact: true
-}]
-// TODO: re-enable with pricing redesign
-// , [{
-//   label: 'Pricing',
-//   icon: 'i-lucide-activity',
-//   to: '/settings/capacity',
-//   exact: true
-// }]
-] satisfies NavigationMenuItem[][]
+const links = computed(() => {
+  const items: NavigationMenuItem[][] = [[{
+    label: 'Attorney Profile',
+    icon: 'i-lucide-briefcase',
+    to: '/settings/attorney-profile',
+    exact: true
+  }]]
+
+  if (!isAccounts.value) {
+    items.push([{
+      label: 'Team Profile',
+      icon: 'i-lucide-users-round',
+      to: '/settings/team-profile',
+      exact: true
+    }])
+  }
+
+  items.push([{
+    label: 'Expertise & Jurisdiction',
+    icon: 'i-lucide-map-pin',
+    to: '/settings/expertise',
+    exact: true
+  }])
+
+  // TODO: re-enable with pricing redesign
+  // items.push([{
+  //   label: 'Pricing',
+  //   icon: 'i-lucide-activity',
+  //   to: '/settings/capacity',
+  //   exact: true
+  // }])
+
+  return items
+})
 
 const showCompletionMeter = computed(() => {
   return route.path.startsWith('/settings/')
