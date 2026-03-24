@@ -161,20 +161,73 @@ const load = async () => {
   loading.value = true
   try {
     await auth.init()
-    const userId = auth.state.value.user?.id ?? null
+    const userId = auth.state.value.profile?.user_id ?? null
     const role = auth.state.value.profile?.role ?? null
 
-    let retainerQb = supabase
-      .from('daily_deal_flow')
-      .select('id,submission_id,insured_name,client_phone_number,lead_vendor,date,status,assigned_attorney_id,created_at,invoice_id', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .limit(5)
-
+    // For lawyers, build name keywords for fallback matching
+    let nameKeywords: string[] = []
     if (role === 'lawyer' && userId) {
-      retainerQb = retainerQb.eq('assigned_attorney_id', userId)
+      const { data: attorneyProfile } = await supabase
+        .from('attorney_profiles')
+        .select('full_name')
+        .eq('user_id', userId)
+        .maybeSingle()
+
+      const fullName = attorneyProfile?.full_name?.trim() || null
+      const displayName = auth.state.value.profile?.display_name?.trim() || null
+      const email = auth.state.value.profile?.email || null
+      const emailName = email ? email.split('@')[0].replace(/[^a-zA-Z]/g, ' ').trim() : null
+
+      const rawName = fullName || displayName || emailName || ''
+      nameKeywords = rawName
+        .split(/[\s\-_]+/)
+        .map((w: string) => w.trim().toLowerCase())
+        .filter((w: string) => w.length >= 3)
     }
 
-    const { data: retainerData, count: rCount } = await retainerQb
+    const retainerSelect = 'id,submission_id,insured_name,client_phone_number,lead_vendor,date,status,assigned_attorney_id,submitted_attorney,created_at,invoice_id'
+
+    let retainerData: RetainerRow[] | null = null
+    let rCount: number | null = 0
+
+    if (role === 'lawyer' && userId) {
+      // First try by assigned_attorney_id
+      const { data: byId, count: byIdCount } = await supabase
+        .from('daily_deal_flow')
+        .select(retainerSelect, { count: 'exact' })
+        .eq('assigned_attorney_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(5)
+
+      retainerData = byId
+      rCount = byIdCount
+
+      // Fallback: match by any name keyword in submitted_attorney
+      if ((!retainerData || retainerData.length === 0) && nameKeywords.length > 0) {
+        const orFilter = nameKeywords
+          .map((kw: string) => `submitted_attorney.ilike.%${kw}%`)
+          .join(',')
+
+        const { data: byName, count: byNameCount } = await supabase
+          .from('daily_deal_flow')
+          .select(retainerSelect, { count: 'exact' })
+          .or(orFilter)
+          .order('created_at', { ascending: false })
+          .limit(5)
+
+        retainerData = byName
+        rCount = byNameCount
+      }
+    } else {
+      const { data, count } = await supabase
+        .from('daily_deal_flow')
+        .select(retainerSelect, { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .limit(5)
+
+      retainerData = data
+      rCount = count
+    }
     retainers.value = (retainerData ?? []) as RetainerRow[]
     retainerCount.value = rCount ?? 0
 
