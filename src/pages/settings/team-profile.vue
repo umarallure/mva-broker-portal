@@ -454,6 +454,12 @@ onBeforeRouteLeave((to) => {
               <span class="hidden sm:inline-flex rounded-full border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-2.5 py-0.5 text-xs font-medium text-highlighted">
                 {{ positionLabel(member.position, member.position_other) }}
               </span>
+              <span
+                v-if="member.phone"
+                class="hidden sm:inline-flex rounded-full border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-2.5 py-0.5 text-xs text-muted"
+              >
+                {{ member.phone }}
+              </span>
               <span class="hidden sm:inline-flex rounded-full border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-2.5 py-0.5 text-xs text-muted">
                 {{ shiftLabel(member.shift_availability) }}
               </span>

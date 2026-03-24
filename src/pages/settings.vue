@@ -21,6 +21,13 @@ const links = computed(() => {
     exact: true
   }]]
 
+  items.push([{
+    label: 'Expertise & Jurisdiction',
+    icon: 'i-lucide-map-pin',
+    to: '/settings/expertise',
+    exact: true
+  }])
+
   if (!isAccounts.value) {
     items.push([{
       label: 'Team Profile',
@@ -31,11 +38,6 @@ const links = computed(() => {
   }
 
   items.push([{
-    label: 'Expertise & Jurisdiction',
-    icon: 'i-lucide-map-pin',
-    to: '/settings/expertise',
-    exact: true
-  }, {
     label: 'Retainer Contract Document',
     icon: 'i-lucide-file-text',
     to: '/settings/retainer-contract-document',
