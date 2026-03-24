@@ -163,17 +163,67 @@ const load = async () => {
   try {
     await auth.init()
 
-    const userId = auth.state.value.user?.id ?? null
+    const userId = auth.state.value.profile?.user_id ?? null
     const userRole = auth.state.value.profile?.role ?? null
 
-    let queryBuilder = supabase
-      .from('daily_deal_flow')
-      .select('id,submission_id,insured_name,client_phone_number,lead_vendor,state,date,status,submitted_attorney_status,assigned_attorney_id,agent,carrier,created_at')
+    // For lawyers, build a list of name keywords for fallback matching
+    let nameKeywords: string[] = []
+    if (userRole === 'lawyer' && userId) {
+      const { data: attorneyProfile } = await supabase
+        .from('attorney_profiles')
+        .select('full_name')
+        .eq('user_id', userId)
+        .maybeSingle()
 
-    queryBuilder = queryBuilder.ilike('submitted_attorney_status', '%submitted%')
+      const fullName = attorneyProfile?.full_name?.trim() || null
+      const displayName = auth.state.value.profile?.display_name?.trim() || null
+      const email = auth.state.value.profile?.email || null
+      // Extract name from email prefix (e.g. "bradleydworkin" from "bradleydworkin@...")
+      const emailName = email ? email.split('@')[0].replace(/[^a-zA-Z]/g, ' ').trim() : null
+
+      // Collect name keywords from all sources
+      const rawName = fullName || displayName || emailName || ''
+      nameKeywords = rawName
+        .split(/[\s\-_]+/)
+        .map((w: string) => w.trim().toLowerCase())
+        .filter((w: string) => w.length >= 3)
+    }
+
+    const selectCols = 'id,submission_id,insured_name,client_phone_number,lead_vendor,state,date,status,submitted_attorney_status,assigned_attorney_id,submitted_attorney,agent,carrier,created_at'
+
+    let dealFlows: DailyDealFlow[] = []
 
     if (userRole === 'lawyer' && userId) {
-      queryBuilder = queryBuilder.eq('assigned_attorney_id', userId)
+      // First try matching by assigned_attorney_id
+      const { data: byId, error: byIdErr } = await supabase
+        .from('daily_deal_flow')
+        .select(selectCols)
+        .ilike('submitted_attorney_status', '%submitted%')
+        .eq('assigned_attorney_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1000)
+
+      if (byIdErr) throw byIdErr
+      dealFlows = (byId ?? []) as DailyDealFlow[]
+
+      // Fallback: match by any name keyword in submitted_attorney field
+      if (dealFlows.length === 0 && nameKeywords.length > 0) {
+        // Build OR filter for each keyword: submitted_attorney.ilike.%keyword1%,submitted_attorney.ilike.%keyword2%
+        const orFilter = nameKeywords
+          .map((kw: string) => `submitted_attorney.ilike.%${kw}%`)
+          .join(',')
+
+        const { data: byName, error: byNameErr } = await supabase
+          .from('daily_deal_flow')
+          .select(selectCols)
+          .ilike('submitted_attorney_status', '%submitted%')
+          .or(orFilter)
+          .order('created_at', { ascending: false })
+          .limit(1000)
+
+        if (byNameErr) throw byNameErr
+        dealFlows = (byName ?? []) as DailyDealFlow[]
+      }
     } else if (!userRole && userId) {
       const { data: userData } = await supabase
         .from('app_users')
@@ -189,7 +239,16 @@ const load = async () => {
           .maybeSingle()
 
         if (centerData?.lead_vendor) {
-          queryBuilder = queryBuilder.eq('lead_vendor', centerData.lead_vendor)
+          const { data, error: supaError } = await supabase
+            .from('daily_deal_flow')
+            .select(selectCols)
+            .ilike('submitted_attorney_status', '%submitted%')
+            .eq('lead_vendor', centerData.lead_vendor)
+            .order('created_at', { ascending: false })
+            .limit(1000)
+
+          if (supaError) throw supaError
+          dealFlows = (data ?? []) as DailyDealFlow[]
         } else {
           rows.value = []
           leads.value = []
@@ -200,15 +259,19 @@ const load = async () => {
         leads.value = []
         return
       }
+    } else {
+      // Admin/agent: fetch all
+      const { data, error: supaError } = await supabase
+        .from('daily_deal_flow')
+        .select(selectCols)
+        .ilike('submitted_attorney_status', '%submitted%')
+        .order('created_at', { ascending: false })
+        .limit(1000)
+
+      if (supaError) throw supaError
+      dealFlows = (data ?? []) as DailyDealFlow[]
     }
 
-    const { data, error: supaError } = await queryBuilder
-      .order('created_at', { ascending: false })
-      .limit(1000)
-
-    if (supaError) throw supaError
-
-    let dealFlows = (data ?? []) as DailyDealFlow[]
     dealFlows.forEach((r) => {
       r.source = 'daily_deal_flow'
     })
@@ -544,7 +607,7 @@ const stageIconClass = (key: CustomerStageKey) => {
 <template>
   <UDashboardPanel id="retainers">
     <template #header>
-      <UDashboardNavbar title="My Customers">
+      <UDashboardNavbar title="My Cases">
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
