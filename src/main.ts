@@ -22,6 +22,7 @@ const router = createRouter({
     { path: '/retainers/:id', component: () => import('./pages/retainers-details.vue') },
     { path: '/fulfillment', component: () => import('./pages/fulfillment.vue') },
     { path: '/retainer-settlements', component: () => import('./pages/retainer-settlements.vue'), meta: { requiresAdmin: true } },
+    { path: '/product-portal', component: () => import('./pages/product-portal.vue') },
     { path: '/invoicing', redirect: '/invoicing/lawyer' },
     { path: '/invoicing/lawyer', component: () => import('./pages/invoicing.vue') },
     { path: '/invoicing/publisher', component: () => import('./pages/invoicing.vue'), meta: { requiresAdmin: true } },

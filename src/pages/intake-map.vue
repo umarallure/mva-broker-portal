@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import usSvgFallbackRaw from '../assets/us.svg?raw'
 
 import { useAuth } from '../composables/useAuth'
@@ -17,6 +17,7 @@ type StateOrders = {
 }
 
 const auth = useAuth()
+const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const loading = ref(false)
@@ -1206,6 +1207,12 @@ onMounted(() => {
     if (mapRoot.value) {
       mapRoot.value.classList.remove('opacity-0')
       mapRoot.value.classList.add('ap-blur-in')
+    }
+
+    // Auto-open create order modal when navigated from Product Portal
+    if (route.query.action === 'create-order' && !isAccountInactive.value) {
+      openCreateOrder()
+      router.replace({ path: route.path, query: {} })
     }
   }
 

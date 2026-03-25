@@ -65,6 +65,14 @@ const links = computed(() => [[
     onSelect: () => { open.value = false }
   }] : []),
 
+  // Product Portal — visible to all non-accounts roles
+  ...(!isAccounts.value ? [{
+    label: 'Product Offering',
+    icon: 'i-lucide-tag',
+    to: '/product-portal',
+    onSelect: () => { open.value = false }
+  }] : []),
+
   // Retainer Settlements — admin, super_admin, accounts
   ...(isAdminOrAccounts.value ? [{
     label: 'Retainer Settlements',
