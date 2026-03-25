@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { DateFormatter, getLocalTimeZone, CalendarDate, today } from '@internationalized/date'
 
 import { useAuth } from '../composables/useAuth'
+import { useDragGhost } from '../composables/useDragGhost'
 import { deleteInvoice, listInvoices, markInvoiceAsPaid, requestChargeback, updateInvoice, type InvoiceRow, type InvoiceStatus } from '../lib/invoices'
 import { supabase } from '../lib/supabase'
 
@@ -50,12 +52,22 @@ const query = ref('')
 const page = ref(1)
 const PAGE_SIZE = 25
 const viewMode = ref<ViewMode>('kanban')
+const showFilters = ref(false)
 const selectedStatus = ref<'all' | InvoiceStatus>('all')
 const filterVendor = ref('')
 const filterAttorney = ref('')
 const filterState = ref<'all' | string>('all')
 const filterDateStart = ref('')
 const filterDueDate = ref<'all' | 'today' | 'yesterday' | 'this_week'>('all')
+const selectedDateRange = ref('all')
+
+const calendarDf = new DateFormatter('en-US', { dateStyle: 'medium' })
+const calendarRange = ref<{ start: CalendarDate | undefined; end: CalendarDate | undefined }>({
+  start: undefined,
+  end: undefined
+})
+const calendarOpen = ref(false)
+const calendarMaxDate = computed(() => today(getLocalTimeZone()))
 
 // Drag & drop
 const dragInvoiceId = ref<string | null>(null)
@@ -80,6 +92,70 @@ const normalizeState = (v: unknown) => {
   if (!s) return ''
   return s.length > 2 ? s.slice(0, 2) : s
 }
+
+const formatDateInput = (value: Date) => {
+  const y = value.getFullYear()
+  const m = String(value.getMonth() + 1).padStart(2, '0')
+  const d = String(value.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+const getStartOfDay = (value: Date) => {
+  const start = new Date(value)
+  start.setHours(0, 0, 0, 0)
+  return start
+}
+
+const setDateStartFromRange = (range: { start?: CalendarDate; end?: CalendarDate }) => {
+  if (range.start) {
+    filterDateStart.value = formatDateInput(range.start.toDate(getLocalTimeZone()))
+    return
+  }
+  filterDateStart.value = ''
+}
+
+const PRESET_RANGES = [
+  { label: 'Today', days: 0 },
+  { label: 'Yesterday', days: 1 },
+  { label: 'Last 7 days', days: 7 },
+  { label: 'Last 30 days', days: 30 },
+  { label: 'Last 3 months', months: 3 }
+] as const
+
+const isPresetSelected = (range: { days?: number; months?: number }) => {
+  if (!calendarRange.value.start || !calendarRange.value.end) return false
+  const end = today(getLocalTimeZone())
+  let start = end.copy()
+  if (range.days !== undefined) {
+    start = range.days === 0 ? end.copy() : start.subtract({ days: range.days })
+  } else if (range.months) {
+    start = start.subtract({ months: range.months })
+  }
+  return calendarRange.value.start.compare(start) === 0 && calendarRange.value.end.compare(end) === 0
+}
+
+const selectPresetRange = (range: { days?: number; months?: number }) => {
+  const end = today(getLocalTimeZone())
+  let start = end.copy()
+  if (range.days !== undefined) {
+    start = range.days === 0 ? end.copy() : start.subtract({ days: range.days })
+  } else if (range.months) {
+    start = start.subtract({ months: range.months })
+  }
+  calendarRange.value = { start, end }
+  calendarOpen.value = false
+}
+
+type DateRangeOption = { label: string; value: string }
+const DATE_RANGE_OPTIONS: DateRangeOption[] = [
+  { label: 'All Dates', value: 'all' },
+  { label: 'Today', value: 'today' },
+  { label: 'Yesterday', value: 'yesterday' },
+  { label: 'Last Week', value: 'last_week' },
+  { label: 'Last Month', value: 'last_month' },
+  { label: 'Last 3 Months', value: 'last_3_months' },
+  { label: 'Custom Range', value: 'custom' }
+]
 
 const getDealState = (d: { state?: string | null }) => {
   return normalizeState(d.state ?? '')
@@ -130,6 +206,109 @@ const vendorOptions = computed(() => {
   return [...new Set(names)].sort((a, b) => a.localeCompare(b))
 })
 
+const statusFilterItems = computed(() =>
+  isPublisherMode.value
+    ? [
+        { label: 'All Statuses', value: 'all' },
+        { label: 'Billable – Awaiting to be Paid', value: 'pending' },
+        { label: 'In Review', value: 'in_review' },
+        { label: 'Paid', value: 'paid' },
+        { label: 'Chargeback', value: 'chargeback' }
+      ]
+    : [
+        { label: 'All Statuses', value: 'all' },
+        { label: 'Billable (Approved)', value: 'pending' },
+        { label: 'Pending', value: 'in_review' },
+        { label: 'Paid (Successful Invoice)', value: 'paid' },
+        { label: 'Chargeback (14 Days Period)', value: 'chargeback' }
+      ]
+)
+
+const dueDateItems = [
+  { label: 'All Due Dates', value: 'all' },
+  { label: 'Due Today', value: 'today' },
+  { label: 'Due Yesterday', value: 'yesterday' },
+  { label: 'Due This Week', value: 'this_week' }
+]
+
+const activeFilterCount = computed(() => {
+  let count = 0
+
+  if (selectedStatus.value !== 'all') count++
+  if (!isPublisherMode.value && filterState.value !== 'all') count++
+  if (filterDueDate.value !== 'all') count++
+  if (canFilterByVendor.value && filterVendor.value.trim()) count++
+  if (canFilterByAttorney.value && filterAttorney.value.trim()) count++
+
+  return count
+})
+
+const hasActiveFilters = computed(() =>
+  activeFilterCount.value > 0
+  || selectedDateRange.value !== 'all'
+  || query.value.trim().length > 0
+)
+
+const resetAllFilters = () => {
+  query.value = ''
+  selectedStatus.value = 'all'
+  filterVendor.value = ''
+  filterAttorney.value = ''
+  filterState.value = 'all'
+  filterDueDate.value = 'all'
+  selectedDateRange.value = 'all'
+  filterDateStart.value = ''
+  calendarRange.value = { start: undefined, end: undefined }
+  calendarOpen.value = false
+  showFilters.value = false
+}
+
+const matchesCreatedDateFilter = (rawDate: string | null): boolean => {
+  const range = selectedDateRange.value
+  if (range === 'all') return true
+  if (!rawDate) return false
+
+  const recordDate = getStartOfDay(new Date(rawDate))
+  const todayDate = getStartOfDay(new Date())
+
+  if (range === 'today') {
+    return recordDate.getTime() === todayDate.getTime()
+  }
+  if (range === 'yesterday') {
+    const yesterdayDate = new Date(todayDate)
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1)
+    return recordDate.getTime() === yesterdayDate.getTime()
+  }
+  if (range === 'last_week') {
+    const weekAgo = new Date(todayDate)
+    weekAgo.setDate(weekAgo.getDate() - 7)
+    return recordDate.getTime() >= weekAgo.getTime() && recordDate.getTime() <= todayDate.getTime()
+  }
+  if (range === 'last_month') {
+    const monthAgo = new Date(todayDate)
+    monthAgo.setDate(monthAgo.getDate() - 30)
+    return recordDate.getTime() >= monthAgo.getTime() && recordDate.getTime() <= todayDate.getTime()
+  }
+  if (range === 'last_3_months') {
+    const threeMonthsAgo = new Date(todayDate)
+    threeMonthsAgo.setDate(threeMonthsAgo.getDate() - 90)
+    return recordDate.getTime() >= threeMonthsAgo.getTime() && recordDate.getTime() <= todayDate.getTime()
+  }
+  if (range === 'custom') {
+    const cr = calendarRange.value
+    if (cr.start && cr.end) {
+      const from = getStartOfDay(cr.start.toDate(getLocalTimeZone()))
+      const to = getStartOfDay(cr.end.toDate(getLocalTimeZone()))
+      return recordDate.getTime() >= from.getTime() && recordDate.getTime() <= to.getTime()
+    }
+    if (cr.start) {
+      const from = getStartOfDay(cr.start.toDate(getLocalTimeZone()))
+      return recordDate.getTime() >= from.getTime()
+    }
+  }
+  return true
+}
+
 const filteredInvoices = computed(() => {
   const q = query.value.trim().toLowerCase()
   const today = new Date()
@@ -165,11 +344,7 @@ const filteredInvoices = computed(() => {
       if (!an.includes(filterAttorney.value.toLowerCase())) return false
     }
 
-    if (filterDateStart.value) {
-      const created = (inv.created_at ?? '').slice(0, 10)
-      if (!created) return false
-      if (created < filterDateStart.value) return false
-    }
+    if (!matchesCreatedDateFilter(inv.created_at ?? null)) return false
 
     if (filterDueDate.value !== 'all' && inv.due_date) {
       const dd = inv.due_date.slice(0, 10)
@@ -201,6 +376,8 @@ const filteredQualifiedDeals = computed(() => {
   const attorneyQ = filterAttorney.value.trim().toLowerCase()
 
   return qualifiedDeals.value.filter((d) => {
+    if (!matchesCreatedDateFilter(d.created_at ?? null)) return false
+
     if (!isPublisherMode.value && filterState.value !== 'all') {
       const want = normalizeState(filterState.value)
       const s = getDealState(d)
@@ -258,8 +435,15 @@ const invoicesByStatus = computed(() => {
 })
 
 const totalAmount = computed(() => invoices.value.reduce((sum, inv) => sum + Number(inv.total_amount), 0))
-const paidAmount = computed(() => invoices.value.filter(inv => inv.status === 'paid').reduce((sum, inv) => sum + Number(inv.total_amount), 0))
-const pendingAmount = computed(() => invoices.value.filter(inv => inv.status === 'pending').reduce((sum, inv) => sum + Number(inv.total_amount), 0))
+const billableAmount = computed(() => invoices.value
+  .filter(inv => getDisplayStatus(inv) === 'pending')
+  .reduce((sum, inv) => sum + Number(inv.total_amount), 0))
+const reviewAmount = computed(() => invoices.value
+  .filter(inv => getDisplayStatus(inv) === 'in_review')
+  .reduce((sum, inv) => sum + Number(inv.total_amount), 0))
+const paidAmount = computed(() => invoices.value
+  .filter(inv => getDisplayStatus(inv) === 'paid')
+  .reduce((sum, inv) => sum + Number(inv.total_amount), 0))
 const chargebackAmount = computed(() => invoices.value.filter(inv => inv.status === 'chargeback').reduce((sum, inv) => sum + Number(inv.total_amount), 0))
 
 const formatMoney = (n: number) => {
@@ -280,20 +464,48 @@ const formatDate = (value: string | null) => {
   }
 }
 
+const getInitials = (value: string | null | undefined) => {
+  const parts = String(value ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+
+  if (parts.length === 0) return 'NA'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return `${parts[0][0] ?? ''}${parts[1][0] ?? ''}`.toUpperCase()
+}
+
 const getStatusLabel = (status: InvoiceStatus) => {
-  if (status === 'billable') return 'Billable'
-  if (status === 'pending') return isPublisherMode.value ? 'Billable – Awaiting to be Paid' : 'Billable'
-  if (status === 'in_review') return 'In Review'
+  if (status === 'billable') return isPublisherMode.value ? 'Billable' : 'Billable (Approved)'
+  if (status === 'pending') return isPublisherMode.value ? 'Billable – Awaiting to be Paid' : 'Billable (Approved)'
+  if (status === 'in_review') return isPublisherMode.value ? 'In Review' : 'Pending'
   if (status === 'signed_awaiting') return 'Signed – Awaiting to be Paid'
   if (status === 'in_preview') return 'In Preview'
-  if (status === 'paid') return 'Paid'
-  return 'Chargeback'
+  if (status === 'paid') return isPublisherMode.value ? 'Paid' : 'Paid (Successful Invoice)'
+  return isPublisherMode.value ? 'Chargeback' : 'Chargeback (14 Days Period)'
+}
+
+const getSummaryCardLabel = (status: InvoiceStatus) => {
+  if (!isPublisherMode.value) {
+    if (status === 'pending') return 'Billable'
+    if (status === 'paid') return 'Paid'
+    if (status === 'chargeback') return 'Chargeback'
+  }
+
+  return getStatusLabel(status)
+}
+
+const getEmptyStateText = (status: InvoiceStatus) => {
+  if (status === 'in_review') return 'No pending invoices.'
+  if (status === 'paid') return 'No paid invoices.'
+  if (status === 'chargeback') return 'No chargeback invoices.'
+  return 'No invoices.'
 }
 
 const getStatusIcon = (status: InvoiceStatus) => {
   if (status === 'billable') return 'i-lucide-file-plus'
-  if (status === 'pending') return 'i-lucide-clock'
-  if (status === 'in_review') return 'i-lucide-eye'
+  if (status === 'pending') return isPublisherMode.value ? 'i-lucide-clock' : 'i-lucide-file-check'
+  if (status === 'in_review') return isPublisherMode.value ? 'i-lucide-eye' : 'i-lucide-clock'
   if (status === 'signed_awaiting') return 'i-lucide-pen-line'
   if (status === 'in_preview') return 'i-lucide-search'
   if (status === 'paid') return 'i-lucide-check-circle'
@@ -302,19 +514,71 @@ const getStatusIcon = (status: InvoiceStatus) => {
 
 const getStatusColorClass = (status: InvoiceStatus) => {
   if (status === 'billable') return 'text-blue-400'
-  if (status === 'pending') return 'text-amber-400'
-  if (status === 'in_review') return 'text-violet-400'
+  if (status === 'pending') return 'text-blue-400'
+  if (status === 'in_review') return 'text-amber-400'
   if (status === 'signed_awaiting') return 'text-emerald-400'
   if (status === 'in_preview') return 'text-sky-400'
   if (status === 'paid') return 'text-green-400'
   return 'text-red-400'
 }
 
-const handleDragStart = (invoiceId: string) => {
+const getKanbanHeaderBg = (status: InvoiceStatus) => {
+  switch (status) {
+    case 'billable':
+    case 'pending':
+      return 'bg-gradient-to-r from-blue-500/[0.10] via-blue-500/[0.04] to-transparent dark:from-blue-400/[0.14] dark:via-blue-400/[0.06] dark:to-transparent'
+    case 'in_review':
+      return 'bg-gradient-to-r from-amber-500/[0.10] via-amber-500/[0.04] to-transparent dark:from-amber-400/[0.14] dark:via-amber-400/[0.06] dark:to-transparent'
+    case 'paid':
+      return 'bg-gradient-to-r from-green-500/[0.10] via-green-500/[0.04] to-transparent dark:from-green-400/[0.14] dark:via-green-400/[0.06] dark:to-transparent'
+    case 'chargeback':
+      return 'bg-gradient-to-r from-red-500/[0.10] via-red-500/[0.04] to-transparent dark:from-red-400/[0.14] dark:via-red-400/[0.06] dark:to-transparent'
+    default:
+      return ''
+  }
+}
+
+const getKanbanIconBgClass = (status: InvoiceStatus) => {
+  switch (status) {
+    case 'billable':
+    case 'pending':
+      return 'bg-blue-500/10'
+    case 'in_review':
+      return 'bg-amber-500/10'
+    case 'paid':
+      return 'bg-green-500/10'
+    case 'chargeback':
+      return 'bg-red-500/10'
+    default:
+      return 'bg-black/[0.04] dark:bg-white/[0.06]'
+  }
+}
+
+const getKanbanAccentStyle = (status: InvoiceStatus) => {
+  switch (status) {
+    case 'billable':
+    case 'pending':
+      return { '--ap-accent': '#60a5fa', '--ap-accent-rgb': '96 165 250' }
+    case 'in_review':
+      return { '--ap-accent': '#fbbf24', '--ap-accent-rgb': '251 191 36' }
+    case 'paid':
+      return { '--ap-accent': '#4ade80', '--ap-accent-rgb': '74 222 128' }
+    case 'chargeback':
+      return { '--ap-accent': '#f87171', '--ap-accent-rgb': '248 113 113' }
+    default:
+      return { '--ap-accent': '#94a3b8', '--ap-accent-rgb': '148 163 184' }
+  }
+}
+
+const { startDrag, endDrag } = useDragGhost()
+
+const handleDragStart = (e: DragEvent, invoiceId: string) => {
+  startDrag(e)
   dragInvoiceId.value = invoiceId
 }
 
 const handleDragEnd = () => {
+  endDrag()
   dragInvoiceId.value = null
 }
 
@@ -606,13 +870,54 @@ watch(isPublisherMode, () => {
   qualifiedDealVendorNameMap.value = new Map()
   qualifiedDealLawyerNameMap.value = new Map()
   page.value = 1
+  showFilters.value = false
   query.value = ''
   selectedStatus.value = 'all'
   filterVendor.value = ''
   filterAttorney.value = ''
   filterState.value = 'all'
+  filterDateStart.value = ''
+  filterDueDate.value = 'all'
+  selectedDateRange.value = 'all'
+  calendarRange.value = { start: undefined, end: undefined }
   load()
 })
+
+watch(selectedDateRange, (range) => {
+  if (range === 'custom') return
+
+  calendarOpen.value = false
+  calendarRange.value = { start: undefined, end: undefined }
+
+  const end = new Date()
+  end.setHours(0, 0, 0, 0)
+  let start: Date | null = null
+
+  if (range === 'today') {
+    start = new Date(end)
+  } else if (range === 'yesterday') {
+    start = new Date(end)
+    start.setDate(start.getDate() - 1)
+  } else if (range === 'last_week') {
+    start = new Date(end)
+    start.setDate(start.getDate() - 7)
+  } else if (range === 'last_month') {
+    start = new Date(end)
+    start.setDate(start.getDate() - 30)
+  } else if (range === 'last_3_months') {
+    start = new Date(end)
+    start.setDate(start.getDate() - 90)
+  }
+
+  filterDateStart.value = start ? formatDateInput(start) : ''
+})
+
+watch(calendarRange, (range) => {
+  if (range.start && range.end) {
+    selectedDateRange.value = 'custom'
+  }
+  setDateStartFromRange(range)
+}, { deep: true })
 
 const openQualifiedDeal = (deal: QualifiedDealRow) => {
   if (isPublisherMode.value) {
@@ -718,7 +1023,7 @@ watch([selectedStatus], () => {
   load()
 })
 
-watch([query, filterVendor, filterAttorney, filterDateStart, filterDueDate], () => {
+watch([query, filterVendor, filterAttorney, filterDateStart, filterDueDate, selectedDateRange], () => {
   page.value = 1
 })
 
@@ -726,13 +1031,12 @@ watch([filterState], () => {
   page.value = 1
 })
 
+watch(calendarRange, () => {
+  page.value = 1
+}, { deep: true })
+
 watch(canFilterByVendor, (allowed) => {
   if (!allowed && filterVendor.value) filterVendor.value = ''
-})
-
-watch(isPublisherMode, () => {
-  page.value = 1
-  load()
 })
 
 watch(pageCount, () => {
@@ -750,11 +1054,6 @@ watch(pageCount, () => {
 
         <template #right>
           <div class="flex items-center gap-2">
-            <div class="hidden items-center gap-1.5 rounded-full border border-[var(--ap-accent)]/20 bg-[var(--ap-accent)]/8 px-3 py-1 sm:flex">
-              <span class="h-1.5 w-1.5 rounded-full bg-[var(--ap-accent)] animate-pulse" />
-              <span class="text-xs font-medium text-[var(--ap-accent)]">{{ invoices.length }} total</span>
-            </div>
-
             <UButton
               v-if="isAdminOrSuper"
               color="primary"
@@ -768,13 +1067,13 @@ watch(pageCount, () => {
 
             <UButton
               color="neutral"
-              variant="ghost"
+              variant="outline"
               icon="i-lucide-refresh-cw"
-              size="sm"
               :loading="loading"
-              class="rounded-lg"
               @click="load"
-            />
+            >
+              Refresh
+            </UButton>
           </div>
         </template>
       </UDashboardNavbar>
@@ -783,36 +1082,39 @@ watch(pageCount, () => {
     <template #body>
       <div class="flex h-full min-h-0 flex-col gap-5">
         <!-- Stats Cards -->
-        <div class="grid gap-4 sm:grid-cols-4">
-          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5">
-            <div class="flex items-center justify-between">
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <div class="ap-fade-in group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
+            <div class="absolute inset-y-0 left-0 w-1 bg-orange-500 dark:bg-orange-600" />
+            <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-muted">Total Invoiced</p>
-                <p class="mt-1 text-2xl font-bold text-highlighted">{{ formatMoney(totalAmount) }}</p>
+                <p class="text-[10px] font-medium uppercase tracking-wider text-orange-500 dark:text-orange-600">Total Invoiced</p>
+                <p class="mt-1 text-2xl font-bold text-highlighted tabular-nums">{{ formatMoney(totalAmount) }}</p>
               </div>
-              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--ap-accent)]/10">
-                <UIcon name="i-lucide-receipt" class="text-lg text-[var(--ap-accent)]" />
+              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/10 dark:bg-orange-600/15">
+                <UIcon name="i-lucide-receipt" class="text-lg text-orange-500 dark:text-orange-600" />
               </div>
             </div>
           </div>
 
-          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5">
-            <div class="flex items-center justify-between">
+          <div class="ap-fade-in ap-delay-1 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
+            <div class="absolute inset-y-0 left-0 w-1 bg-blue-400" />
+            <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-muted">Paid</p>
-                <p class="mt-1 text-2xl font-bold text-green-400">{{ formatMoney(paidAmount) }}</p>
+                <p class="text-[10px] font-medium uppercase tracking-wider text-blue-500 dark:text-blue-400">{{ getSummaryCardLabel('pending') }}</p>
+                <p class="mt-1 text-2xl font-bold text-blue-500 dark:text-blue-400 tabular-nums">{{ formatMoney(billableAmount) }}</p>
               </div>
-              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10">
-                <UIcon name="i-lucide-check-circle" class="text-lg text-green-400" />
+              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
+                <UIcon name="i-lucide-file-check" class="text-lg text-blue-400" />
               </div>
             </div>
           </div>
 
-          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5">
-            <div class="flex items-center justify-between">
+          <div class="ap-fade-in ap-delay-2 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
+            <div class="absolute inset-y-0 left-0 w-1 bg-amber-400" />
+            <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-muted">Pending</p>
-                <p class="mt-1 text-2xl font-bold text-amber-400">{{ formatMoney(pendingAmount) }}</p>
+                <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">{{ getSummaryCardLabel('in_review') }}</p>
+                <p class="mt-1 text-2xl font-bold text-amber-500 dark:text-amber-400 tabular-nums">{{ formatMoney(reviewAmount) }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
                 <UIcon name="i-lucide-clock" class="text-lg text-amber-400" />
@@ -820,11 +1122,25 @@ watch(pageCount, () => {
             </div>
           </div>
 
-          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5">
-            <div class="flex items-center justify-between">
+          <div class="ap-fade-in ap-delay-3 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
+            <div class="absolute inset-y-0 left-0 w-1 bg-green-400" />
+            <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-muted">Chargeback</p>
-                <p class="mt-1 text-2xl font-bold text-red-400">{{ formatMoney(chargebackAmount) }}</p>
+                <p class="text-[10px] font-medium uppercase tracking-wider text-green-500 dark:text-green-400">{{ getSummaryCardLabel('paid') }}</p>
+                <p class="mt-1 text-2xl font-bold text-green-500 dark:text-green-400 tabular-nums">{{ formatMoney(paidAmount) }}</p>
+              </div>
+              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10">
+                <UIcon name="i-lucide-check-circle" class="text-lg text-green-400" />
+              </div>
+            </div>
+          </div>
+
+          <div class="ap-fade-in ap-delay-4 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
+            <div class="absolute inset-y-0 left-0 w-1 bg-red-400" />
+            <div class="flex items-center justify-between px-5 py-4 pl-5">
+              <div>
+                <p class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">{{ getSummaryCardLabel('chargeback') }}</p>
+                <p class="mt-1 text-2xl font-bold text-red-500 dark:text-red-400 tabular-nums">{{ formatMoney(chargebackAmount) }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10">
                 <UIcon name="i-lucide-alert-circle" class="text-lg text-red-400" />
@@ -834,123 +1150,200 @@ watch(pageCount, () => {
         </div>
 
         <!-- Toolbar -->
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div class="flex flex-1 flex-wrap items-center gap-2.5">
-            <div class="relative max-w-xs flex-1">
+        <div class="ap-fade-in ap-delay-5 overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
+          <div class="flex flex-wrap items-center gap-3 px-5 py-3">
+            <div class="flex flex-1 flex-wrap items-center gap-3 min-w-0">
               <UInput
                 v-model="query"
-                class="w-full [&_input]:rounded-xl [&_input]:border-[var(--ap-card-border)] [&_input]:bg-[var(--ap-card-hover)] [&_input]:pl-10 [&_input]:backdrop-blur-sm"
+                class="max-w-xs"
                 icon="i-lucide-search"
+                size="sm"
                 placeholder="Search invoices..."
               />
+
+              <USelect
+                v-if="selectedDateRange !== 'custom'"
+                v-model="selectedDateRange"
+                :items="DATE_RANGE_OPTIONS"
+                value-key="value"
+                label-key="label"
+                size="sm"
+                class="w-44"
+              />
+
+              <UPopover
+                v-if="selectedDateRange === 'custom'"
+                v-model:open="calendarOpen"
+                :content="{ align: 'start' }"
+                :ui="{ content: 'bg-white/95 dark:bg-[#1a1a1a]/90 backdrop-blur-xl border-black/[0.06] dark:border-white/[0.1] shadow-2xl rounded-xl' }"
+              >
+                <UButton
+                  size="sm"
+                  color="neutral"
+                  variant="outline"
+                  icon="i-lucide-calendar"
+                >
+                  <span class="truncate text-xs">
+                    <template v-if="calendarRange.start && calendarRange.end">
+                      {{ calendarDf.format(calendarRange.start.toDate(getLocalTimeZone())) }} – {{ calendarDf.format(calendarRange.end.toDate(getLocalTimeZone())) }}
+                    </template>
+                    <template v-else>
+                      Pick dates
+                    </template>
+                  </span>
+                  <template #trailing>
+                    <UIcon name="i-lucide-chevron-down" class="size-3.5 text-muted" />
+                  </template>
+                </UButton>
+
+                <template #content>
+                  <div class="flex items-stretch sm:divide-x divide-black/[0.06] dark:divide-white/[0.08]">
+                    <div class="hidden sm:flex flex-col py-1.5">
+                      <button
+                        v-for="range in PRESET_RANGES"
+                        :key="range.label"
+                        class="px-4 py-1.5 text-left text-[11px] font-medium transition-colors whitespace-nowrap"
+                        :class="isPresetSelected(range)
+                          ? 'bg-primary/10 text-primary'
+                          : 'text-muted hover:bg-black/[0.03] dark:hover:bg-white/[0.04] hover:text-highlighted'"
+                        @click="selectPresetRange(range)"
+                      >
+                        {{ range.label }}
+                      </button>
+                      <button
+                        class="mt-auto px-4 py-1.5 text-left text-[11px] font-medium text-muted hover:bg-black/[0.03] dark:hover:bg-white/[0.04] hover:text-highlighted transition-colors border-t border-black/[0.06] dark:border-white/[0.08]"
+                        @click="selectedDateRange = 'all'; calendarRange = { start: undefined, end: undefined }; calendarOpen = false"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <UCalendar
+                      v-model="calendarRange"
+                      class="p-2"
+                      :number-of-months="2"
+                      :max-value="calendarMaxDate"
+                      range
+                    />
+                  </div>
+                </template>
+              </UPopover>
             </div>
 
-            <USelect
-              v-model="selectedStatus"
-              :items="isPublisherMode
-                ? [
-                    { label: 'All Statuses', value: 'all' },
-                    { label: 'Billable – Awaiting to be Paid', value: 'pending' },
-                    { label: 'In Review', value: 'in_review' },
-                    { label: 'Paid', value: 'paid' },
-                    { label: 'Chargeback', value: 'chargeback' }
-                  ]
-                : [
-                    { label: 'All Statuses', value: 'all' },
-                    { label: 'Billable', value: 'pending' },
-                    { label: 'In Review', value: 'in_review' },
-                    { label: 'Paid', value: 'paid' },
-                    { label: 'Chargeback', value: 'chargeback' }
-                  ]"
-              value-key="value"
-              label-key="label"
-              class="w-44 [&_button]:rounded-xl [&_button]:border-[var(--ap-card-border)] [&_button]:bg-[var(--ap-card-hover)]"
-            />
-
-            <UInputMenu
-              v-if="canFilterByVendor"
-              v-model="filterVendor"
-              :items="vendorOptions"
-              create-item
-              class="w-44 [&_input]:rounded-xl [&_input]:border-[var(--ap-card-border)] [&_input]:bg-[var(--ap-card-hover)]"
-              placeholder="Filter by vendor..."
-            />
-
-            <UButton
-              v-if="canFilterByVendor && filterVendor"
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-x"
-              size="sm"
-              class="rounded-xl"
-              title="Clear vendor filter"
-              @click="filterVendor = ''"
-            />
-
-            <UInputMenu
-              v-if="canFilterByAttorney"
-              v-model="filterAttorney"
-              :items="attorneyOptions"
-              create-item
-              class="w-44 [&_input]:rounded-xl [&_input]:border-[var(--ap-card-border)] [&_input]:bg-[var(--ap-card-hover)]"
-              placeholder="Filter by attorney..."
-            />
-
-            <USelect
-              v-if="!isPublisherMode"
-              v-model="filterState"
-              :items="stateSelectItems"
-              class="w-44 [&_button]:rounded-xl [&_button]:border-[var(--ap-card-border)] [&_button]:bg-[var(--ap-card-hover)]"
-              value-key="value"
-              label-key="label"
-            />
-
-            <UButton
-              v-if="!isPublisherMode && filterState !== 'all'"
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-x"
-              size="sm"
-              class="rounded-xl"
-              title="Clear state filter"
-              @click="filterState = 'all'"
-            />
-
-            <UInput
-              v-model="filterDateStart"
-              type="date"
-              class="w-38 [&_input]:rounded-xl [&_input]:border-[var(--ap-card-border)] [&_input]:bg-[var(--ap-card-hover)]"
-              title="Created date start"
-            />
-
-            <USelect
-              v-model="filterDueDate"
-              :items="[
-                { label: 'Due: Any', value: 'all' },
-                { label: 'Due: Today', value: 'today' },
-                { label: 'Due: Yesterday', value: 'yesterday' },
-                { label: 'Due: This Week', value: 'this_week' }
-              ]"
-              class="w-44 [&_button]:rounded-xl [&_button]:border-[var(--ap-card-border)] [&_button]:bg-[var(--ap-card-hover)]"
-              value-key="value"
-              label-key="label"
-            />
+            <div class="ml-auto flex flex-wrap items-center justify-end gap-2.5 text-right">
+              <p
+                aria-live="polite"
+                class="text-sm font-medium text-muted tabular-nums"
+              >
+                {{ invoices.length }} total
+              </p>
+              <UButton
+                :icon="showFilters ? 'i-lucide-filter-x' : 'i-lucide-filter'"
+                size="xs"
+                :color="activeFilterCount > 0 ? 'primary' : 'neutral'"
+                :variant="showFilters ? 'soft' : 'outline'"
+                @click="showFilters = !showFilters"
+              >
+                {{ showFilters ? 'Hide Filters' : 'Filters' }}
+                <template v-if="activeFilterCount > 0" #trailing>
+                  <span class="flex size-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white">
+                    {{ activeFilterCount }}
+                  </span>
+                </template>
+              </UButton>
+              <UButton
+                v-if="hasActiveFilters"
+                icon="i-lucide-x"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                label="Reset all"
+                @click="resetAllFilters"
+              />
+              <div class="inline-flex rounded-xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-0.5">
+                <button
+                  v-for="mode in (['kanban', 'list'] as ViewMode[])"
+                  :key="mode"
+                  type="button"
+                  class="rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
+                  :class="viewMode === mode
+                    ? 'bg-[var(--ap-accent)] text-white shadow-sm'
+                    : 'text-muted hover:text-highlighted hover:bg-[var(--ap-card-divide)]'"
+                  @click="viewMode = mode"
+                >
+                  {{ mode === 'kanban' ? 'Board' : 'List' }}
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div class="flex items-center gap-2.5">
-            <div class="inline-flex rounded-xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-0.5">
-              <button
-                v-for="mode in (['kanban', 'list'] as ViewMode[])"
-                :key="mode"
-                type="button"
-                class="rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
-                :class="viewMode === mode
-                  ? 'bg-[var(--ap-accent)] text-white shadow-sm'
-                  : 'text-muted hover:text-highlighted hover:bg-[var(--ap-card-divide)]'"
-                @click="viewMode = mode"
-              >
-                {{ mode === 'kanban' ? 'Board' : 'List' }}
-              </button>
+          <div
+            class="ap-collapse"
+            :class="showFilters ? 'ap-collapse--open' : ''"
+          >
+            <div>
+              <div class="border-t border-black/[0.06] dark:border-white/[0.08] bg-black/[0.015] dark:bg-white/[0.02] px-5 py-4">
+            <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div>
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Statuses</label>
+                <USelect
+                  v-model="selectedStatus"
+                  :items="statusFilterItems"
+                  value-key="value"
+                  label-key="label"
+                  size="xs"
+                  class="w-full"
+                />
+              </div>
+
+              <div v-if="!isPublisherMode">
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">States</label>
+                <USelect
+                  v-model="filterState"
+                  :items="stateSelectItems"
+                  value-key="value"
+                  label-key="label"
+                  size="xs"
+                  class="w-full"
+                />
+              </div>
+
+              <div>
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Due Dates</label>
+                <USelect
+                  v-model="filterDueDate"
+                  :items="dueDateItems"
+                  value-key="value"
+                  label-key="label"
+                  size="xs"
+                  class="w-full"
+                />
+              </div>
+
+              <div v-if="canFilterByVendor">
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Vendors</label>
+                <UInputMenu
+                  v-model="filterVendor"
+                  :items="vendorOptions"
+                  create-item
+                  size="xs"
+                  class="w-full"
+                  placeholder="All vendors"
+                />
+              </div>
+
+              <div v-if="canFilterByAttorney">
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Attorneys</label>
+                <UInputMenu
+                  v-model="filterAttorney"
+                  :items="attorneyOptions"
+                  create-item
+                  size="xs"
+                  class="w-full"
+                  placeholder="All attorneys"
+                />
+              </div>
+            </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1034,136 +1427,145 @@ watch(pageCount, () => {
 
         <!-- Kanban View -->
         <div v-else-if="viewMode === 'kanban'" class="min-h-0 flex-1 overflow-hidden">
-          <div class="flex h-full gap-3 overflow-x-auto">
+          <div class="ap-fade-in ap-delay-5 flex h-full gap-4 pb-1 ap-overflow-defer">
             <div
-              v-for="status in kanbanStatuses"
+              v-for="(status, statusIdx) in kanbanStatuses"
               :key="status"
-              class="flex min-w-[260px] flex-1 flex-col rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] transition-colors"
+              class="ap-fade-in flex min-w-[280px] flex-1 flex-col overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-colors"
               :class="dragInvoiceId ? 'border-dashed' : ''"
+              :style="{ ...getKanbanAccentStyle(status), animationDelay: `${500 + statusIdx * 100}ms` }"
               @dragover="handleDragOver"
               @drop="status === 'pending' ? undefined : handleDrop($event, status)"
             >
-              <div class="flex items-center justify-between border-b border-[var(--ap-card-border)] px-4 py-3">
-                <div class="flex items-center gap-2">
-                  <UIcon :name="getStatusIcon(status)" class="text-sm" :class="getStatusColorClass(status)" />
+              <div
+                class="flex items-center justify-between border-b border-black/[0.06] dark:border-white/[0.08] px-4 py-3"
+                :class="getKanbanHeaderBg(status)"
+              >
+                <div class="flex items-center gap-2.5">
+                  <div
+                    class="flex h-7 w-7 items-center justify-center rounded-lg"
+                    :class="getKanbanIconBgClass(status)"
+                  >
+                    <UIcon :name="getStatusIcon(status)" class="text-xs" :class="getStatusColorClass(status)" />
+                  </div>
                   <span class="text-sm font-semibold text-highlighted">{{ getStatusLabel(status) }}</span>
                 </div>
-                <span class="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--ap-card-border)] px-1.5 text-[10px] font-bold text-muted">
-                  {{ invoicesByStatus.get(status)?.length ?? 0 }}
-                </span>
               </div>
 
-              <div class="flex-1 space-y-2 overflow-y-auto p-2 invoicing-scroll">
+              <div class="flex-1 space-y-2 overflow-y-auto p-3 invoicing-scroll">
+                <!-- Qualified deal cards (Billable column only) -->
                 <div
                   v-for="deal in (status === 'pending' ? filteredQualifiedDeals : [])"
                   :key="`deal-${deal.id}`"
-                  class="group cursor-pointer rounded-xl border border-dashed border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-3 transition-all duration-200 hover:border-[var(--ap-accent)]/30 hover:bg-[var(--ap-accent)]/[0.04]"
+                  class="invoicing-card group flex min-h-[148px] cursor-pointer flex-col rounded-lg border border-black/[0.05] dark:border-white/[0.06] bg-black/[0.025] dark:bg-white/[0.04] p-3.5 transition-all duration-200"
                   @click="openLeadDetails(deal)"
                 >
-                  <div class="flex items-start justify-between gap-2">
-                    <div class="min-w-0">
-                      <div class="truncate text-sm font-semibold text-highlighted group-hover:text-[var(--ap-accent)]">
-                        {{ deal.insured_name || '—' }}
-                      </div>
-                      <div v-if="isAdminOrSuper && isPublisherMode" class="mt-0.5 text-xs text-muted">
-                        {{ qualifiedDealVendorNameMap.get(String(deal.lead_vendor ?? '')) ?? deal.lead_vendor ?? '—' }}
-                      </div>
-                      <div v-if="!isPublisherMode" class="mt-0.5 text-xs text-muted">
-                        {{ deal.lead_vendor || '—' }}
-                      </div>
-                      <div v-if="!isPublisherMode" class="mt-0.5 text-xs text-muted">
-                        Attorney: {{ qualifiedDealLawyerNameMap.get(String(deal.assigned_attorney_id ?? '')) || 'Unassigned' }}
-                      </div>
-                      <div v-if="deal.client_phone_number" class="mt-0.5 text-xs text-muted">
-                        {{ deal.client_phone_number }}
-                      </div>
-                      <div v-if="deal.created_at" class="mt-0.5 text-xs text-muted">
-                        {{ formatDate(deal.created_at) }}
-                      </div>
+                  <!-- Row 1: Name + Badge -->
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="truncate text-sm font-semibold text-highlighted transition-colors group-hover:text-[var(--ap-accent)]">
+                      {{ deal.insured_name || '—' }}
                     </div>
-                    <div class="shrink-0 text-[10px] font-semibold text-amber-400 bg-amber-500/10 rounded-lg px-2 py-1">
-                      Retainer
+                    <span class="shrink-0 inline-flex items-center rounded-md border border-[var(--ap-accent)]/20 bg-[var(--ap-accent)]/10 px-1.5 py-0.5 text-[9px] font-semibold text-[var(--ap-accent)]">
+                      Ready
+                    </span>
+                  </div>
+
+                  <!-- Row 2: Contact + assignment details -->
+                  <div class="mt-2.5 space-y-1.5">
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                    <div v-if="deal.client_phone_number" class="flex items-center gap-1.5 text-[11px] text-muted">
+                      <UIcon name="i-lucide-phone" class="size-3 shrink-0 opacity-50" />
+                      <span class="truncate">{{ deal.client_phone_number }}</span>
+                    </div>
+                    <div v-if="deal.state" class="flex items-center gap-1.5 text-[11px] text-muted">
+                      <UIcon name="i-lucide-map-pin" class="size-3 shrink-0 opacity-50" />
+                      <span class="font-medium">{{ deal.state }}</span>
+                    </div>
+                    <div v-if="deal.created_at" class="flex items-center gap-1.5 text-[11px] text-muted">
+                      <UIcon name="i-lucide-calendar" class="size-3 shrink-0 opacity-50" />
+                      <span>{{ formatDate(deal.created_at) }}</span>
+                    </div>
+                    <div v-if="!isPublisherMode" class="flex items-center gap-1.5 text-[11px] text-muted">
+                      <UIcon name="i-lucide-building" class="size-3 shrink-0 opacity-50" />
+                      <span class="truncate">{{ deal.lead_vendor || '—' }}</span>
+                    </div>
+                    <div v-if="isAdminOrSuper && isPublisherMode" class="flex items-center gap-1.5 text-[11px] text-muted col-span-2">
+                      <UIcon name="i-lucide-building" class="size-3 shrink-0 opacity-50" />
+                      <span class="truncate">{{ qualifiedDealVendorNameMap.get(String(deal.lead_vendor ?? '')) ?? deal.lead_vendor ?? '—' }}</span>
+                    </div>
+                    </div>
+                    <div v-if="!isPublisherMode" class="truncate text-[11px] text-muted">
+                      Attorney: {{ qualifiedDealLawyerNameMap.get(String(deal.assigned_attorney_id ?? '')) || 'Unassigned' }}
                     </div>
                   </div>
 
-                  <div class="mt-2 flex justify-end">
+                  <!-- Row 3: Action (pushed to bottom right) -->
+                  <div class="mt-auto flex justify-end pt-2.5">
                     <button
-                      class="rounded-lg px-2 py-1 text-[10px] font-semibold text-blue-400 bg-blue-500/10 opacity-0 transition-all hover:bg-blue-500/20 group-hover:opacity-100"
+                      class="rounded-md border border-[var(--ap-accent)]/20 bg-[var(--ap-accent)]/10 px-2.5 py-1 text-[10px] font-semibold text-[var(--ap-accent)] opacity-0 transition-all hover:bg-[var(--ap-accent)]/20 group-hover:opacity-100"
                       title="Create Invoice"
                       @click.stop="openQualifiedDeal(deal)"
                     >
-                      + Invoice
+                      + Create Invoice
                     </button>
                   </div>
                 </div>
 
+                <!-- Invoice cards (all columns) -->
                 <div
                   v-for="invoice in (invoicesByStatus.get(status) ?? [])"
                   :key="invoice.id"
                   draggable="true"
-                  class="group cursor-pointer rounded-xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-3 transition-all duration-200 hover:border-[var(--ap-accent)]/30 hover:bg-[var(--ap-accent)]/[0.04]"
-                  :class="dragInvoiceId === invoice.id ? 'opacity-50 scale-95' : ''"
-                  @dragstart="handleDragStart(invoice.id)"
+                  class="invoicing-card group flex min-h-[148px] cursor-pointer flex-col rounded-lg border border-black/[0.05] dark:border-white/[0.06] bg-black/[0.025] dark:bg-white/[0.04] p-3.5 transition-all duration-200"
+                  :class="dragInvoiceId === invoice.id ? 'scale-95 opacity-50' : ''"
+                  @dragstart="handleDragStart($event, invoice.id)"
                   @dragend="handleDragEnd"
                   @click="openInvoicePdf(invoice)"
                 >
-                  <div class="flex items-start justify-between gap-2">
-                    <div class="min-w-0">
-                      <div class="truncate text-sm font-semibold text-highlighted group-hover:text-[var(--ap-accent)]">
+                  <!-- Row 1: Icon + Invoice # + Amount -->
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <div class="invoicing-card__icon flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all duration-200">
+                        <UIcon name="i-lucide-receipt" class="text-[10px]" />
+                      </div>
+                      <div class="truncate text-sm font-semibold text-highlighted transition-colors group-hover:text-[var(--ap-accent)]">
                         {{ invoice.invoice_number }}
                       </div>
-                      <div v-if="isAdminOrSuper" class="mt-0.5 text-xs text-muted">
-                        {{ isPublisherMode ? invoice.vendor_name : invoice.lawyer_name }}
-                      </div>
                     </div>
-                    <div class="shrink-0 text-sm font-bold text-highlighted">
+                    <div class="shrink-0 text-sm font-bold text-highlighted tabular-nums">
                       {{ formatMoney(Number(invoice.total_amount)) }}
                     </div>
                   </div>
 
-                  <div class="mt-2 flex items-center justify-between gap-2 text-xs text-muted">
-                    <span>{{ formatDate(invoice.date_range_start) }} - {{ formatDate(invoice.date_range_end) }}</span>
-                  </div>
-
-                  <div class="mt-2 flex items-center justify-between">
-                    <span v-if="invoice.due_date" class="text-xs text-muted">
-                      Due: {{ formatDate(invoice.due_date) }}
-                    </span>
-                    <div class="flex items-center gap-1.5">
+                  <!-- Row 2: Vendor/Lawyer + Lead names + Quick actions -->
+                  <div class="mt-2 flex items-start justify-between gap-2">
+                    <div class="min-w-0 space-y-0.5">
+                      <div v-if="isAdminOrSuper" class="truncate text-[11px] text-muted">
+                        {{ isPublisherMode ? invoice.vendor_name : invoice.lawyer_name }}
+                      </div>
+                      <div v-if="invoice.lead_names" class="truncate text-[11px] text-muted">
+                        {{ invoice.lead_names }}
+                      </div>
+                    </div>
+                    <div class="flex shrink-0 items-center gap-1.5">
                       <button
                         v-if="getDisplayStatus(invoice) === 'in_review'"
-                        class="rounded-lg px-2 py-1 text-[10px] font-semibold text-green-400 bg-green-500/10 opacity-0 transition-all hover:bg-green-500/20 group-hover:opacity-100"
+                        class="rounded-md border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-[10px] font-semibold text-green-400 opacity-0 transition-all hover:bg-green-500/20 group-hover:opacity-100"
                         title="Mark as Paid"
                         @click.stop="handleMarkAsPaid(invoice)"
                       >
-                        Paid
+                        Mark as Paid
                       </button>
                       <button
                         v-if="getDisplayStatus(invoice) === 'paid'"
-                        class="rounded-lg px-2 py-1 text-[10px] font-semibold text-red-400 bg-red-500/10 opacity-0 transition-all hover:bg-red-500/20 group-hover:opacity-100"
-                        title="Request Chargeback"
+                        class="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-400 opacity-0 transition-all hover:bg-red-500/20 group-hover:opacity-100"
+                        title="Initiate Chargeback"
                         @click.stop="handleRequestChargeback(invoice)"
                       >
-                        Chargeback
+                        Initiate Chargeback
                       </button>
                       <button
-                        v-if="isAdminOrSuper"
-                        class="rounded-lg p-1 text-muted opacity-0 transition-all hover:bg-[var(--ap-card-border)] hover:text-highlighted group-hover:opacity-100"
-                        title="Edit invoice"
-                        @click.stop="editInvoice(invoice)"
-                      >
-                        <UIcon name="i-lucide-pencil" class="text-xs" />
-                      </button>
-                      <button
-                        v-if="isSuperAdmin"
-                        class="rounded-lg p-1 text-muted opacity-0 transition-all hover:bg-[var(--ap-card-border)] hover:text-red-300 group-hover:opacity-100"
-                        title="Delete invoice"
-                        @click.stop="requestDeleteInvoice(invoice)"
-                      >
-                        <UIcon name="i-lucide-trash" class="text-xs" />
-                      </button>
-                      <button
-                        class="rounded-lg p-1 text-muted opacity-0 transition-all hover:bg-[var(--ap-card-border)] hover:text-highlighted group-hover:opacity-100"
+                        class="rounded-md p-1 text-muted opacity-0 transition-all hover:bg-black/[0.05] hover:text-highlighted group-hover:opacity-100 dark:hover:bg-white/[0.07]"
                         title="View PDF"
                         @click.stop="openInvoicePdf(invoice)"
                       >
@@ -1172,17 +1574,51 @@ watch(pageCount, () => {
                     </div>
                   </div>
 
-                  <div class="mt-2 text-[10px] text-muted">
-                    {{ invoice.items?.length ?? 0 }} item{{ (invoice.items?.length ?? 0) === 1 ? '' : 's' }}
-                    · Created {{ formatDate(invoice.created_at) }}
+                  <!-- Row 3: Meta details (pushed to bottom) -->
+                  <div class="mt-auto space-y-1.5 pt-2.5">
+                    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <div v-if="invoice.due_date" class="flex items-center gap-1.5 text-[11px] text-muted">
+                        <UIcon name="i-lucide-clock-3" class="size-3 shrink-0 opacity-50" />
+                        <span>Due {{ formatDate(invoice.due_date) }}</span>
+                      </div>
+                      <div class="flex items-center gap-1.5 text-[11px] text-muted">
+                        <UIcon name="i-lucide-calendar" class="size-3 shrink-0 opacity-50" />
+                        <span class="truncate">{{ formatDate(invoice.date_range_start) }} – {{ formatDate(invoice.date_range_end) }}</span>
+                      </div>
+                      <div class="flex items-center gap-1.5 text-[10px] text-muted">
+                        <UIcon name="i-lucide-layers" class="size-3 shrink-0 opacity-50" />
+                        <span>{{ invoice.items?.length ?? 0 }} item{{ (invoice.items?.length ?? 0) === 1 ? '' : 's' }} · Created {{ formatDate(invoice.created_at) }}</span>
+                      </div>
+                    </div>
+
+                    <!-- Actions row -->
+                    <div class="flex items-center justify-end gap-1.5">
+                      <button
+                        v-if="isAdminOrSuper"
+                        class="rounded-md p-1 text-muted opacity-0 transition-all hover:bg-black/[0.05] hover:text-highlighted group-hover:opacity-100 dark:hover:bg-white/[0.07]"
+                        title="Edit invoice"
+                        @click.stop="editInvoice(invoice)"
+                      >
+                        <UIcon name="i-lucide-pencil" class="text-xs" />
+                      </button>
+                      <button
+                        v-if="isSuperAdmin"
+                        class="rounded-md p-1 text-muted opacity-0 transition-all hover:bg-black/[0.05] hover:text-red-300 group-hover:opacity-100 dark:hover:bg-white/[0.07]"
+                        title="Delete invoice"
+                        @click.stop="requestDeleteInvoice(invoice)"
+                      >
+                        <UIcon name="i-lucide-trash" class="text-xs" />
+                      </button>
+                    </div>
                   </div>
                 </div>
 
+                <!-- Empty state -->
                 <div
                   v-if="(invoicesByStatus.get(status)?.length ?? 0) === 0 && !(status === 'pending' && filteredQualifiedDeals.length > 0)"
-                  class="rounded-xl border border-dashed border-[var(--ap-card-border)] px-3 py-8 text-center text-xs text-muted"
+                  class="flex items-center justify-center rounded-lg border border-dashed border-black/[0.06] dark:border-white/[0.08] px-3 py-8 text-center text-xs text-muted"
                 >
-                  No {{ getStatusLabel(status).toLowerCase() }} invoices
+                  {{ getEmptyStateText(status) }}
                 </div>
               </div>
             </div>
@@ -1190,11 +1626,11 @@ watch(pageCount, () => {
         </div>
 
         <!-- List View -->
-        <div v-else class="relative flex flex-1 min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)]">
+        <div v-else class="ap-fade-in ap-delay-6 relative flex flex-1 min-h-0 flex-col overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
           <div class="flex-1 min-h-0 overflow-y-auto invoicing-scroll">
             <table class="w-full">
               <thead class="sticky top-0 z-10">
-                <tr class="border-b border-[var(--ap-card-border)] bg-[var(--ap-card-hover)] backdrop-blur-xl">
+                <tr class="border-b border-black/[0.06] dark:border-white/[0.08] bg-white/80 dark:bg-[#151515]/80 backdrop-blur-xl">
                   <th class="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-muted whitespace-nowrap">Invoice #</th>
                   <th v-if="isAdminOrSuper" class="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-muted whitespace-nowrap">{{ isPublisherMode ? 'Vendor' : 'Lawyer' }}</th>
                   <th class="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-muted whitespace-nowrap">Date Range</th>
@@ -1208,7 +1644,7 @@ watch(pageCount, () => {
                 <tr
                   v-for="invoice in pagedRows"
                   :key="invoice.id"
-                  class="group cursor-pointer border-b border-[var(--ap-card-hover)] transition-all duration-200 hover:bg-[var(--ap-accent)]/[0.04]"
+                  class="group cursor-pointer border-b border-black/[0.05] dark:border-white/[0.06] transition-all duration-200 hover:bg-[var(--ap-accent)]/[0.045]"
                   @click="openInvoicePdf(invoice)"
                 >
                   <td class="px-5 py-3.5">
@@ -1232,9 +1668,8 @@ watch(pageCount, () => {
                     <span
                       class="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium"
                       :class="{
-                        'bg-blue-500/10 text-blue-400': getDisplayStatus(invoice) === 'billable',
-                        'bg-amber-500/10 text-amber-400': getDisplayStatus(invoice) === 'pending',
-                        'bg-violet-500/10 text-violet-400': getDisplayStatus(invoice) === 'in_review',
+                        'bg-blue-500/10 text-blue-400': getDisplayStatus(invoice) === 'billable' || getDisplayStatus(invoice) === 'pending',
+                        'bg-amber-500/10 text-amber-400': getDisplayStatus(invoice) === 'in_review',
                         'bg-emerald-500/10 text-emerald-400': getDisplayStatus(invoice) === 'signed_awaiting',
                         'bg-sky-500/10 text-sky-400': getDisplayStatus(invoice) === 'in_preview',
                         'bg-green-500/10 text-green-400': getDisplayStatus(invoice) === 'paid',
@@ -1285,7 +1720,7 @@ watch(pageCount, () => {
           </div>
 
           <!-- Pagination -->
-          <div class="flex items-center justify-between border-t border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-5 py-3 backdrop-blur-xl">
+          <div class="flex items-center justify-between border-t border-black/[0.06] dark:border-white/[0.08] bg-white/80 dark:bg-[#151515]/80 px-5 py-3 backdrop-blur-xl">
             <div class="flex items-center gap-2">
               <span class="text-xs text-muted">
                 Showing <span class="font-medium text-highlighted">{{ pagedRows.length }}</span> of <span class="font-medium text-highlighted">{{ filteredInvoices.length }}</span>
@@ -1294,7 +1729,7 @@ watch(pageCount, () => {
 
             <div class="flex items-center gap-1.5">
               <button
-                class="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-hover)] px-3 text-xs font-medium text-default transition-all hover:bg-[var(--ap-card-border)] disabled:pointer-events-none disabled:opacity-30"
+                class="inline-flex h-8 items-center gap-1 rounded-lg border border-black/[0.06] dark:border-white/[0.08] bg-white/75 dark:bg-white/[0.04] px-3 text-xs font-medium text-default transition-all hover:bg-black/[0.035] dark:hover:bg-white/[0.08] disabled:pointer-events-none disabled:opacity-30"
                 :disabled="page <= 1"
                 @click="page = Math.max(1, page - 1)"
               >
@@ -1309,7 +1744,7 @@ watch(pageCount, () => {
               </div>
 
               <button
-                class="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-hover)] px-3 text-xs font-medium text-default transition-all hover:bg-[var(--ap-card-border)] disabled:pointer-events-none disabled:opacity-30"
+                class="inline-flex h-8 items-center gap-1 rounded-lg border border-black/[0.06] dark:border-white/[0.08] bg-white/75 dark:bg-white/[0.04] px-3 text-xs font-medium text-default transition-all hover:bg-black/[0.035] dark:hover:bg-white/[0.08] disabled:pointer-events-none disabled:opacity-30"
                 :disabled="page >= pageCount"
                 @click="page = Math.min(pageCount, page + 1)"
               >
@@ -1338,5 +1773,19 @@ watch(pageCount, () => {
 }
 .invoicing-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
+}
+.invoicing-card:hover {
+  border-color: rgb(var(--ap-accent-rgb) / 0.24);
+  background: rgb(var(--ap-accent-rgb) / 0.055);
+  box-shadow: 0 6px 16px rgb(var(--ap-accent-rgb) / 0.08);
+}
+.invoicing-card__icon {
+  background: rgb(var(--ap-accent-rgb) / 0.08);
+  color: var(--ap-accent);
+  border: 1px solid rgb(var(--ap-accent-rgb) / 0.12);
+}
+.invoicing-card:hover .invoicing-card__icon {
+  background: rgb(var(--ap-accent-rgb) / 0.15);
+  border-color: rgb(var(--ap-accent-rgb) / 0.22);
 }
 </style>

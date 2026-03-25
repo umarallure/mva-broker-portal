@@ -94,3 +94,117 @@ textarea {
 
   --ui-text-inverted: #ffffff;
 }
+
+/* ═══ Global fade-in entrance animations ═══════════════════════════ */
+@keyframes ap-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ap-fade-row {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes ap-fade-left {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes ap-blur-in {
+  from {
+    opacity: 0;
+    filter: blur(12px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+.ap-fade-in {
+  animation: ap-fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.ap-blur-in {
+  animation: ap-blur-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.ap-fade-in-left {
+  animation: ap-fade-left 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.ap-fade-in-row {
+  animation: ap-fade-row 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Staggered delays */
+.ap-delay-1 { animation-delay: 100ms; }
+.ap-delay-2 { animation-delay: 200ms; }
+.ap-delay-3 { animation-delay: 400ms; }
+.ap-delay-4 { animation-delay: 550ms; }
+.ap-delay-5 { animation-delay: 350ms; }
+.ap-delay-6 { animation-delay: 500ms; }
+.ap-delay-7 { animation-delay: 650ms; }
+.ap-delay-8 { animation-delay: 800ms; }
+
+/* ── Smooth collapse / expand ─────────────────────────────────────── */
+.ap-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  overflow: hidden;
+  transition: grid-template-rows 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ap-collapse > * {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.ap-collapse--open {
+  grid-template-rows: 1fr;
+}
+
+/* Defer overflow until animation finishes — prevents scrollbar flash */
+.ap-overflow-defer {
+  overflow: hidden;
+  animation: ap-overflow-reveal 0s 1.2s both;
+}
+
+@keyframes ap-overflow-reveal {
+  to {
+    overflow-x: auto;
+  }
+}
+
+/* Respect reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .ap-fade-in,
+  .ap-fade-in-left,
+  .ap-fade-in-row,
+  .ap-blur-in {
+    animation: none;
+  }
+  .ap-overflow-defer {
+    overflow-x: auto;
+    animation: none;
+  }
+}

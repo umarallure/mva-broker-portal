@@ -121,11 +121,26 @@ const statsPending = computed(() => myOpenOrders.value.filter(o => (o.quota_fill
 const statsCompleted = computed(() => myClosedOrders.value.filter(o => o.status === 'FULFILLED').length)
 
 // ── Order filters ──────────────────────────────────────────────────────────
-const filterCategory = ref<string>('all')
-const filterState = ref<string>('all')
+const showOrderFilters = ref(false)
+
+// Multi-select filters — empty array = "all" (no filter applied)
+const filterStates = ref<string[]>([])
+const filterInjurySeverity = ref<string[]>([])
+const filterInsuranceStatus = ref<string[]>([])
+const filterCaseCategory = ref<string[]>([])
+const filterLiabilityStatus = ref<string[]>([])
+const filterMedicalTreatment = ref<string[]>([])
+const filterLanguage = ref<string[]>([])
+// Expiry is a date-range concept so stays single-select
 const filterExpiry = ref<string>('all')
 
-const orderStateFilterOptions = computed(() => {
+// Safe accessor for nested criteria fields
+const getOrderCriteria = (order: OrderRow, field: string): unknown => {
+  return (order.criteria as Record<string, unknown>)?.[field]
+}
+
+// Dynamic option lists derived from existing orders
+const orderStateRealCodes = computed(() => {
   const codes = new Set<string>()
   allOrders.value.forEach(o => {
     ;(o.target_states ?? []).forEach(s => {
@@ -133,23 +148,144 @@ const orderStateFilterOptions = computed(() => {
       if (code) codes.add(code)
     })
   })
-  return [
-    { label: 'All states', value: 'all' },
-    ...Array.from(codes).sort().map(c => ({ label: c, value: c }))
-  ]
+  return Array.from(codes).sort()
 })
+
+const orderStateFilterOptions = computed(() => [
+  { label: 'All states', value: '__all__' },
+  ...orderStateRealCodes.value.map(c => ({ label: c, value: c }))
+])
+
+// "All states" toggle: selecting __all__ selects every real state; deselecting it clears all
+let _skipStatesWatch = false
+watch(filterStates, (newVal, oldVal) => {
+  if (_skipStatesWatch) return
+  const hadAll = oldVal.includes('__all__')
+  const hasAll = newVal.includes('__all__')
+  const realCodes = orderStateRealCodes.value
+
+  _skipStatesWatch = true
+  if (hasAll && !hadAll) {
+    // Just checked "All states" → select every real code
+    filterStates.value = ['__all__', ...realCodes]
+  } else if (!hasAll && hadAll) {
+    // Just unchecked "All states" → clear everything
+    filterStates.value = []
+  } else if (hadAll && hasAll) {
+    // Had all selected, user unchecked one individual state → remove __all__ too
+    const withoutAll = newVal.filter(v => v !== '__all__')
+    if (withoutAll.length < realCodes.length) {
+      filterStates.value = withoutAll
+    }
+  } else if (!hadAll && !hasAll) {
+    // User checked all individual states manually → add __all__
+    const withoutAll = newVal.filter(v => v !== '__all__')
+    if (withoutAll.length === realCodes.length && realCodes.length > 0) {
+      filterStates.value = ['__all__', ...realCodes]
+    }
+  }
+  _skipStatesWatch = false
+})
+
+const orderLanguageFilterOptions = computed(() => {
+  const langs = new Set<string>()
+  allOrders.value.forEach(o => {
+    const orderLangs = getOrderCriteria(o, 'languages')
+    if (Array.isArray(orderLangs)) {
+      orderLangs.forEach(l => { if (typeof l === 'string' && l.trim()) langs.add(l.trim()) })
+    }
+  })
+  return Array.from(langs).sort().map(l => ({ label: l, value: l }))
+})
+
+const filterCaseCategoryOptions = [
+  { label: 'Consumer Cases', value: 'Consumer Cases (MVA)' },
+  { label: 'Commercial Cases', value: 'Commercial Cases' },
+]
+
+const filterExpiryOptions = [
+  { label: 'Any expiry', value: 'all' },
+  { label: 'Next 30 days', value: '30' },
+  { label: 'Next 60 days', value: '60' },
+  { label: 'Next 90 days', value: '90' },
+  { label: 'No expiry date', value: 'no_expiry' },
+]
+
+const activeFilterCount = computed(() => {
+  let count = 0
+  if (filterStates.value.filter(v => v !== '__all__').length > 0) count++
+  if (filterInjurySeverity.value.length > 0) count++
+  if (filterInsuranceStatus.value.length > 0) count++
+  if (filterCaseCategory.value.length > 0) count++
+  if (filterLiabilityStatus.value.length > 0) count++
+  if (filterMedicalTreatment.value.length > 0) count++
+  if (filterLanguage.value.length > 0) count++
+  if (filterExpiry.value !== 'all') count++
+  return count
+})
+
+const hasActiveFilters = computed(() => activeFilterCount.value > 0)
+
+const resetAllFilters = () => {
+  filterStates.value = []
+  filterInjurySeverity.value = []
+  filterInsuranceStatus.value = []
+  filterCaseCategory.value = []
+  filterLiabilityStatus.value = []
+  filterMedicalTreatment.value = []
+  filterLanguage.value = []
+  filterExpiry.value = 'all'
+}
 
 const filteredOrders = computed(() => {
   let orders = allOrders.value
 
-  if (filterCategory.value !== 'all') {
-    orders = orders.filter(o => normalizeCaseType(String(o.case_type || '')) === filterCategory.value)
+  if (filterCaseCategory.value.length > 0) {
+    orders = orders.filter(o => filterCaseCategory.value.includes(normalizeCaseType(String(o.case_type || ''))))
   }
 
-  if (filterState.value !== 'all') {
+  const selectedStates = filterStates.value.filter(v => v !== '__all__')
+  if (selectedStates.length > 0) {
     orders = orders.filter(o =>
-      (o.target_states ?? []).some(s => String(s || '').trim().toUpperCase() === filterState.value)
+      (o.target_states ?? []).some(s => selectedStates.includes(String(s || '').trim().toUpperCase()))
     )
+  }
+
+  if (filterInjurySeverity.value.length > 0) {
+    orders = orders.filter(o => {
+      const sev = getOrderCriteria(o, 'injury_severity')
+      if (!Array.isArray(sev)) return false
+      return sev.some(s => filterInjurySeverity.value.includes(String(s)))
+    })
+  }
+
+  if (filterInsuranceStatus.value.length > 0) {
+    orders = orders.filter(o => {
+      const val = getOrderCriteria(o, 'insurance_status')
+      return typeof val === 'string' && filterInsuranceStatus.value.includes(val)
+    })
+  }
+
+  if (filterLiabilityStatus.value.length > 0) {
+    orders = orders.filter(o => {
+      const val = getOrderCriteria(o, 'liability_status')
+      return typeof val === 'string' && filterLiabilityStatus.value.includes(val)
+    })
+  }
+
+  if (filterMedicalTreatment.value.length > 0) {
+    orders = orders.filter(o => {
+      const val = getOrderCriteria(o, 'medical_treatment')
+      return typeof val === 'string' && filterMedicalTreatment.value.includes(val)
+    })
+  }
+
+  if (filterLanguage.value.length > 0) {
+    orders = orders.filter(o => {
+      const langs = getOrderCriteria(o, 'languages')
+      if (!Array.isArray(langs)) return false
+      return langs.some(l => filterLanguage.value.includes(String(l)))
+    })
   }
 
   if (filterExpiry.value !== 'all') {
@@ -1023,6 +1159,12 @@ onMounted(() => {
     await mountSvg()
     bindSvgEvents()
     applyMapColors()
+
+    // Trigger blur-in after SVG is ready
+    if (mapRoot.value) {
+      mapRoot.value.classList.remove('opacity-0')
+      mapRoot.value.classList.add('ap-blur-in')
+    }
   }
 
   void run()
@@ -1069,7 +1211,7 @@ watch(myClosedOrders, () => {
           </UTooltip>
           <UButton
             v-else
-            color="neutral"
+            :color="blockMode ? 'primary' : 'neutral'"
             :variant="blockMode ? 'solid' : 'outline'"
             :icon="blockMode ? 'i-lucide-check' : 'i-lucide-ban'"
             @click="() => { blockMode = !blockMode }"
@@ -1153,7 +1295,7 @@ watch(myClosedOrders, () => {
         <!-- Locked Overlay for Inactive Accounts -->
         <div
           v-if="isAccountInactive"
-          class="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-md bg-white/30 dark:bg-black/30"
+          class="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-md bg-white/30 dark:bg-black/30 ap-fade-in"
         >
           <div class="rounded-2xl border border-[var(--ap-card-border)] bg-white dark:bg-[#1a1a1a] p-8 shadow-2xl max-w-md mx-4">
             <div class="flex flex-col items-center gap-4 text-center">
@@ -1188,7 +1330,7 @@ watch(myClosedOrders, () => {
         <!-- ═══ 5-State Limit Banner ═══ -->
         <div
           v-if="isAtMaxOrderStates && !isAccountInactive"
-          class="flex items-center gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] px-5 py-3.5"
+          class="ap-fade-in ap-delay-1 flex items-center gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] px-5 py-3.5"
         >
           <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/10">
             <UIcon name="i-lucide-alert-triangle" class="text-base text-amber-400" />
@@ -1227,11 +1369,11 @@ watch(myClosedOrders, () => {
           :open="true"
           title="Create Order"
           :dismissible="false"
-          :ui="{ content: 'sm:max-w-4xl', body: 'p-0' }"
+          :ui="{ content: 'sm:max-w-3xl', body: 'p-0' }"
           @update:open="handleCreateOrderOpenUpdate"
         >
           <template #body="{ close }">
-            <div class="flex max-h-[78vh] flex-col">
+            <div class="flex max-h-[78vh] min-h-[560px] flex-col">
               <div>
                 <div class="mt-2 flex items-center justify-center">
                   <div class="w-full max-w-sm">
@@ -1271,22 +1413,23 @@ watch(myClosedOrders, () => {
                 </div>
               </div>
 
-              <div v-if="createOrderStep === 1" class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-                <div class="space-y-4">
-                  <UAlert
-                    color="neutral"
-                    variant="subtle"
-                    title="Verification"
-                    :description="`To continue, type ${orderVerifyPhrase} below.`"
-                  />
+              <div v-if="createOrderStep === 1" class="min-h-0 flex-1 overflow-y-auto px-6 py-4 flex items-center justify-center">
+                <div class="w-full max-w-md space-y-5">
+                  <p class="text-center text-sm text-muted">
+                    To continue, type <span class="font-semibold text-highlighted">{{ orderVerifyPhrase }}</span> below.
+                  </p>
 
-                  <UFormField label="Verification word" required :error="orderVerifyError">
-                    <UInput
-                      v-model="orderVerifyInput"
-                      placeholder="Type the verification word"
-                      @blur="() => { orderVerifyTouched = true }"
-                    />
-                  </UFormField>
+                  <div class="rounded-xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5">
+                    <UFormField label="Verification word" required :error="orderVerifyError">
+                      <UInput
+                        v-model="orderVerifyInput"
+                        placeholder="Type the verification word"
+                        size="xl"
+                        class="w-full"
+                        @blur="() => { orderVerifyTouched = true }"
+                      />
+                    </UFormField>
+                  </div>
                 </div>
               </div>
 
@@ -1305,11 +1448,10 @@ watch(myClosedOrders, () => {
                     <USelect
                       v-model="orderForm.stateCode"
                       :items="orderStateOptions"
-                      class="w-full sm:w-1/2"
+                      class="w-full"
                       value-key="value"
                       label-key="label"
                       placeholder="Select a state"
-                      :ui="{ content: 'w-(--reka-select-trigger-width)' }"
                     />
                   </UFormField>
 
@@ -1317,11 +1459,10 @@ watch(myClosedOrders, () => {
                     <USelect
                       v-model="orderForm.caseCategory"
                       :items="caseCategoryOptions"
-                      class="w-full sm:w-1/2"
+                      class="w-full"
                       value-key="value"
                       label-key="label"
                       placeholder="Select case category"
-                      :ui="{ content: 'w-(--reka-select-trigger-width)' }"
                     />
                   </UFormField>
 
@@ -1329,7 +1470,7 @@ watch(myClosedOrders, () => {
                     <USelect
                       v-model="orderForm.injurySeverity"
                       :items="injurySeverityOptions"
-                      class="w-full sm:w-1/2"
+                      class="w-full"
                       value-key="value"
                       label-key="label"
                       multiple
@@ -1355,11 +1496,10 @@ watch(myClosedOrders, () => {
                     <USelect
                       v-model="orderForm.liabilityStatus"
                       :items="liabilityOptions"
-                      class="w-full sm:w-1/2"
+                      class="w-full"
                       value-key="value"
                       label-key="label"
                       placeholder="Select liability"
-                      :ui="{ content: 'w-(--reka-select-trigger-width)' }"
                     />
                   </UFormField>
 
@@ -1367,11 +1507,10 @@ watch(myClosedOrders, () => {
                     <USelect
                       v-model="orderForm.insuranceStatus"
                       :items="insuranceOptions"
-                      class="w-full sm:w-1/2"
+                      class="w-full"
                       value-key="value"
                       label-key="label"
                       placeholder="Select insurance"
-                      :ui="{ content: 'w-(--reka-select-trigger-width)' }"
                     />
                   </UFormField>
 
@@ -1379,10 +1518,9 @@ watch(myClosedOrders, () => {
                     <USelect
                       v-model="orderForm.medicalTreatment"
                       :items="medicalTreatmentOptions"
-                      class="w-full sm:w-1/2"
+                      class="w-full"
                       value-key="value"
                       label-key="label"
-                      :ui="{ content: 'w-(--reka-select-trigger-width)' }"
                     />
                   </UFormField>
 
@@ -1390,7 +1528,7 @@ watch(myClosedOrders, () => {
                     <USelect
                       v-model="orderForm.languages"
                       :items="languageOptions"
-                      class="w-full sm:w-1/2"
+                      class="w-full"
                       multiple
                       placeholder="Select languages"
                       :ui="multiSelectUi"
@@ -1499,65 +1637,81 @@ watch(myClosedOrders, () => {
           </template>
         </UModal>
 
-        <!-- ═══ Legend & Filter ═══ -->
-        <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5">
-          <div class="space-y-3">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <div class="flex items-center gap-3">
-                <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
-                  <UIcon name="i-lucide-map" class="text-sm text-[var(--ap-accent)]" />
-                </div>
-                <h3 class="text-sm font-semibold text-highlighted">My order volume by state</h3>
-              </div>
-              <div class="flex items-center gap-3">
-                <span
-                  class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
-                  :class="isAtMaxOrderStates
-                    ? 'border-amber-500/20 bg-amber-500/10 text-amber-400'
-                    : 'border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] text-muted'"
-                >
-                  <UIcon :name="isAtMaxOrderStates ? 'i-lucide-alert-triangle' : 'i-lucide-map-pin'" class="text-[10px]" />
-                  {{ activeOrderStateCount }}/{{ MAX_ORDER_STATES }} states
-                </span>
-                <USelect v-model="mapFilter" :items="mapFilterOptions" size="sm" />
-              </div>
-            </div>
-            <div class="grid gap-3 sm:grid-cols-5">
-              <div class="flex items-center gap-2">
-                <div class="size-4 rounded-full bg-gray-300" />
-                <span class="text-xs text-muted">No orders</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="size-4 rounded-full bg-green-500" />
-                <span class="text-xs text-muted">Pending</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="size-4 rounded-full bg-yellow-500" />
-                <span class="text-xs text-muted">In Progress</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="size-4 rounded-full bg-red-500" />
-                <span class="text-xs text-muted">Fulfilled / Expired</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <div
-                  class="size-4 rounded-full"
-                  style="background: repeating-linear-gradient(45deg, #9ca3af 0 2px, #f3f4f6 2px 6px);"
-                />
-                <span class="text-xs text-muted">Blocked</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- ═══ Map ═══ -->
-        <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-4 overflow-hidden">
+        <!-- ═══ Map with integrated legend ═══ -->
+        <div class="ap-fade-in ap-delay-2 rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-4 overflow-hidden">
           <div class="relative">
             <div
               ref="mapRoot"
-              class="w-full rounded-xl bg-white overflow-hidden"
+              class="w-full rounded-xl overflow-hidden opacity-0"
               style="height: 520px;"
             />
+
+            <!-- Stats overlay — absolute on desktop, below map on mobile -->
+            <div class="hidden md:block absolute top-3 left-3 z-[5] w-32 overflow-hidden rounded-xl border border-black/[0.06] bg-white/90 dark:border-white/[0.08] dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
+              <div class="flex flex-col divide-y divide-black/[0.06] dark:divide-white/[0.08]">
+                <div class="ap-fade-in-left relative px-3 py-2.5 pl-5" style="animation-delay: 400ms">
+                  <div class="absolute inset-y-0 left-0 w-1 bg-orange-500 dark:bg-orange-600" />
+                  <div class="text-[10px] font-medium uppercase tracking-wider text-orange-500 dark:text-orange-600">Total</div>
+                  <div class="mt-0.5 text-lg font-bold text-orange-600 tabular-nums">{{ statsTotal }}</div>
+                </div>
+                <div class="ap-fade-in-left relative px-3 py-2.5 pl-5" style="animation-delay: 500ms">
+                  <div class="absolute inset-y-0 left-0 w-1 bg-blue-400" />
+                  <div class="text-[10px] font-medium uppercase tracking-wider text-blue-500 dark:text-blue-400">Open</div>
+                  <div class="mt-0.5 text-lg font-bold text-blue-500 dark:text-blue-400 tabular-nums">{{ statsOpen }}</div>
+                </div>
+                <div class="ap-fade-in-left relative px-3 py-2.5 pl-5" style="animation-delay: 600ms">
+                  <div class="absolute inset-y-0 left-0 w-1 bg-green-400" />
+                  <div class="text-[10px] font-medium uppercase tracking-wider text-green-500 dark:text-green-400">Pending</div>
+                  <div class="mt-0.5 text-lg font-bold text-green-500 dark:text-green-400 tabular-nums">{{ statsPending }}</div>
+                </div>
+                <div class="ap-fade-in-left relative px-3 py-2.5 pl-5" style="animation-delay: 700ms">
+                  <div class="absolute inset-y-0 left-0 w-1 bg-red-400" />
+                  <div class="text-[10px] font-medium uppercase tracking-wider text-red-400 dark:text-red-400">Completed</div>
+                  <div class="mt-0.5 text-lg font-bold text-red-500 dark:text-red-400 tabular-nums">{{ statsCompleted }}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Legend & Filter overlay -->
+            <div class="ap-fade-in ap-delay-4 absolute bottom-0 left-1/2 z-[5] -translate-x-1/2 flex flex-wrap md:flex-nowrap items-center gap-x-2 gap-y-1.5 md:gap-x-4 md:whitespace-nowrap rounded-xl border border-black/[0.06] bg-white/90 dark:border-white/[0.08] dark:bg-[#1a1a1a]/60 px-2.5 py-2 md:px-4 md:py-2.5 shadow-lg backdrop-blur-sm max-w-[calc(100%-1.5rem)] md:max-w-none">
+              <div class="flex flex-wrap md:flex-nowrap items-center gap-2 md:gap-3">
+                <div class="flex items-center gap-1.5">
+                  <div class="size-2.5 rounded-full bg-gray-300" />
+                  <span class="text-[10px] text-gray-500 dark:text-gray-400">No orders</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <div class="size-2.5 rounded-full bg-green-500" />
+                  <span class="text-[10px] text-gray-500 dark:text-gray-400">Pending</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <div class="size-2.5 rounded-full bg-yellow-500" />
+                  <span class="text-[10px] text-gray-500 dark:text-gray-400">In Progress</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <div class="size-2.5 rounded-full bg-red-500" />
+                  <span class="text-[10px] text-gray-500 dark:text-gray-400">Completed</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <div
+                    class="size-2.5 rounded-full"
+                    style="background: repeating-linear-gradient(45deg, #9ca3af 0 2px, #f3f4f6 2px 6px);"
+                  />
+                  <span class="text-[10px] text-gray-500 dark:text-gray-400">Blocked</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span
+                  class="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-semibold"
+                  :class="isAtMaxOrderStates
+                    ? 'border-amber-500/20 bg-amber-500/10 text-amber-400'
+                    : 'border-black/[0.06] dark:border-white/[0.08] bg-black/[0.04] dark:bg-white/[0.06] text-gray-500 dark:text-gray-400'"
+                >
+                  <UIcon :name="isAtMaxOrderStates ? 'i-lucide-alert-triangle' : 'i-lucide-map-pin'" class="text-[9px]" />
+                  {{ activeOrderStateCount }}/{{ MAX_ORDER_STATES }}
+                </span>
+                <USelect v-model="mapFilter" :items="mapFilterOptions" size="xs" class="min-w-28 md:min-w-36" />
+              </div>
+            </div>
 
             <div
               v-if="tooltip.open && tooltip.state"
@@ -1617,180 +1771,367 @@ watch(myClosedOrders, () => {
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- ═══ Stats Cards ═══ -->
-        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-5 py-4">
-            <div class="flex items-center gap-2 mb-2">
-              <UIcon name="i-lucide-layers" class="text-sm text-muted" />
-              <span class="text-[11px] font-semibold uppercase tracking-wider text-muted">Total Orders</span>
+          <!-- Stats row — visible only on mobile, below the map -->
+          <div class="flex md:hidden gap-2 mt-3">
+            <div class="ap-fade-in-left flex-1 relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 px-3 py-2.5 pl-5 shadow-sm backdrop-blur-sm" style="animation-delay: 400ms">
+              <div class="absolute inset-y-0 left-0 w-1 bg-orange-500 dark:bg-orange-600" />
+              <div class="text-[10px] font-medium uppercase tracking-wider text-orange-500 dark:text-orange-600">Total</div>
+              <div class="mt-0.5 text-lg font-bold text-orange-600 tabular-nums">{{ statsTotal }}</div>
             </div>
-            <div class="text-2xl font-bold text-highlighted tabular-nums">{{ statsTotal }}</div>
-          </div>
-          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-5 py-4">
-            <div class="flex items-center gap-2 mb-2">
-              <UIcon name="i-lucide-circle-dot" class="text-sm text-blue-400" />
-              <span class="text-[11px] font-semibold uppercase tracking-wider text-muted">Open Orders</span>
+            <div class="ap-fade-in-left flex-1 relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 px-3 py-2.5 pl-5 shadow-sm backdrop-blur-sm" style="animation-delay: 500ms">
+              <div class="absolute inset-y-0 left-0 w-1 bg-blue-400" />
+              <div class="text-[10px] font-medium uppercase tracking-wider text-blue-500 dark:text-blue-400">Open</div>
+              <div class="mt-0.5 text-lg font-bold text-blue-500 dark:text-blue-400 tabular-nums">{{ statsOpen }}</div>
             </div>
-            <div class="text-2xl font-bold text-blue-400 tabular-nums">{{ statsOpen }}</div>
-          </div>
-          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-5 py-4">
-            <div class="flex items-center gap-2 mb-2">
-              <UIcon name="i-lucide-clock" class="text-sm text-green-400" />
-              <span class="text-[11px] font-semibold uppercase tracking-wider text-muted">Pending</span>
+            <div class="ap-fade-in-left flex-1 relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 px-3 py-2.5 pl-5 shadow-sm backdrop-blur-sm" style="animation-delay: 600ms">
+              <div class="absolute inset-y-0 left-0 w-1 bg-green-400" />
+              <div class="text-[10px] font-medium uppercase tracking-wider text-green-500 dark:text-green-400">Pending</div>
+              <div class="mt-0.5 text-lg font-bold text-green-500 dark:text-green-400 tabular-nums">{{ statsPending }}</div>
             </div>
-            <div class="text-2xl font-bold text-green-400 tabular-nums">{{ statsPending }}</div>
-          </div>
-          <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-5 py-4">
-            <div class="flex items-center gap-2 mb-2">
-              <UIcon name="i-lucide-check-circle" class="text-sm text-amber-400" />
-              <span class="text-[11px] font-semibold uppercase tracking-wider text-muted">Completed</span>
+            <div class="ap-fade-in-left flex-1 relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 px-3 py-2.5 pl-5 shadow-sm backdrop-blur-sm" style="animation-delay: 700ms">
+              <div class="absolute inset-y-0 left-0 w-1 bg-red-400" />
+              <div class="text-[10px] font-medium uppercase tracking-wider text-red-400">Completed</div>
+              <div class="mt-0.5 text-lg font-bold text-red-500 dark:text-red-400 tabular-nums">{{ statsCompleted }}</div>
             </div>
-            <div class="text-2xl font-bold text-amber-400 tabular-nums">{{ statsCompleted }}</div>
           </div>
         </div>
 
         <!-- ═══ Orders Section ═══ -->
-        <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] overflow-hidden">
-          <!-- Header + Filters -->
-          <div class="border-b border-[var(--ap-card-border)] px-5 py-4 space-y-3">
-            <div class="flex items-center justify-between">
+        <div class="ap-fade-in ap-delay-5 rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] overflow-hidden">
+          <!-- Header -->
+          <div class="border-b border-[var(--ap-card-border)] px-5 py-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
               <div class="flex items-center gap-3">
-                <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10">
-                  <UIcon name="i-lucide-shopping-cart" class="text-sm text-blue-400" />
+                <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
+                  <UIcon name="i-lucide-shopping-cart" class="text-sm text-[var(--ap-accent)]" />
                 </div>
                 <div>
                   <h3 class="text-sm font-semibold text-highlighted">My Orders</h3>
-                  <p class="text-[11px] text-muted">All your orders — open and closed</p>
+                  <p class="mt-0.5 text-xs text-muted">Manage and track all your active and closed orders.</p>
                 </div>
               </div>
-              <span class="inline-flex items-center rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] px-3 py-1 text-xs font-semibold text-muted">
-                {{ filteredOrders.length }} / {{ statsTotal }} orders
-              </span>
+              <div class="flex items-center gap-2">
+                <UButton
+                  :icon="showOrderFilters ? 'i-lucide-filter-x' : 'i-lucide-filter'"
+                  size="xs"
+                  :color="hasActiveFilters ? 'primary' : 'neutral'"
+                  :variant="showOrderFilters ? 'soft' : 'outline'"
+                  @click="showOrderFilters = !showOrderFilters"
+                >
+                  {{ showOrderFilters ? 'Hide Filters' : 'Filters' }}
+                  <template v-if="activeFilterCount > 0" #trailing>
+                    <span class="flex size-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white">
+                      {{ activeFilterCount }}
+                    </span>
+                  </template>
+                </UButton>
+                <UButton
+                  v-if="hasActiveFilters"
+                  icon="i-lucide-x"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  label="Reset all"
+                  @click="resetAllFilters"
+                />
+              </div>
             </div>
+          </div>
 
-            <!-- Filter Row -->
-            <div class="flex flex-wrap items-center gap-2">
+          <!-- Collapsible Filter Panel -->
+          <div
+            class="ap-collapse"
+            :class="showOrderFilters ? 'ap-collapse--open' : ''"
+          >
+            <div>
+              <div class="border-b border-[var(--ap-card-border)] bg-[var(--ap-card-divide)]/30 px-5 py-4">
+              <div class="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+              <!-- States -->
+              <div>
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">States</label>
+                <USelect
+                  v-model="filterStates"
+                  :items="orderStateFilterOptions"
+                  value-key="value"
+                  label-key="label"
+                  multiple
+                  placeholder="All states"
+                  size="xs"
+                  class="w-full"
+                  :ui="multiSelectUi"
+                >
+                  <template #item-leading>
+                    <span class="relative flex size-4 items-center justify-center">
+                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
+                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
+                    </span>
+                  </template>
+                </USelect>
+              </div>
+
               <!-- Case Category -->
-              <USelect
-                v-model="filterCategory"
-                :items="[
-                  { label: 'All categories', value: 'all' },
-                  { label: 'Consumer Cases (MVA)', value: 'Consumer Cases (MVA)' },
-                  { label: 'Commercial Cases', value: 'Commercial Cases' },
-                ]"
-                value-key="value"
-                label-key="label"
-                size="sm"
-                class="w-48"
-              />
-              <!-- State -->
-              <USelect
-                v-model="filterState"
-                :items="orderStateFilterOptions"
-                value-key="value"
-                label-key="label"
-                size="sm"
-                class="w-36"
-              />
-              <!-- Expiry -->
-              <USelect
-                v-model="filterExpiry"
-                :items="[
-                  { label: 'Any expiry', value: 'all' },
-                  { label: 'Next 30 days', value: '30' },
-                  { label: 'Next 60 days', value: '60' },
-                  { label: 'Next 90 days', value: '90' },
-                  { label: 'No expiry date', value: 'no_expiry' },
-                ]"
-                value-key="value"
-                label-key="label"
-                size="sm"
-                class="w-40"
-              />
-              <!-- Reset -->
-              <UButton
-                v-if="filterCategory !== 'all' || filterState !== 'all' || filterExpiry !== 'all'"
-                icon="i-lucide-x"
-                size="sm"
-                color="neutral"
-                variant="ghost"
-                label="Reset"
-                @click="filterCategory = 'all'; filterState = 'all'; filterExpiry = 'all'"
-              />
-            </div>
-          </div>
-
-          <!-- Empty -->
-          <div v-if="filteredOrders.length === 0" class="flex items-center justify-center p-10">
-            <div class="text-center">
-              <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/10 mb-3">
-                <UIcon name="i-lucide-shopping-cart" class="text-xl text-blue-400/50" />
+              <div>
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Case Category</label>
+                <USelect
+                  v-model="filterCaseCategory"
+                  :items="filterCaseCategoryOptions"
+                  value-key="value"
+                  label-key="label"
+                  multiple
+                  placeholder="All categories"
+                  size="xs"
+                  class="w-full"
+                  :ui="multiSelectUi"
+                >
+                  <template #item-leading>
+                    <span class="relative flex size-4 items-center justify-center">
+                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
+                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
+                    </span>
+                  </template>
+                </USelect>
               </div>
-              <p class="text-sm text-muted">No orders match the selected filters</p>
+
+              <!-- Injury Severity -->
+              <div>
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Injury Severity</label>
+                <USelect
+                  v-model="filterInjurySeverity"
+                  :items="injurySeverityOptions"
+                  value-key="value"
+                  label-key="label"
+                  multiple
+                  placeholder="All severities"
+                  size="xs"
+                  class="w-full"
+                  :ui="multiSelectUi"
+                >
+                  <template #item-leading>
+                    <span class="relative flex size-4 items-center justify-center">
+                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
+                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
+                    </span>
+                  </template>
+                </USelect>
+              </div>
+
+              <!-- Insurance Status -->
+              <div>
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Insurance Status</label>
+                <USelect
+                  v-model="filterInsuranceStatus"
+                  :items="insuranceOptions"
+                  value-key="value"
+                  label-key="label"
+                  multiple
+                  placeholder="All"
+                  size="xs"
+                  class="w-full"
+                  :ui="multiSelectUi"
+                >
+                  <template #item-leading>
+                    <span class="relative flex size-4 items-center justify-center">
+                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
+                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
+                    </span>
+                  </template>
+                </USelect>
+              </div>
+
+              <!-- Liability Status -->
+              <div>
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Liability Status</label>
+                <USelect
+                  v-model="filterLiabilityStatus"
+                  :items="liabilityOptions"
+                  value-key="value"
+                  label-key="label"
+                  multiple
+                  placeholder="All"
+                  size="xs"
+                  class="w-full"
+                  :ui="multiSelectUi"
+                >
+                  <template #item-leading>
+                    <span class="relative flex size-4 items-center justify-center">
+                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
+                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
+                    </span>
+                  </template>
+                </USelect>
+              </div>
+
+              <!-- Medical Treatment -->
+              <div>
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Medical Treatment</label>
+                <USelect
+                  v-model="filterMedicalTreatment"
+                  :items="medicalTreatmentOptions"
+                  value-key="value"
+                  label-key="label"
+                  multiple
+                  placeholder="All"
+                  size="xs"
+                  class="w-full"
+                  :ui="multiSelectUi"
+                >
+                  <template #item-leading>
+                    <span class="relative flex size-4 items-center justify-center">
+                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
+                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
+                    </span>
+                  </template>
+                </USelect>
+              </div>
+
+              <!-- Expiration -->
+              <div>
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Expiration</label>
+                <USelect
+                  v-model="filterExpiry"
+                  :items="filterExpiryOptions"
+                  value-key="value"
+                  label-key="label"
+                  placeholder="Any expiry"
+                  size="xs"
+                  class="w-full"
+                />
+              </div>
+
+              <!-- Language -->
+              <div>
+                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Language</label>
+                <USelect
+                  v-model="filterLanguage"
+                  :items="orderLanguageFilterOptions"
+                  value-key="value"
+                  label-key="label"
+                  multiple
+                  placeholder="All languages"
+                  size="xs"
+                  class="w-full"
+                  :ui="multiSelectUi"
+                >
+                  <template #item-leading>
+                    <span class="relative flex size-4 items-center justify-center">
+                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
+                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
+                    </span>
+                  </template>
+                </USelect>
+              </div>
+              </div>
+              </div>
             </div>
           </div>
 
-          <!-- Orders List -->
-          <div v-else class="divide-y divide-[var(--ap-card-divide)]">
-            <div
-              v-for="order in filteredOrders"
-              :key="order.id"
-              class="group cursor-pointer px-5 py-4 transition-all duration-200 hover:bg-[var(--ap-accent)]/[0.04]"
-              @click="router.push(`/orders/${order.id}`)"
-            >
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm font-semibold text-highlighted group-hover:text-[var(--ap-accent)] transition-colors">
+          <div class="overflow-x-auto">
+            <!-- Column headers -->
+            <div class="flex items-center gap-4 border-b border-[var(--ap-card-border)] bg-[var(--ap-card-divide)]/50 px-5 py-2 text-[11px] font-medium uppercase tracking-wider text-muted min-w-[640px]">
+              <div class="min-w-0 flex-1">Order</div>
+              <div class="w-24 text-center">Status</div>
+              <div class="w-20 text-center">Quota</div>
+              <div class="w-36 text-center">Progress</div>
+              <div class="w-28 text-right">Expiry</div>
+              <div class="w-5" />
+            </div>
+
+            <!-- Empty -->
+            <div v-if="filteredOrders.length === 0" class="flex items-center justify-center py-16 px-6">
+              <div class="text-center">
+                <div class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted/10">
+                  <UIcon name="i-lucide-inbox" class="text-lg text-muted" />
+                </div>
+                <p class="text-sm font-medium text-highlighted">No orders found</p>
+                <p class="mt-1 text-xs text-muted">Try adjusting your filters to find what you're looking for.</p>
+              </div>
+            </div>
+
+            <!-- Orders List -->
+            <div v-else class="divide-y divide-[var(--ap-card-divide)]">
+              <div
+                v-for="(order, idx) in filteredOrders"
+                :key="order.id"
+                class="ap-fade-in-row group flex cursor-pointer items-center gap-4 px-5 py-3.5 transition-colors duration-150 hover:bg-[var(--ap-accent)]/[0.03] min-w-[640px]"
+                :style="{ animationDelay: `${800 + idx * 50}ms` }"
+                @click="router.push(`/orders/${order.id}`)"
+              >
+                <!-- Order info -->
+                <div class="min-w-0 flex-1">
+                  <div class="text-sm font-medium text-highlighted">
                     {{ normalizeCaseType(order.case_type || '') }}
-                    <span v-if="order.case_subtype" class="text-muted">— {{ order.case_subtype }}</span>
+                    <span v-if="order.case_subtype" class="font-normal text-muted"> — {{ order.case_subtype }}</span>
                   </div>
-                  <div class="mt-1 text-[11px] text-muted">
-                    States: {{ (order.target_states || []).map(s => String(s || '').toUpperCase()).join(', ') || '—' }}
+                  <div class="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
+                    <UIcon name="i-lucide-map-pin" class="size-3 shrink-0" />
+                    {{ (order.target_states || []).map(s => String(s || '').toUpperCase()).join(', ') || '—' }}
                   </div>
                 </div>
 
-                <div class="min-w-[180px]">
-                  <div class="flex items-center justify-end gap-2 flex-wrap">
-                    <!-- Status badge -->
-                    <span
-                      class="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold"
-                      :class="{
-                        'bg-amber-500/10 text-amber-400': getOrderDisplayStatus(order) === 'In Progress',
-                        'bg-green-500/10 text-green-400': getOrderDisplayStatus(order) === 'Pending',
-                        'bg-blue-500/10 text-blue-400': order.status === 'FULFILLED',
-                        'bg-red-500/10 text-red-400': order.status === 'EXPIRED',
-                      }"
-                    >
-                      {{ order.status === 'FULFILLED' ? 'Completed' : order.status === 'EXPIRED' ? 'Expired' : getOrderDisplayStatus(order) }}
-                    </span>
-                    <span class="inline-flex items-center rounded-md bg-blue-500/10 px-2 py-0.5 text-[11px] font-semibold text-blue-400">
-                      Quota {{ order.quota_filled }}/{{ order.quota_total }}
-                    </span>
-                    <span class="inline-flex items-center rounded-md bg-[var(--ap-card-divide)] px-2 py-0.5 text-[11px] font-medium text-muted">
-                      {{ new Date(order.expires_at || '').getFullYear() >= 2099 ? 'No expiry' : `Expires ${String(order.expires_at || '').slice(0, 10)}` }}
-                    </span>
-                  </div>
+                <!-- Status -->
+                <div class="flex w-24 items-center gap-1.5 justify-center">
+                  <span
+                    class="size-1.5 shrink-0 rounded-full"
+                    :class="{
+                      'bg-amber-400': getOrderDisplayStatus(order) === 'In Progress',
+                      'bg-green-400': getOrderDisplayStatus(order) === 'Pending',
+                      'bg-blue-400': order.status === 'FULFILLED',
+                      'bg-red-400': order.status === 'EXPIRED',
+                    }"
+                  />
+                  <span
+                    class="text-xs font-medium"
+                    :class="{
+                      'text-amber-500 dark:text-amber-400': getOrderDisplayStatus(order) === 'In Progress',
+                      'text-green-500 dark:text-green-400': getOrderDisplayStatus(order) === 'Pending',
+                      'text-blue-500 dark:text-blue-400': order.status === 'FULFILLED',
+                      'text-red-500 dark:text-red-400': order.status === 'EXPIRED',
+                    }"
+                  >
+                    {{ order.status === 'FULFILLED' ? 'Completed' : order.status === 'EXPIRED' ? 'Expired' : getOrderDisplayStatus(order) }}
+                  </span>
+                </div>
 
-                  <div class="mt-2 flex items-center justify-end gap-2">
-                    <div class="w-10 text-right text-[11px] text-muted tabular-nums">
-                      {{ orderProgressPercent(order) }}%
-                    </div>
-                    <div class="h-1.5 w-28 overflow-hidden rounded-full bg-[var(--ap-card-border)]">
-                      <div
-                        class="h-full rounded-full transition-all duration-500"
-                        :class="orderProgressPercent(order) >= 100 ? 'bg-green-400' : 'bg-blue-400'"
-                        :style="{ width: `${Math.min(orderProgressPercent(order), 100)}%` }"
-                      />
-                    </div>
-                    <div class="w-12 text-right text-[11px] text-muted tabular-nums">
-                      {{ order.quota_filled }}/{{ order.quota_total }}
-                    </div>
+                <!-- Quota -->
+                <div class="w-20 text-center">
+                  <span class="inline-flex items-center rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-xs font-semibold tabular-nums text-[var(--ap-accent)]">
+                    {{ order.quota_filled }}/{{ order.quota_total }}
+                  </span>
+                </div>
+
+                <!-- Progress -->
+                <div class="flex w-36 items-center gap-2.5">
+                  <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--ap-card-border)]">
+                    <div
+                      class="h-full rounded-full transition-all duration-500"
+                      :class="orderProgressPercent(order) >= 100 ? 'bg-green-400' : 'bg-[var(--ap-accent)]'"
+                      :style="{ width: `${Math.min(orderProgressPercent(order), 100)}%` }"
+                    />
                   </div>
+                  <span class="w-10 text-right text-xs tabular-nums text-muted">{{ orderProgressPercent(order) }}%</span>
+                </div>
+
+                <!-- Expiry -->
+                <div class="w-28 text-right">
+                  <span class="text-xs text-muted">
+                    {{ new Date(order.expires_at || '').getFullYear() >= 2099 ? 'No expiry' : String(order.expires_at || '').slice(0, 10) }}
+                  </span>
+                </div>
+
+                <!-- Chevron -->
+                <div class="w-5">
+                  <UIcon name="i-lucide-chevron-right" class="text-sm text-muted opacity-0 transition-opacity group-hover:opacity-100" />
                 </div>
               </div>
             </div>
+          </div>
+
+          <!-- Footer -->
+          <div class="border-t border-[var(--ap-card-border)] px-5 py-2.5">
+            <p class="text-xs text-muted">
+              Showing {{ filteredOrders.length }} of {{ statsTotal }} orders
+            </p>
           </div>
         </div>
       </div>
