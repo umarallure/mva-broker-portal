@@ -43,8 +43,8 @@ const languageOptions = [
 
 const contactMethodOptions = [
   { label: 'Email', value: 'email' },
-  { label: 'Phone', value: 'phone' },
-  { label: 'Text', value: 'text' }
+  { label: 'Phone Call', value: 'phone' },
+  { label: 'Text Message', value: 'text' }
 ]
 
 const userId = computed(() => auth.state.value.user?.id ?? '')
@@ -438,9 +438,12 @@ onBeforeRouteLeave((to) => {
             <p class="mt-0.5 text-xs text-muted">How you prefer to be contacted (optional)</p>
           </div>
           <div class="w-full sm:w-72">
-            <URadioGroup
+            <USelect
               v-model="profile.preferredContact"
-              :options="contactMethodOptions"
+              :items="contactMethodOptions"
+              value-key="value"
+              label-key="label"
+              placeholder="Select contact method"
               :disabled="disabled"
               class="w-full sm:w-72"
             />
