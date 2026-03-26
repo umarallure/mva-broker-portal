@@ -6,15 +6,19 @@ import { onBeforeRouteLeave, useRouter, type RouteLocationRaw } from 'vue-router
 import { useAuth } from '../../composables/useAuth'
 import { useAttorneyProfile, type AttorneyProfileState } from '../../composables/useAttorneyProfile'
 import UnsavedChangesModal from '../../components/settings/UnsavedChangesModal.vue'
+import { US_STATES } from '../../lib/us-states'
 
 const generalInfoSchema = z.object({
   fullName: z.string().min(2, 'Full name is required'),
   firmName: z.string().min(2, 'Firm name is required'),
-  barNumber: z.string().min(3, 'Bar association number is required'),
+  barState: z.string().optional(),
+  barNumber: z.string().optional(),
+  barNumbers: z.array(z.string()).min(1, 'At least one bar association number is required'),
   bio: z.string().optional(),
   yearsExperience: z.number().min(0).optional().or(z.literal('')),
   languages: z.array(z.string()).min(1, 'At least one language is required'),
   primaryEmail: z.string().email('Invalid email'),
+  personalEmail: z.string().email('Invalid email').optional().or(z.literal('')),
   directPhone: z.string().min(10, 'Phone number is required'),
   officeAddress: z.string().min(5, 'Office address is required'),
   websiteUrl: z.string().url().optional().or(z.literal('')),
@@ -47,17 +51,49 @@ const contactMethodOptions = [
   { label: 'Text Message', value: 'text' }
 ]
 
+const barStateOptions = US_STATES.map(s => ({ label: s.code, value: s.code }))
+const barStateNameByCode = US_STATES.reduce<Record<string, string>>((acc, s) => {
+  acc[s.code] = s.name
+  return acc
+}, {})
+
 const userId = computed(() => auth.state.value.user?.id ?? '')
 
 const profile = attorneyProfile.draft as unknown as Ref<AttorneyProfileState>
 
 const router = useRouter()
 
+const addBarNumber = () => {
+  if (disabled.value) return
+  const state = String(attorneyProfile.draft.value.barState ?? '').trim().toUpperCase()
+  const next = (attorneyProfile.draft.value.barNumber ?? '').trim()
+  if (!state) return
+  if (!next) return
+
+  const encoded = `${state}|${next}`
+  const existing = (attorneyProfile.draft.value.barNumbers ?? []).map(v => v.trim()).filter(Boolean)
+  if (!existing.includes(encoded)) {
+    attorneyProfile.draft.value.barNumbers = [...existing, encoded]
+  } else {
+    attorneyProfile.draft.value.barNumbers = existing
+  }
+
+  attorneyProfile.draft.value.barNumber = ''
+}
+
+const removeBarNumber = (value: string) => {
+  if (disabled.value) return
+  const current = (attorneyProfile.draft.value.barNumbers ?? []).map(v => v.trim()).filter(Boolean)
+  attorneyProfile.draft.value.barNumbers = current.filter(v => v !== value)
+}
+
 const hydrateFromAuth = () => {
   const p = auth.state.value.profile
   const email = p?.email ?? auth.state.value.user?.email ?? ''
 
-  attorneyProfile.draft.value.primaryEmail = email
+  if (!attorneyProfile.draft.value.primaryEmail) {
+    attorneyProfile.draft.value.primaryEmail = email
+  }
 
   if (!attorneyProfile.draft.value.fullName) {
     attorneyProfile.draft.value.fullName = p?.display_name ?? ''
@@ -87,11 +123,12 @@ async function submitAttorneyProfile() {
     await attorneyProfile.commitEditing(userId.value, [
       'fullName',
       'firmName',
-      'barNumber',
+      'barNumbers',
       'bio',
       'yearsExperience',
       'languages',
       'primaryEmail',
+      'personalEmail',
       'directPhone',
       'officeAddress',
       'websiteUrl',
@@ -280,18 +317,72 @@ onBeforeRouteLeave((to) => {
 
         <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
           <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Bar Association Number <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Your state bar registration number</p>
+            <label class="text-sm font-medium text-highlighted">Bar Licenses (State Name + Bar Number) <span class="text-red-400">*</span></label>
+            <p class="mt-0.5 text-xs text-muted">Add each bar license by selecting the state and entering the bar number</p>
           </div>
           <div class="w-full sm:w-72">
-            <UInput
-              v-model="profile.barNumber"
-              placeholder="BAR123456"
-              autocomplete="off"
-              :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
-            />
+            <div class="flex items-center gap-2">
+              <USelect
+                v-model="profile.barState"
+                :items="barStateOptions"
+                value-key="value"
+                label-key="label"
+                placeholder="State"
+                :disabled="disabled"
+                class="w-20"
+              />
+              <UInput
+                v-model="profile.barNumber"
+                placeholder="BAR123456"
+                autocomplete="off"
+                :disabled="disabled"
+                size="md"
+                class="flex-1"
+                @keydown.enter.prevent="addBarNumber"
+              />
+              <UButton
+                type="button"
+                label="Add More"
+                color="neutral"
+                variant="outline"
+                icon="i-lucide-plus"
+                :disabled="disabled"
+                class="shrink-0 rounded-lg"
+                @click="addBarNumber"
+              />
+            </div>
+
+            <div v-if="(profile.barNumbers?.length ?? 0) > 0" class="mt-2 flex flex-wrap gap-2">
+              <div
+                v-for="n in profile.barNumbers"
+                :key="n"
+                class="flex items-center gap-1 rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-2 py-1"
+              >
+                <template v-if="String(n).includes('|')">
+                  <span class="text-[11px] font-semibold text-muted">{{ (n.split('|')[0] ?? '').toUpperCase() }}</span>
+                  <span class="text-[11px] text-muted">-</span>
+                  <span class="text-xs font-medium text-highlighted">{{ (n.split('|')[1] ?? '').trim() }}</span>
+                  <span
+                    v-if="barStateNameByCode[(n.split('|')[0] ?? '').toUpperCase()]"
+                    class="ml-1 text-[11px] text-muted"
+                  >
+                    ({{ barStateNameByCode[(n.split('|')[0] ?? '').toUpperCase()] }})
+                  </span>
+                </template>
+                <template v-else>
+                  <span class="text-xs font-medium text-highlighted">{{ n }}</span>
+                </template>
+                <UButton
+                  type="button"
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-x"
+                  :disabled="disabled"
+                  class="h-6 w-6 rounded-md p-0"
+                  @click="removeBarNumber(n)"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -372,7 +463,25 @@ onBeforeRouteLeave((to) => {
               v-model="profile.primaryEmail"
               type="email"
               autocomplete="off"
-              disabled
+              :disabled="disabled"
+              size="md"
+              class="w-full sm:w-72"
+            />
+          </div>
+        </div>
+
+        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
+          <div class="min-w-0 flex-1">
+            <label class="text-sm font-medium text-highlighted">Personal Email</label>
+            <p class="mt-0.5 text-xs text-muted">Optional email for internal communication</p>
+          </div>
+          <div class="w-full sm:w-72">
+            <UInput
+              v-model="profile.personalEmail"
+              type="email"
+              placeholder="you@gmail.com"
+              autocomplete="off"
+              :disabled="disabled"
               size="md"
               class="w-full sm:w-72"
             />
