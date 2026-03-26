@@ -157,14 +157,14 @@ textarea {
 }
 
 /* Staggered delays */
-.ap-delay-1 { animation-delay: 100ms; }
-.ap-delay-2 { animation-delay: 200ms; }
-.ap-delay-3 { animation-delay: 400ms; }
-.ap-delay-4 { animation-delay: 550ms; }
-.ap-delay-5 { animation-delay: 350ms; }
-.ap-delay-6 { animation-delay: 500ms; }
+.ap-delay-1 { animation-delay: 80ms; }
+.ap-delay-2 { animation-delay: 160ms; }
+.ap-delay-3 { animation-delay: 240ms; }
+.ap-delay-4 { animation-delay: 350ms; }
+.ap-delay-5 { animation-delay: 450ms; }
+.ap-delay-6 { animation-delay: 550ms; }
 .ap-delay-7 { animation-delay: 650ms; }
-.ap-delay-8 { animation-delay: 800ms; }
+.ap-delay-8 { animation-delay: 750ms; }
 
 /* ── Smooth collapse / expand ─────────────────────────────────────── */
 .ap-collapse {

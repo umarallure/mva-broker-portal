@@ -7,6 +7,7 @@ defineProps<{
   progress?: number
   progressLabel?: string
   clickable?: boolean
+  loading?: boolean
 }>()
 
 defineEmits<{ click: [] }>()
@@ -56,7 +57,8 @@ defineEmits<{ click: [] }>()
               accent === 'orange-light' || !accent ? 'text-orange-500 dark:text-orange-400' : ''
             ]"
           >
-            {{ value }}
+            <span v-if="loading" class="inline-block h-[0.75em] w-20 animate-pulse rounded-md bg-black/[0.06] dark:bg-white/[0.08] align-middle" />
+            <template v-else>{{ value }}</template>
           </p>
         </div>
         <div
@@ -86,11 +88,14 @@ defineEmits<{ click: [] }>()
       <!-- Progress bar -->
       <div v-if="progress !== undefined" class="mt-3">
         <div class="flex items-center justify-between text-[11px] text-muted mb-1">
-          <span>{{ progressLabel }}</span>
-          <span class="font-semibold text-highlighted">{{ progress }}%</span>
+          <span v-if="loading" class="inline-block h-[1em] w-16 animate-pulse rounded bg-black/[0.06] dark:bg-white/[0.08]" />
+          <span v-else>{{ progressLabel }}</span>
+          <span v-if="loading" class="inline-block h-[1em] w-8 animate-pulse rounded bg-black/[0.06] dark:bg-white/[0.08]" />
+          <span v-else class="font-semibold text-highlighted">{{ progress }}%</span>
         </div>
         <div class="h-1.5 w-full overflow-hidden rounded-full bg-black/[0.06] dark:bg-white/[0.08]">
           <div
+            v-if="!loading"
             class="h-full rounded-full transition-all duration-700 ease-out"
             :class="[
               accent === 'green' ? 'bg-green-400' : '',
@@ -105,7 +110,10 @@ defineEmits<{ click: [] }>()
       </div>
 
       <!-- Slot for custom bottom content -->
-      <slot />
+      <div v-if="loading && $slots.default" class="mt-3">
+        <span class="inline-block h-[1em] w-28 animate-pulse rounded bg-black/[0.06] dark:bg-white/[0.08] text-xs" />
+      </div>
+      <slot v-else />
     </div>
 
     <!-- Bottom accent strip -->

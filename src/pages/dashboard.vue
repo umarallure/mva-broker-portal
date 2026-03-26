@@ -509,6 +509,7 @@ const showMonthGrowth = computed(() =>
               :value="retainerCount"
               icon="i-lucide-briefcase"
               accent="orange-light"
+              :loading="loading"
               clickable
               @click="router.push('/retainers')"
             >
@@ -525,6 +526,7 @@ const showMonthGrowth = computed(() =>
               :value="orderCount"
               icon="i-lucide-shopping-cart"
               accent="blue"
+              :loading="loading"
               :progress="fulfillmentPercent"
               progress-label="Fulfillment"
               clickable
@@ -538,6 +540,7 @@ const showMonthGrowth = computed(() =>
               :value="formatMoney(totalInvoiced)"
               icon="i-lucide-circle-dollar-sign"
               accent="green"
+              :loading="loading"
               clickable
               @click="router.push('/invoicing')"
             >
@@ -555,6 +558,7 @@ const showMonthGrowth = computed(() =>
               :value="pendingReviewInvoiceCount"
               icon="i-lucide-clock"
               accent="amber"
+              :loading="loading"
               clickable
               @click="router.push('/invoicing')"
             >
