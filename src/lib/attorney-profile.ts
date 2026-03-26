@@ -58,10 +58,12 @@ export interface AttorneyProfileData {
   full_name: string
   firm_name: string
   bar_association_number: string
+  bar_association_numbers?: string[] | null
   professional_bio?: string | null
   years_experience?: number | null
   languages_spoken: string[]
   primary_email: string
+  personal_email?: string | null
   direct_phone: string
   office_address: string
   website_url?: string | null

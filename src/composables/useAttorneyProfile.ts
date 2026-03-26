@@ -7,11 +7,14 @@ export interface AttorneyProfileState {
   profilePhoto?: string
   fullName?: string
   firmName?: string
+  barState?: string
   barNumber?: string
+  barNumbers?: string[]
   bio?: string
   yearsExperience?: number
   languages?: string[]
   primaryEmail?: string
+  personalEmail?: string
   directPhone?: string
   officeAddress?: string
   websiteUrl?: string
@@ -47,7 +50,7 @@ export interface AttorneyProfileState {
 export const ATTORNEY_PROFILE_REQUIRED_FIELDS: Array<keyof AttorneyProfileState> = [
   'fullName',
   'firmName',
-  'barNumber',
+  'barNumbers',
   'languages',
   'directPhone',
   'officeAddress',
@@ -94,6 +97,14 @@ const _useAttorneyProfile = () => {
   const loaded = ref(false)
   const hasRow = ref(false)
 
+  const getLegacyBarNumberFromEncoded = (value: string) => {
+    const trimmed = String(value ?? '').trim()
+    if (!trimmed) return ''
+    if (!trimmed.includes('|')) return trimmed
+    const parts = trimmed.split('|')
+    return String(parts[1] ?? '').trim()
+  }
+
   const isEditing = ref(false)
   const isDirty = ref(false)
   const baseline = ref<string>('')
@@ -108,11 +119,20 @@ const _useAttorneyProfile = () => {
     if ('profilePhoto' in data) out.profile_photo_url = data.profilePhoto ? data.profilePhoto : null
     if ('fullName' in data) out.full_name = data.fullName ?? ''
     if ('firmName' in data) out.firm_name = data.firmName ?? ''
-    if ('barNumber' in data) out.bar_association_number = data.barNumber ?? ''
+    if ('barNumbers' in data) {
+      const nums = (data.barNumbers ?? []).map(v => v.trim()).filter(Boolean)
+      out.bar_association_numbers = nums
+      out.bar_association_number = nums[0] ? getLegacyBarNumberFromEncoded(nums[0]) : ''
+    } else if ('barNumber' in data) {
+      const n = (data.barNumber ?? '').trim()
+      out.bar_association_number = n
+      out.bar_association_numbers = n ? [n] : []
+    }
     if ('bio' in data) out.professional_bio = data.bio ? data.bio : null
     if ('yearsExperience' in data) out.years_experience = data.yearsExperience ?? null
     if ('languages' in data) out.languages_spoken = data.languages ?? []
     if ('primaryEmail' in data) out.primary_email = data.primaryEmail ?? ''
+    if ('personalEmail' in data) out.personal_email = data.personalEmail ? data.personalEmail : null
     if ('directPhone' in data) out.direct_phone = data.directPhone ?? ''
     if ('officeAddress' in data) out.office_address = data.officeAddress ?? ''
     if ('websiteUrl' in data) out.website_url = data.websiteUrl ? data.websiteUrl : null
@@ -145,15 +165,25 @@ const _useAttorneyProfile = () => {
   }
 
   const mapDatabaseToState = (dbProfile: Partial<AttorneyProfileData>): AttorneyProfileState => {
+    const barNumbers = (dbProfile.bar_association_numbers ?? [])
+      .map(v => String(v).trim())
+      .filter(Boolean)
+    const legacyBarNumber = (dbProfile.bar_association_number ?? '').trim()
+    const mergedBarNumbers = barNumbers.length
+      ? barNumbers
+      : (legacyBarNumber ? [legacyBarNumber] : [])
+
     return {
       profilePhoto: dbProfile.profile_photo_url || '',
       fullName: dbProfile.full_name || '',
       firmName: dbProfile.firm_name || '',
-      barNumber: dbProfile.bar_association_number || '',
+      barNumber: '',
+      barNumbers: mergedBarNumbers,
       bio: dbProfile.professional_bio || '',
       yearsExperience: dbProfile.years_experience ?? undefined,
       languages: dbProfile.languages_spoken || [],
       primaryEmail: dbProfile.primary_email || '',
+      personalEmail: dbProfile.personal_email || '',
       directPhone: dbProfile.direct_phone || '',
       officeAddress: dbProfile.office_address || '',
       websiteUrl: dbProfile.website_url || '',
@@ -219,11 +249,13 @@ const _useAttorneyProfile = () => {
         profile_photo_url: mergedData.profilePhoto || null,
         full_name: mergedData.fullName ?? '',
         firm_name: mergedData.firmName ?? '',
-        bar_association_number: mergedData.barNumber ?? '',
+        bar_association_number: getLegacyBarNumberFromEncoded((mergedData.barNumbers?.[0] ?? '').trim()),
+        bar_association_numbers: (mergedData.barNumbers ?? []).map(v => v.trim()).filter(Boolean),
         professional_bio: mergedData.bio || null,
         years_experience: mergedData.yearsExperience ?? null,
         languages_spoken: mergedData.languages || [],
         primary_email: mergedData.primaryEmail ?? '',
+        personal_email: mergedData.personalEmail || null,
         direct_phone: mergedData.directPhone ?? '',
         office_address: mergedData.officeAddress ?? '',
         website_url: mergedData.websiteUrl || null,
