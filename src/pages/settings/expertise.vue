@@ -332,7 +332,7 @@ onBeforeRouteLeave((_to, _from, next) => {
                 <span
                   v-for="st in profile.licensedStates"
                   :key="st"
-                  class="rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--ap-accent)]"
+                  class="rounded-md border-[0.5px] border-[var(--ap-accent)]/55 bg-[var(--ap-accent)]/20 px-2 py-0.5 text-[11px] font-medium text-white/90"
                 >
                   {{ st }}
                 </span>
@@ -441,7 +441,7 @@ onBeforeRouteLeave((_to, _from, next) => {
                 <span
                   v-for="cat in profile.injuryCategories"
                   :key="cat"
-                  class="rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--ap-accent)]"
+                  class="rounded-md border-[0.5px] border-[var(--ap-accent)]/55 bg-[var(--ap-accent)]/20 px-2 py-0.5 text-[11px] font-medium text-white/90"
                 >
                   {{ cat }}
                 </span>

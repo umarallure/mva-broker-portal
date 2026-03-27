@@ -8,6 +8,10 @@ import { useAttorneyProfile, type AttorneyProfileState } from '../../composables
 import UnsavedChangesModal from '../../components/settings/UnsavedChangesModal.vue'
 import { US_STATES } from '../../lib/us-states'
 
+const allowedLanguages = ['English', 'Spanish'] as const
+const languageOptions: string[] = [...allowedLanguages]
+type SupportedLanguage = typeof allowedLanguages[number]
+
 const generalInfoSchema = z.object({
   fullName: z.string().min(2, 'Full name is required'),
   firmName: z.string().min(2, 'Firm name is required'),
@@ -16,7 +20,12 @@ const generalInfoSchema = z.object({
   barNumbers: z.array(z.string()).min(1, 'At least one bar association number is required'),
   bio: z.string().optional(),
   yearsExperience: z.number().min(0).optional().or(z.literal('')),
-  languages: z.array(z.string()).min(1, 'At least one language is required'),
+  languages: z.array(z.string())
+    .min(1, 'At least one language is required')
+    .refine(
+      languages => languages.every(language => allowedLanguages.includes(language as SupportedLanguage)),
+      'Select English or Spanish only'
+    ),
   primaryEmail: z.string().email('Invalid email'),
   personalEmail: z.string().email('Invalid email').optional().or(z.literal('')),
   directPhone: z.string().min(10, 'Phone number is required'),
@@ -31,19 +40,6 @@ const auth = useAuth()
 const attorneyProfile = useAttorneyProfile()
 const saving = ref(false)
 const toast = useToast()
-
-const languageOptions = [
-  'English',
-  'Spanish',
-  'French',
-  'Mandarin',
-  'Arabic',
-  'Portuguese',
-  'Russian',
-  'German',
-  'Japanese',
-  'Korean'
-]
 
 const contactMethodOptions = [
   { label: 'Email', value: 'email' },
@@ -62,6 +58,11 @@ const userId = computed(() => auth.state.value.user?.id ?? '')
 const profile = attorneyProfile.draft as unknown as Ref<AttorneyProfileState>
 
 const router = useRouter()
+
+const sanitizeLanguages = (languages?: string[]) =>
+  (languages ?? []).filter((language): language is SupportedLanguage =>
+    allowedLanguages.includes(language as SupportedLanguage)
+  )
 
 const addBarNumber = () => {
   if (disabled.value) return
@@ -146,6 +147,7 @@ onMounted(async () => {
   if (userId.value) {
     await attorneyProfile.loadProfile(userId.value)
   }
+  profile.value.languages = sanitizeLanguages(profile.value.languages)
   hydrateFromAuth()
   parseAddress(profile.value.officeAddress ?? '')
 })
@@ -398,7 +400,6 @@ onBeforeRouteLeave((to) => {
                 :items="languageOptions"
                 multiple
                 searchable
-                creatable
                 placeholder="Select languages"
                 :disabled="disabled"
                 class="w-full"
@@ -408,7 +409,7 @@ onBeforeRouteLeave((to) => {
                 <span
                   v-for="lang in profile.languages"
                   :key="lang"
-                  class="rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--ap-accent)]"
+                  class="rounded-md border-[0.5px] border-[var(--ap-accent)]/55 bg-[var(--ap-accent)]/20 px-2 py-0.5 text-[11px] font-medium text-white/90"
                 >
                   {{ lang }}
                 </span>

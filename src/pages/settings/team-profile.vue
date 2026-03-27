@@ -536,7 +536,7 @@ onBeforeRouteLeave((to) => {
                 </div>
               </div>
               <div class="flex items-center gap-2 shrink-0">
-                <span class="hidden sm:inline-flex rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--ap-accent)]">
+                <span class="hidden sm:inline-flex rounded-md border-[0.5px] border-[var(--ap-accent)]/55 bg-[var(--ap-accent)]/20 px-2 py-0.5 text-[11px] font-medium text-white/90">
                   {{ positionLabel(member.position, member.position_other) }}
                 </span>
                 <span class="hidden md:inline-flex rounded-md bg-black/[0.03] dark:bg-white/[0.06] px-2 py-0.5 text-[11px] text-muted">
