@@ -328,6 +328,132 @@ onBeforeRouteLeave((to) => {
 
       <!-- Members List -->
       <div v-else class="relative">
+        <!-- New member form -->
+        <div v-if="team.editingMemberId.value === NEW_TEAM_MEMBER_ID && team.draft.value" class="border-b border-black/[0.04] dark:border-white/[0.04] px-5 py-5">
+          <div class="relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/20">
+            <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
+            <div class="relative flex flex-col gap-3 border-b border-[var(--ap-accent)]/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div class="flex items-center gap-2.5">
+                <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
+                  <UIcon name="i-lucide-user-plus" class="text-sm text-[var(--ap-accent)]" />
+                </div>
+                <div>
+                  <h4 class="text-sm font-semibold text-highlighted">
+                    Add Team Member
+                  </h4>
+                  <p class="text-[11px] text-muted">
+                    Add contact details, role, and availability in one clean step.
+                  </p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 self-start sm:self-auto">
+                <span class="rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--ap-accent)]">
+                  New member
+                </span>
+                <span class="rounded-md bg-black/[0.03] px-2 py-0.5 text-[11px] text-muted dark:bg-white/[0.06]">
+                  4 required fields
+                </span>
+              </div>
+            </div>
+
+            <UForm
+              :schema="teamMemberSchema"
+              :state="team.draft.value"
+              class="relative space-y-5 p-4 sm:p-5"
+              @submit="onSaveMember"
+            >
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-12">
+                <div class="space-y-1.5 lg:col-span-4">
+                  <label class="text-xs font-medium text-highlighted">Full Name <span class="text-red-400/80">*</span></label>
+                  <UInput
+                    v-model="team.draft.value.full_name"
+                    placeholder="Jane Smith"
+                    autocomplete="off"
+                    size="md"
+                    class="w-full"
+                  />
+                </div>
+                <div class="space-y-1.5 lg:col-span-5">
+                  <label class="text-xs font-medium text-highlighted">Email <span class="text-red-400/80">*</span></label>
+                  <UInput
+                    v-model="team.draft.value.email"
+                    type="email"
+                    placeholder="jane@yourfirm.com"
+                    autocomplete="off"
+                    size="md"
+                    class="w-full"
+                  />
+                </div>
+                <div class="space-y-1.5 lg:col-span-3">
+                  <label class="text-xs font-medium text-highlighted">Phone</label>
+                  <UInput
+                    v-model="team.draft.value.phone"
+                    type="tel"
+                    placeholder="+1 (555) 123-4567"
+                    autocomplete="off"
+                    size="md"
+                    class="w-full"
+                  />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-12">
+                <div :class="team.draft.value.position === 'other' ? 'space-y-1.5 lg:col-span-4' : 'space-y-1.5 lg:col-span-6'">
+                  <label class="text-xs font-medium text-highlighted">Position <span class="text-red-400/80">*</span></label>
+                  <USelect
+                    v-model="team.draft.value.position"
+                    :items="TEAM_MEMBER_POSITIONS"
+                    placeholder="Select a position"
+                    class="w-full"
+                  />
+                </div>
+                <div v-if="team.draft.value.position === 'other'" class="space-y-1.5 lg:col-span-4">
+                  <label class="text-xs font-medium text-highlighted">Specify Position <span class="text-red-400/80">*</span></label>
+                  <UInput
+                    v-model="team.draft.value.position_other"
+                    placeholder="e.g. Case Manager"
+                    autocomplete="off"
+                    size="md"
+                    class="w-full"
+                  />
+                </div>
+                <div :class="team.draft.value.position === 'other' ? 'space-y-1.5 lg:col-span-4' : 'space-y-1.5 lg:col-span-6'">
+                  <label class="text-xs font-medium text-highlighted">Shift Availability <span class="text-red-400/80">*</span></label>
+                  <USelect
+                    v-model="team.draft.value.shift_availability"
+                    :items="SHIFT_AVAILABILITY_OPTIONS"
+                    placeholder="Select availability"
+                    class="w-full"
+                  />
+                </div>
+              </div>
+
+              <div class="flex flex-col gap-3 border-t border-[var(--ap-accent)]/10 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <p class="text-[11px] text-muted">
+                  You can update or remove this team member any time after saving.
+                </p>
+                <div class="flex gap-2 sm:justify-end">
+                  <UButton
+                    label="Cancel"
+                    type="button"
+                    color="neutral"
+                    variant="ghost"
+                    class="flex-1 rounded-lg sm:flex-none"
+                    @click="team.cancelEditing()"
+                  />
+                  <UButton
+                    label="Add Member"
+                    type="submit"
+                    icon="i-lucide-plus"
+                    :loading="saving"
+                    class="flex-1 rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90 sm:flex-none"
+                  />
+                </div>
+              </div>
+            </UForm>
+          </div>
+        </div>
+
         <template v-for="member in team.members.value" :key="member.id">
           <!-- Editing an existing member -->
           <div v-if="team.editingMemberId.value === member.id && team.draft.value" class="border-b border-black/[0.04] dark:border-white/[0.04] last:border-0 px-5 py-5">
@@ -430,50 +556,6 @@ onBeforeRouteLeave((to) => {
           </div>
         </template>
 
-        <!-- New member form -->
-        <div v-if="team.editingMemberId.value === NEW_TEAM_MEMBER_ID && team.draft.value" class="border-b border-black/[0.04] dark:border-white/[0.04] last:border-0 px-5 py-5">
-          <UForm
-            :schema="teamMemberSchema"
-            :state="team.draft.value"
-            class="space-y-4"
-            @submit="onSaveMember"
-          >
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div class="space-y-1.5">
-                <label class="text-xs font-medium text-highlighted">Full Name <span class="text-red-400/80">*</span></label>
-                <UInput v-model="team.draft.value.full_name" placeholder="Jane Smith" autocomplete="off" size="md" class="w-full" />
-              </div>
-              <div class="space-y-1.5">
-                <label class="text-xs font-medium text-highlighted">Email <span class="text-red-400/80">*</span></label>
-                <UInput v-model="team.draft.value.email" type="email" placeholder="jane@yourfirm.com" autocomplete="off" size="md" class="w-full" />
-              </div>
-              <div class="space-y-1.5">
-                <label class="text-xs font-medium text-highlighted">Phone</label>
-                <UInput v-model="team.draft.value.phone" type="tel" placeholder="+1 (555) 123-4567" autocomplete="off" size="md" class="w-full" />
-              </div>
-            </div>
-
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div class="space-y-1.5">
-                <label class="text-xs font-medium text-highlighted">Position <span class="text-red-400/80">*</span></label>
-                <USelect v-model="team.draft.value.position" :items="TEAM_MEMBER_POSITIONS" placeholder="Select a position" class="w-full" />
-              </div>
-              <div v-if="team.draft.value.position === 'other'" class="space-y-1.5">
-                <label class="text-xs font-medium text-highlighted">Specify Position <span class="text-red-400/80">*</span></label>
-                <UInput v-model="team.draft.value.position_other" placeholder="e.g. Case Manager" autocomplete="off" size="md" class="w-full" />
-              </div>
-              <div class="space-y-1.5">
-                <label class="text-xs font-medium text-highlighted">Shift Availability <span class="text-red-400/80">*</span></label>
-                <USelect v-model="team.draft.value.shift_availability" :items="SHIFT_AVAILABILITY_OPTIONS" placeholder="Select availability" class="w-full" />
-              </div>
-            </div>
-
-            <div class="flex justify-end gap-2 pt-1">
-              <UButton label="Cancel" type="button" color="neutral" variant="ghost" class="rounded-lg" @click="team.cancelEditing()" />
-              <UButton label="Add Member" type="submit" icon="i-lucide-plus" :loading="saving" class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90" />
-            </div>
-          </UForm>
-        </div>
       </div>
     </div>
   </div>
