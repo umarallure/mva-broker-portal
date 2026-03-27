@@ -63,6 +63,9 @@ const COLOR_RED = '#ef4444'
 const TEMPORARILY_UNAVAILABLE_STATE_CODES = ['CA'] as const
 const TEMPORARILY_UNAVAILABLE_STATE_SET = new Set<string>(TEMPORARILY_UNAVAILABLE_STATE_CODES)
 
+// ── Temporary: Commercial orders paused ──
+const COMMERCIAL_ORDERS_PAUSED = true
+
 const normalizeStateCode = (stateCode: string) => String(stateCode || '').trim().toUpperCase()
 
 const isTemporarilyUnavailableState = (stateCode: string) => {
@@ -642,9 +645,16 @@ const maxOrderStatesError = computed(() => {
   return null
 })
 
+// Validation: commercial orders temporarily paused
+const commercialOrdersPausedError = computed(() => {
+  if (!COMMERCIAL_ORDERS_PAUSED) return null
+  if (orderForm.value.caseCategory !== 'Commercial Cases') return null
+  return 'Commercial case orders are temporarily closed. Order availability will open soon.'
+})
+
 // Combined order validation error
 const orderValidationError = computed(() => {
-  return maxOrderStatesError.value || maxOrdersPerStateError.value || duplicateCaseTypeError.value || quotaError.value || null
+  return commercialOrdersPausedError.value || maxOrderStatesError.value || maxOrdersPerStateError.value || duplicateCaseTypeError.value || quotaError.value || null
 })
 
 const resetOrderForm = () => {
@@ -804,6 +814,9 @@ const submitCreateOrder = async () => {
   const stateCode = String(orderForm.value.stateCode || '').trim().toUpperCase()
   if (!stateCode) return false
   if (isTemporarilyUnavailableState(stateCode)) return false
+
+  // Enforce: commercial orders paused
+  if (COMMERCIAL_ORDERS_PAUSED && orderForm.value.caseCategory === 'Commercial Cases') return false
 
   // Enforce: 5-state ordering limit
   if (!canOrderInState(stateCode)) return false
