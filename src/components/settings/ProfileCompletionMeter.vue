@@ -14,30 +14,25 @@ const props = defineProps<{
 const requiredFields = ATTORNEY_PROFILE_REQUIRED_FIELDS
 const optionalFields = ATTORNEY_PROFILE_OPTIONAL_FIELDS
 
+const filledRequiredCount = computed(() => {
+  if (!props.profileData) return 0
+  return requiredFields.filter(field => isAttorneyProfileFieldFilled(props.profileData, field)).length
+})
+
+const filledOptionalCount = computed(() => {
+  if (!props.profileData) return 0
+  return optionalFields.filter(field => isAttorneyProfileFieldFilled(props.profileData, field)).length
+})
+
 const completionPercentage = computed(() => {
   if (!props.profileData) return 0
-  
-  let filledRequired = 0
-  let filledOptional = 0
-  
-  requiredFields.forEach((field) => {
-    if (isAttorneyProfileFieldFilled(props.profileData, field)) {
-      filledRequired++
-    }
-  })
-  
-  optionalFields.forEach((field) => {
-    if (isAttorneyProfileFieldFilled(props.profileData, field)) {
-      filledOptional++
-    }
-  })
-  
+
   const requiredWeight = 0.7
   const optionalWeight = 0.3
-  
-  const requiredScore = (filledRequired / requiredFields.length) * requiredWeight
-  const optionalScore = (filledOptional / optionalFields.length) * optionalWeight
-  
+
+  const requiredScore = (filledRequiredCount.value / requiredFields.length) * requiredWeight
+  const optionalScore = (filledOptionalCount.value / optionalFields.length) * optionalWeight
+
   return Math.round((requiredScore + optionalScore) * 100)
 })
 
@@ -50,62 +45,61 @@ const completionColor = computed(() => {
 
 const completionMessage = computed(() => {
   const pct = completionPercentage.value
-  if (pct === 100) return 'Your profile is complete!'
-  if (pct >= 80) return 'Almost there! Just a few more details.'
-  if (pct >= 50) return 'Good progress. Keep going!'
-  return 'Let\'s complete your profile to maximize case opportunities.'
+  if (pct === 100) return 'Complete!'
+  if (pct >= 80) return 'Almost there!'
+  if (pct >= 50) return 'Good progress'
+  return 'Let\'s get started'
 })
 </script>
 
 <template>
-  <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5">
-    <div class="flex items-center justify-between mb-4">
-      <div class="flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--ap-accent)]/10">
-          <UIcon name="i-lucide-shield-check" class="text-lg text-[var(--ap-accent)]" />
-        </div>
-        <div>
-          <h3 class="text-sm font-semibold text-highlighted">
-            Profile Completion
-          </h3>
-          <p class="text-xs text-muted mt-0.5">
-            {{ completionMessage }}
-          </p>
-        </div>
-      </div>
-      <span
-        class="text-2xl font-bold"
-        :class="{
-          'text-green-400': completionColor === 'success',
-          'text-amber-400': completionColor === 'warning',
-          'text-red-400': completionColor === 'error'
-        }"
-      >
-        {{ completionPercentage }}%
-      </span>
-    </div>
+  <div class="relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 backdrop-blur-sm px-4 py-3">
+    <div class="pointer-events-none absolute inset-0 bg-gradient-to-r from-[var(--ap-accent)]/[0.03] via-transparent to-transparent" />
 
-    <div class="h-2 w-full overflow-hidden rounded-full bg-[var(--ap-card-border)]">
-      <div
-        class="h-full rounded-full transition-all duration-500"
-        :class="{
-          'bg-green-400': completionColor === 'success',
-          'bg-amber-400': completionColor === 'warning',
-          'bg-red-400': completionColor === 'error'
-        }"
-        :style="{ width: `${completionPercentage}%` }"
-      />
-    </div>
+    <div class="relative flex items-center gap-4">
+      <!-- Icon -->
+      <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
+        <UIcon name="i-lucide-shield-check" class="text-sm text-[var(--ap-accent)]" />
+      </div>
 
-    <div class="mt-3 flex items-center gap-5 text-xs text-muted">
-      <div class="flex items-center gap-1.5">
-        <UIcon name="i-lucide-check-circle" class="size-3.5 text-green-400/70" />
-        <span>{{ requiredFields.filter(field => isAttorneyProfileFieldFilled(profileData, field)).length }} / {{ requiredFields.length }} Required</span>
+      <!-- Progress bar section — takes available space -->
+      <div class="flex min-w-0 flex-1 items-center gap-4">
+        <span class="shrink-0 text-xs font-medium text-highlighted">Profile Completion</span>
+
+        <!-- Progress bar -->
+        <div class="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+          <div
+            class="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out bg-gradient-to-r from-emerald-400/10 via-emerald-400/60 to-emerald-400"
+            :style="{ width: `${completionPercentage}%` }"
+          />
+        </div>
+
+        <!-- Percentage -->
+        <span class="shrink-0 text-sm font-bold tabular-nums text-emerald-400">
+          {{ completionPercentage }}%
+        </span>
       </div>
-      <div class="flex items-center gap-1.5">
-        <UIcon name="i-lucide-star" class="size-3.5 text-amber-400/70" />
-        <span>{{ optionalFields.filter(field => isAttorneyProfileFieldFilled(profileData, field)).length }} / {{ optionalFields.length }} Optional</span>
+
+      <!-- Divider -->
+      <div class="hidden h-4 w-px bg-white/[0.08] sm:block" />
+
+      <!-- Stats -->
+      <div class="hidden items-center gap-3 sm:flex">
+        <div class="flex items-center gap-1.5">
+          <UIcon name="i-lucide-check-circle" class="size-3 text-emerald-400/60" />
+          <span class="text-[11px] text-muted tabular-nums">{{ filledRequiredCount }}/{{ requiredFields.length }} Required</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <UIcon name="i-lucide-star" class="size-3 text-amber-400/60" />
+          <span class="text-[11px] text-muted tabular-nums">{{ filledOptionalCount }}/{{ optionalFields.length }} Optional</span>
+        </div>
       </div>
+
+      <!-- Divider -->
+      <div class="hidden h-4 w-px bg-white/[0.08] sm:block" />
+
+      <!-- Message -->
+      <span class="hidden shrink-0 text-[11px] text-muted lg:inline">{{ completionMessage }}</span>
     </div>
   </div>
 </template>

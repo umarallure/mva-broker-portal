@@ -160,20 +160,12 @@ async function onSubmit(_event: FormSubmitEvent<ExpertiseSchema>) {
   await submitExpertiseSection()
 }
 
-async function onNext() {
-  const saved = await submitExpertiseSection()
-  if (saved) {
-    attorneyProfile.startEditing()
-    router.push('/settings/retainer-contract-document')
-  }
+function goToBack() {
+  router.push('/settings/attorney-profile')
 }
 
-async function onBack() {
-  const saved = await submitExpertiseSection()
-  if (saved) {
-    attorneyProfile.startEditing()
-    router.push('/settings/attorney-profile')
-  }
+function goToNext() {
+  router.push('/settings/team-profile')
 }
 
 const disabled = computed(() => !attorneyProfile.isEditing.value)
@@ -235,46 +227,44 @@ onBeforeRouteLeave((_to, _from, next) => {
     @submit="onSubmit"
     class="space-y-6"
   >
-    <!-- Page Header -->
-    <div class="flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--ap-accent)]/10">
+    <!-- ═══ Page Header ═══ -->
+    <div class="ap-fade-in flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex items-center gap-4">
+        <div class="relative flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--ap-accent)]/10 ring-1 ring-[var(--ap-accent)]/20">
           <UIcon name="i-lucide-map-pin" class="text-lg text-[var(--ap-accent)]" />
+          <div
+            class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white dark:border-[#1a1a1a] transition-colors"
+            :class="isEditing ? 'bg-[var(--ap-accent)]' : 'bg-emerald-400'"
+          />
         </div>
         <div>
-          <h2 class="text-base font-semibold text-highlighted">Expertise & Jurisdiction</h2>
-          <p class="text-xs text-muted">Define your practice areas and geographic coverage for case matching.</p>
+          <h2 class="text-base font-semibold text-highlighted tracking-tight">
+            Expertise & Jurisdiction
+          </h2>
+          <p class="mt-0.5 text-xs text-muted">
+            Define your practice areas and geographic coverage for case matching.
+          </p>
         </div>
       </div>
       <div class="flex items-center gap-2">
         <UButton
+          label="Back"
+          type="button"
+          icon="i-lucide-arrow-left"
+          variant="outline"
+          class="group rounded-lg border-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)] transition-colors duration-200"
+          :ui="{ leadingIcon: 'text-[var(--ap-accent)] group-hover:text-white transition duration-200 group-hover:-translate-x-0.5' }"
+          @click="goToBack"
+        />
+        <UButton
           v-if="!isEditing"
           label="Edit"
-          color="neutral"
-          variant="outline"
           icon="i-lucide-pencil"
-          class="rounded-lg"
+          class="group rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/80 transition-colors duration-200"
+          :ui="{ leadingIcon: 'transition duration-200 group-hover:-rotate-12' }"
           @click="startEditing"
         />
         <template v-else>
-          <UButton
-            label="Back"
-            type="button"
-            icon="i-lucide-arrow-left"
-            color="neutral"
-            variant="outline"
-            :loading="saving"
-            class="rounded-lg"
-            @click="onBack"
-          />
-          <UButton
-            label="Next"
-            type="button"
-            icon="i-lucide-arrow-right"
-            :loading="saving"
-            class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90"
-            @click="onNext"
-          />
           <UButton
             label="Cancel"
             color="neutral"
@@ -282,156 +272,198 @@ onBeforeRouteLeave((_to, _from, next) => {
             class="rounded-lg"
             @click="cancelEditing"
           />
+          <UButton
+            label="Save"
+            type="submit"
+            icon="i-lucide-check"
+            :loading="saving"
+            class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90"
+          />
         </template>
+        <UButton
+          label="Next"
+          type="button"
+          icon="i-lucide-arrow-right"
+          variant="outline"
+          class="group rounded-lg border-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)] transition-colors duration-200"
+          :ui="{ leadingIcon: 'text-[var(--ap-accent)] group-hover:text-white transition duration-200 group-hover:translate-x-0.5' }"
+          @click="goToNext"
+        />
       </div>
     </div>
 
-    <!-- Geographic Coverage -->
-    <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] overflow-hidden">
-      <div class="border-b border-[var(--ap-card-border)] px-5 py-3">
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-globe" class="text-sm text-muted" />
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Geographic Coverage</span>
-        </div>
-      </div>
+    <!-- ═══ Geographic Coverage + Case Specialization — side by side ═══ -->
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <!-- ── LEFT: Geographic Coverage ── -->
+      <div class="ap-fade-in ap-delay-1 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
+        <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
 
-      <div class="divide-y divide-[var(--ap-card-divide)]">
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Licensed States <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Select states where you are licensed to practice (max {{ MAX_LICENSED_STATES }})</p>
-            <p v-if="(profile.licensedStates?.length ?? 0) >= MAX_LICENSED_STATES" class="mt-1.5 text-xs text-amber-500 font-medium">
-              You have reached the maximum of {{ MAX_LICENSED_STATES }} states. To add more states, please contact your account manager.
-            </p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInputMenu
-              v-model="profile.licensedStates"
-              :items="stateOptions"
-              multiple
-              searchable
-              creatable
-              placeholder="Select or type states"
-              :disabled="disabled"
-              class="w-full sm:w-72"
-            />
+        <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
+          <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
+          <div class="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-[var(--ap-accent)] via-[var(--ap-accent)]/60 to-transparent" />
+          <div class="relative flex items-center gap-3 px-5 py-3.5">
+            <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
+              <UIcon name="i-lucide-globe" class="text-xs text-[var(--ap-accent)]" />
+            </div>
+            <h3 class="text-[13px] font-semibold text-highlighted">
+              Geographic Coverage
+            </h3>
           </div>
         </div>
 
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Primary Physical Location <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Your main office location</p>
+        <div class="relative p-5 space-y-4">
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1.05fr)_minmax(0,0.9fr)_minmax(0,1.05fr)]">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Licensed States <span class="text-muted font-normal">(max {{ MAX_LICENSED_STATES }})</span> <span class="text-red-400/80">*</span>
+              </label>
+              <UInputMenu
+                v-model="profile.licensedStates"
+                :items="stateOptions"
+                multiple
+                searchable
+                creatable
+                placeholder="Select or type states"
+                :disabled="disabled"
+                class="w-full"
+                :ui="{ tagsItem: 'hidden' }"
+              />
+              <div v-if="(profile.licensedStates?.length ?? 0) > 0" class="flex flex-wrap gap-1.5 pt-0.5">
+                <span
+                  v-for="st in profile.licensedStates"
+                  :key="st"
+                  class="rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--ap-accent)]"
+                >
+                  {{ st }}
+                </span>
+              </div>
+              <p v-if="(profile.licensedStates?.length ?? 0) >= MAX_LICENSED_STATES" class="pt-0.5 text-[11px] font-medium text-amber-500">
+                Limit reached - contact your account manager to add more.
+              </p>
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Primary Location <span class="text-red-400/80">*</span>
+              </label>
+              <UInputMenu
+                v-model="profile.primaryCity"
+                :items="stateOptions"
+                searchable
+                creatable
+                placeholder="Select or type location"
+                :disabled="disabled"
+                class="w-full"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Counties / Regions
+              </label>
+              <UInput
+                v-model="profile.countiesCovered"
+                placeholder="Comma-separated"
+                autocomplete="off"
+                :disabled="disabled"
+                size="md"
+                class="w-full"
+              />
+            </div>
           </div>
-          <div class="w-full sm:w-72">
-            <UInput
-              v-model="profile.primaryCity"
-              placeholder="Los Angeles, CA"
-              autocomplete="off"
-              :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
 
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Counties/Regions Covered</label>
-            <p class="mt-0.5 text-xs text-muted">Specific counties or regions (leave empty for statewide)</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInput
-              v-model="profile.countiesCovered"
-              placeholder="Enter counties separated by commas"
-              autocomplete="off"
-              :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
-
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Federal Court Admissions</label>
-            <p class="mt-0.5 text-xs text-muted">List any federal court admissions (optional)</p>
-          </div>
-          <div class="w-full sm:w-72">
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-highlighted">
+              Federal Court Admissions
+            </label>
             <UTextarea
               v-model="profile.federalCourts"
               :rows="3"
               placeholder="e.g., Central District of California, 9th Circuit Court of Appeals"
               autocomplete="off"
               :disabled="disabled"
-              class="w-full sm:w-72"
+              class="w-full"
             />
+            <p class="text-[11px] text-muted">
+              List any federal court admissions (optional)
+            </p>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- Case Specialization -->
-    <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] overflow-hidden">
-      <div class="border-b border-[var(--ap-card-border)] px-5 py-3">
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-scale" class="text-sm text-muted" />
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Case Specialization</span>
-        </div>
-      </div>
+      <!-- ── RIGHT: Case Specialization ── -->
+      <div class="ap-fade-in ap-delay-2 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
+        <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
 
-      <div class="divide-y divide-[var(--ap-card-divide)]">
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Primary Practice Focus <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Your main area of legal practice</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInputMenu
-              v-model="profile.primaryPracticeFocus"
-              :items="practiceFocusOptions"
-              searchable
-              creatable
-              placeholder="Select or type practice focus"
-              :disabled="disabled"
-              class="w-full sm:w-72"
-            />
+        <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
+          <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
+          <div class="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-[var(--ap-accent)] via-[var(--ap-accent)]/60 to-transparent" />
+          <div class="relative flex items-center gap-3 px-5 py-3.5">
+            <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
+              <UIcon name="i-lucide-scale" class="text-xs text-[var(--ap-accent)]" />
+            </div>
+            <h3 class="text-[13px] font-semibold text-highlighted">
+              Case Specialization
+            </h3>
           </div>
         </div>
 
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Specific Injury Categories <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Select all types of cases you handle</p>
+        <div class="relative p-5 space-y-4">
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Primary Practice Focus <span class="text-red-400/80">*</span>
+              </label>
+              <UInputMenu
+                v-model="profile.primaryPracticeFocus"
+                :items="practiceFocusOptions"
+                searchable
+                creatable
+                placeholder="Select or type practice focus"
+                :disabled="disabled"
+                class="w-full"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Injury Categories <span class="text-red-400/80">*</span>
+              </label>
+              <UInputMenu
+                v-model="profile.injuryCategories"
+                :items="injuryCategoryOptions"
+                multiple
+                searchable
+                creatable
+                placeholder="Select or type categories"
+                :disabled="disabled"
+                class="w-full"
+                :ui="{ tagsItem: 'hidden' }"
+              />
+              <div v-if="(profile.injuryCategories?.length ?? 0) > 0" class="flex flex-wrap gap-1.5 pt-0.5">
+                <span
+                  v-for="cat in profile.injuryCategories"
+                  :key="cat"
+                  class="rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--ap-accent)]"
+                >
+                  {{ cat }}
+                </span>
+              </div>
+            </div>
           </div>
-          <div class="w-full sm:w-72">
-            <UInputMenu
-              v-model="profile.injuryCategories"
-              :items="injuryCategoryOptions"
-              multiple
-              searchable
-              creatable
-              placeholder="Select or type categories"
-              :disabled="disabled"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
 
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Exclusionary Criteria</label>
-            <p class="mt-0.5 text-xs text-muted">Case types you do NOT handle (optional)</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInput
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-highlighted">
+              Exclusionary Criteria
+            </label>
+            <UTextarea
               v-model="profile.exclusionaryCriteria"
+              :rows="3"
               placeholder="e.g., Medical Malpractice, Class Actions"
               autocomplete="off"
               :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
+              class="w-full"
             />
+            <p class="text-[11px] text-muted">
+              Case types you do NOT handle (optional)
+            </p>
           </div>
         </div>
       </div>

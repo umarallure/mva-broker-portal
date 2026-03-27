@@ -169,10 +169,9 @@ onBeforeRouteLeave((_to, _from, next) => {
         <UButton
           v-if="!isEditing"
           label="Edit"
-          color="neutral"
-          variant="outline"
           icon="i-lucide-pencil"
-          class="rounded-lg"
+          class="group rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/80 transition-colors duration-200"
+          :ui="{ leadingIcon: 'transition duration-200 group-hover:-rotate-12' }"
           @click="startEditing"
         />
         <template v-else>

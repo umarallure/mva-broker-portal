@@ -75,7 +75,7 @@ const showCompletionMeter = computed(() => {
     </template>
 
     <template #body>
-      <div class="mx-auto flex w-full max-w-4xl flex-col gap-6">
+      <div class="flex w-full flex-col gap-6">
         <ProfileCompletionMeter v-if="showCompletionMeter" :profile-data="attorneyProfileData" />
         <RouterView />
       </div>

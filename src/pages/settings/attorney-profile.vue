@@ -100,12 +100,54 @@ const hydrateFromAuth = () => {
   }
 }
 
+const addressStreet = ref('')
+const addressSuite = ref('')
+const addressCity = ref('')
+const addressState = ref('')
+const addressZip = ref('')
+
+function parseAddress(raw: string) {
+  if (!raw) return
+  const parts = raw.split(',').map(p => p.trim())
+  if (parts.length >= 3) {
+    addressStreet.value = parts[0] ?? ''
+    const last = parts[parts.length - 1] ?? ''
+    const stateZipMatch = last.match(/^([A-Za-z]{2})\s+(.+)$/)
+    if (stateZipMatch) {
+      addressState.value = stateZipMatch[1].toUpperCase()
+      addressZip.value = stateZipMatch[2]
+    } else {
+      addressState.value = last
+    }
+    addressCity.value = parts[parts.length - 2] ?? ''
+    if (parts.length >= 4) {
+      addressSuite.value = parts.slice(1, parts.length - 2).join(', ')
+    }
+  } else {
+    addressStreet.value = raw
+  }
+}
+
+function buildAddress() {
+  const parts = [addressStreet.value.trim()]
+  if (addressSuite.value.trim()) parts.push(addressSuite.value.trim())
+  if (addressCity.value.trim()) parts.push(addressCity.value.trim())
+  const stateZip = [addressState.value.trim(), addressZip.value.trim()].filter(Boolean).join(' ')
+  if (stateZip) parts.push(stateZip)
+  return parts.join(', ')
+}
+
+watch([addressStreet, addressSuite, addressCity, addressState, addressZip], () => {
+  profile.value.officeAddress = buildAddress()
+})
+
 onMounted(async () => {
   await auth.init()
   if (userId.value) {
     await attorneyProfile.loadProfile(userId.value)
   }
   hydrateFromAuth()
+  parseAddress(profile.value.officeAddress ?? '')
 })
 
 watch(
@@ -162,12 +204,8 @@ async function onSubmit() {
   await submitAttorneyProfile()
 }
 
-async function onNext() {
-  const saved = await submitAttorneyProfile()
-  if (saved) {
-    attorneyProfile.startEditing()
-    router.push('/settings/expertise')
-  }
+function goToNext() {
+  router.push('/settings/expertise')
 }
 
 const disabled = computed(() => !attorneyProfile.isEditing.value)
@@ -230,36 +268,35 @@ onBeforeRouteLeave((to) => {
     @submit="onSubmit"
     class="space-y-6"
   >
-    <!-- Page Header -->
-    <div class="flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--ap-accent)]/10">
+    <!-- ═══ Page Header ═══ -->
+    <div class="ap-fade-in flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex items-center gap-4">
+        <div class="relative flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--ap-accent)]/10 ring-1 ring-[var(--ap-accent)]/20">
           <UIcon name="i-lucide-briefcase" class="text-lg text-[var(--ap-accent)]" />
+          <div
+            class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white dark:border-[#1a1a1a] transition-colors"
+            :class="isEditing ? 'bg-[var(--ap-accent)]' : 'bg-emerald-400'"
+          />
         </div>
         <div>
-          <h2 class="text-base font-semibold text-highlighted">Attorney Profile</h2>
-          <p class="text-xs text-muted">Manage your public profile, practice areas, and case availability.</p>
+          <h2 class="text-base font-semibold text-highlighted tracking-tight">
+            Attorney Profile
+          </h2>
+          <p class="mt-0.5 text-xs text-muted">
+            Manage your public profile, practice areas, and case availability.
+          </p>
         </div>
       </div>
       <div class="flex items-center gap-2">
         <UButton
           v-if="!isEditing"
           label="Edit"
-          color="neutral"
-          variant="outline"
           icon="i-lucide-pencil"
-          class="rounded-lg"
+          class="group rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/80 transition-colors duration-200"
+          :ui="{ leadingIcon: 'transition duration-200 group-hover:-rotate-12' }"
           @click="startEditing"
         />
         <template v-else>
-          <UButton
-            label="Next"
-            type="button"
-            icon="i-lucide-check"
-            :loading="saving"
-            class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90"
-            @click="onNext"
-          />
           <UButton
             label="Cancel"
             color="neutral"
@@ -267,268 +304,350 @@ onBeforeRouteLeave((to) => {
             class="rounded-lg"
             @click="cancelEditing"
           />
+          <UButton
+            label="Save"
+            type="submit"
+            icon="i-lucide-check"
+            :loading="saving"
+            class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90"
+          />
         </template>
+        <UButton
+          label="Next"
+          type="button"
+          icon="i-lucide-arrow-right"
+          variant="outline"
+          class="group rounded-lg border-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)] transition-colors duration-200"
+          :ui="{ leadingIcon: 'text-[var(--ap-accent)] group-hover:text-white transition duration-200 group-hover:translate-x-0.5' }"
+          @click="goToNext"
+        />
       </div>
     </div>
 
-    <!-- Core Identity -->
-    <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] overflow-hidden">
-      <div class="border-b border-[var(--ap-card-border)] px-5 py-3">
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-fingerprint" class="text-sm text-muted" />
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Core Identity</span>
+    <!-- ═══ Core Identity + Contact Details — side by side ═══ -->
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <!-- ── LEFT: Core Identity ── -->
+      <div class="ap-fade-in ap-delay-1 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
+        <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
+
+        <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
+          <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
+          <div class="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-[var(--ap-accent)] via-[var(--ap-accent)]/60 to-transparent" />
+          <div class="relative flex items-center gap-3 px-5 py-3.5">
+            <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
+              <UIcon name="i-lucide-fingerprint" class="text-xs text-[var(--ap-accent)]" />
+            </div>
+            <h3 class="text-[13px] font-semibold text-highlighted">
+              Core Identity
+            </h3>
+          </div>
+        </div>
+
+        <div class="relative p-5 space-y-4">
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Full Name <span class="text-red-400/80">*</span>
+              </label>
+              <UInput
+                v-model="profile.fullName"
+                placeholder="John Doe"
+                autocomplete="off"
+                :disabled="disabled"
+                size="md"
+                class="w-full"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Firm Name <span class="text-red-400/80">*</span>
+              </label>
+              <UInput
+                v-model="profile.firmName"
+                placeholder="Doe & Associates"
+                autocomplete="off"
+                :disabled="disabled"
+                size="md"
+                class="w-full"
+              />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Years of Experience
+              </label>
+              <UInput
+                v-model.number="profile.yearsExperience"
+                type="number"
+                min="0"
+                placeholder="10"
+                autocomplete="off"
+                :disabled="disabled"
+                size="md"
+                class="w-full"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Languages <span class="text-red-400/80">*</span>
+              </label>
+              <UInputMenu
+                v-model="profile.languages"
+                :items="languageOptions"
+                multiple
+                searchable
+                creatable
+                placeholder="Select languages"
+                :disabled="disabled"
+                class="w-full"
+                :ui="{ tagsItem: 'hidden' }"
+              />
+              <div v-if="(profile.languages?.length ?? 0) > 0" class="flex flex-wrap gap-1.5 pt-0.5">
+                <span
+                  v-for="lang in profile.languages"
+                  :key="lang"
+                  class="rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--ap-accent)]"
+                >
+                  {{ lang }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-highlighted">
+              Professional Bio
+            </label>
+            <UTextarea
+              v-model="profile.bio"
+              :rows="3"
+              placeholder="Experienced attorney specializing in..."
+              autocomplete="off"
+              :disabled="disabled"
+              class="w-full"
+            />
+            <p class="text-[11px] text-muted">
+              Brief description of your practice (optional)
+            </p>
+          </div>
+
+          <!-- Bar Licenses -->
+          <div class="relative rounded-xl border border-[var(--ap-accent)]/20 overflow-hidden">
+            <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
+            <div class="relative flex items-center justify-between gap-3 border-b border-[var(--ap-accent)]/10 px-4 py-2.5">
+              <div class="flex items-center gap-2">
+                <UIcon name="i-lucide-scale" class="text-xs text-[var(--ap-accent)]" />
+                <span class="text-xs font-semibold text-highlighted">
+                  Bar Licenses <span class="text-red-400/80">*</span>
+                </span>
+              </div>
+              <span class="text-[11px] text-muted tabular-nums">
+                {{ (profile.barNumbers?.length ?? 0) }} added
+              </span>
+            </div>
+            <div class="p-4 space-y-3">
+              <div class="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+                <USelect
+                  v-model="profile.barState"
+                  :items="barStateOptions"
+                  value-key="value"
+                  label-key="label"
+                  placeholder="State"
+                  :disabled="disabled"
+                  class="w-full sm:w-24"
+                />
+                <UInput
+                  v-model="profile.barNumber"
+                  placeholder="BAR123456"
+                  autocomplete="off"
+                  :disabled="disabled"
+                  size="md"
+                  class="w-full sm:flex-1"
+                  @keydown.enter.prevent="addBarNumber"
+                />
+                <UButton
+                  type="button"
+                  label="Add"
+                  variant="outline"
+                  icon="i-lucide-plus"
+                  :disabled="disabled"
+                  class="group shrink-0 rounded-lg border-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)] transition-colors duration-200"
+                  :ui="{ leadingIcon: 'text-[var(--ap-accent)] group-hover:text-white transition duration-200' }"
+                  @click="addBarNumber"
+                />
+              </div>
+              <div v-if="(profile.barNumbers?.length ?? 0) > 0" class="flex flex-wrap gap-1.5">
+                <div
+                  v-for="n in profile.barNumbers"
+                  :key="n"
+                  class="group flex items-center gap-1.5 rounded-lg border border-[var(--ap-accent)]/20 bg-[var(--ap-accent)]/[0.06] pl-1 pr-1.5 py-1 transition-all duration-200 hover:border-[var(--ap-accent)]/40 hover:bg-[var(--ap-accent)]/[0.1]"
+                >
+                  <template v-if="String(n).includes('|')">
+                    <span class="rounded-md bg-[var(--ap-accent)]/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-[var(--ap-accent)]">
+                      {{ (n.split('|')[0] ?? '').toUpperCase() }}
+                    </span>
+                    <span class="text-[11px] font-medium text-highlighted">
+                      {{ (n.split('|')[1] ?? '').trim() }}
+                    </span>
+                    <span
+                      v-if="barStateNameByCode[(n.split('|')[0] ?? '').toUpperCase()]"
+                      class="text-[10px] text-muted hidden sm:inline"
+                    >
+                      {{ barStateNameByCode[(n.split('|')[0] ?? '').toUpperCase()] }}
+                    </span>
+                  </template>
+                  <template v-else>
+                    <span class="text-[11px] font-medium text-highlighted">
+                      {{ n }}
+                    </span>
+                  </template>
+                  <UButton
+                    type="button"
+                    color="neutral"
+                    variant="ghost"
+                    icon="i-lucide-x"
+                    :disabled="disabled"
+                    class="h-4 w-4 rounded p-0 opacity-30 transition-opacity group-hover:opacity-100"
+                    @click="removeBarNumber(n)"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="divide-y divide-[var(--ap-card-divide)]">
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Full Name <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Your complete legal name</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInput
-              v-model="profile.fullName"
-              placeholder="John Doe"
-              autocomplete="off"
-              :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
-            />
+      <!-- ── RIGHT: Contact Details ── -->
+      <div class="ap-fade-in ap-delay-2 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
+        <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
+
+        <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
+          <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
+          <div class="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-[var(--ap-accent)] via-[var(--ap-accent)]/60 to-transparent" />
+          <div class="relative flex items-center gap-3 px-5 py-3.5">
+            <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
+              <UIcon name="i-lucide-phone" class="text-xs text-[var(--ap-accent)]" />
+            </div>
+            <h3 class="text-[13px] font-semibold text-highlighted">
+              Contact Details
+            </h3>
           </div>
         </div>
 
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Firm Name <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Name of your law firm or practice</p>
+        <div class="relative p-5 space-y-4">
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Primary Email <span class="text-red-400/80">*</span>
+              </label>
+              <UInput
+                v-model="profile.primaryEmail"
+                type="email"
+                autocomplete="off"
+                :disabled="disabled"
+                size="md"
+                class="w-full"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Personal Email
+              </label>
+              <UInput
+                v-model="profile.personalEmail"
+                type="email"
+                placeholder="you@gmail.com"
+                autocomplete="off"
+                :disabled="disabled"
+                size="md"
+                class="w-full"
+              />
+            </div>
           </div>
-          <div class="w-full sm:w-72">
-            <UInput
-              v-model="profile.firmName"
-              placeholder="Doe & Associates Law Firm"
-              autocomplete="off"
-              :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
 
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Bar Licenses (State Name + Bar Number) <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Add each bar license by selecting the state and entering the bar number</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <div class="flex items-center gap-2">
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Direct Phone <span class="text-red-400/80">*</span>
+              </label>
+              <UInput
+                v-model="profile.directPhone"
+                type="tel"
+                placeholder="+1 (555) 123-4567"
+                autocomplete="off"
+                :disabled="disabled"
+                size="md"
+                class="w-full"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-highlighted">
+                Preferred Contact
+              </label>
               <USelect
-                v-model="profile.barState"
+                v-model="profile.preferredContact"
+                :items="contactMethodOptions"
+                value-key="value"
+                label-key="label"
+                placeholder="Select method"
+                :disabled="disabled"
+                class="w-full"
+              />
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <label class="text-xs font-medium text-highlighted">
+              Office Address <span class="text-red-400/80">*</span>
+            </label>
+            <div class="grid grid-cols-3 gap-2.5">
+              <UInput
+                v-model="addressStreet"
+                placeholder="Street Address"
+                autocomplete="off"
+                :disabled="disabled"
+                size="md"
+              />
+              <UInput
+                v-model="addressSuite"
+                placeholder="Suite / Unit"
+                autocomplete="off"
+                :disabled="disabled"
+                size="md"
+              />
+              <UInput
+                v-model="addressCity"
+                placeholder="City"
+                autocomplete="off"
+                :disabled="disabled"
+                size="md"
+              />
+            </div>
+            <div class="grid grid-cols-2 gap-2.5">
+              <USelect
+                v-model="addressState"
                 :items="barStateOptions"
                 value-key="value"
                 label-key="label"
                 placeholder="State"
                 :disabled="disabled"
-                class="w-20"
               />
               <UInput
-                v-model="profile.barNumber"
-                placeholder="BAR123456"
+                v-model="addressZip"
+                placeholder="ZIP Code"
                 autocomplete="off"
                 :disabled="disabled"
                 size="md"
-                class="flex-1"
-                @keydown.enter.prevent="addBarNumber"
-              />
-              <UButton
-                type="button"
-                label="Add More"
-                color="neutral"
-                variant="outline"
-                icon="i-lucide-plus"
-                :disabled="disabled"
-                class="shrink-0 rounded-lg"
-                @click="addBarNumber"
               />
             </div>
+          </div>
 
-            <div v-if="(profile.barNumbers?.length ?? 0) > 0" class="mt-2 flex flex-wrap gap-2">
-              <div
-                v-for="n in profile.barNumbers"
-                :key="n"
-                class="flex items-center gap-1 rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] px-2 py-1"
-              >
-                <template v-if="String(n).includes('|')">
-                  <span class="text-[11px] font-semibold text-muted">{{ (n.split('|')[0] ?? '').toUpperCase() }}</span>
-                  <span class="text-[11px] text-muted">-</span>
-                  <span class="text-xs font-medium text-highlighted">{{ (n.split('|')[1] ?? '').trim() }}</span>
-                  <span
-                    v-if="barStateNameByCode[(n.split('|')[0] ?? '').toUpperCase()]"
-                    class="ml-1 text-[11px] text-muted"
-                  >
-                    ({{ barStateNameByCode[(n.split('|')[0] ?? '').toUpperCase()] }})
-                  </span>
-                </template>
-                <template v-else>
-                  <span class="text-xs font-medium text-highlighted">{{ n }}</span>
-                </template>
-                <UButton
-                  type="button"
-                  color="neutral"
-                  variant="ghost"
-                  icon="i-lucide-x"
-                  :disabled="disabled"
-                  class="h-6 w-6 rounded-md p-0"
-                  @click="removeBarNumber(n)"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Professional Bio</label>
-            <p class="mt-0.5 text-xs text-muted">Brief description of your practice and experience (optional)</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UTextarea
-              v-model="profile.bio"
-              :rows="4"
-              placeholder="Experienced attorney specializing in..."
-              autocomplete="off"
-              :disabled="disabled"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
-
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Years of Experience</label>
-            <p class="mt-0.5 text-xs text-muted">Total years practicing law (optional)</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInput
-              v-model.number="profile.yearsExperience"
-              type="number"
-              min="0"
-              placeholder="10"
-              autocomplete="off"
-              :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
-
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Languages Spoken <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Select all languages you can communicate in</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInputMenu
-              v-model="profile.languages"
-              :items="languageOptions"
-              multiple
-              searchable
-              creatable
-              placeholder="Select or type languages"
-              :disabled="disabled"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Contact Details -->
-    <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] overflow-hidden">
-      <div class="border-b border-[var(--ap-card-border)] px-5 py-3">
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-phone" class="text-sm text-muted" />
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Contact Details</span>
-        </div>
-      </div>
-
-      <div class="divide-y divide-[var(--ap-card-divide)]">
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Primary Email <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Used for client communications and notifications</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInput
-              v-model="profile.primaryEmail"
-              type="email"
-              autocomplete="off"
-              :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
-
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Personal Email</label>
-            <p class="mt-0.5 text-xs text-muted">Optional email for internal communication</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInput
-              v-model="profile.personalEmail"
-              type="email"
-              placeholder="you@gmail.com"
-              autocomplete="off"
-              :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
-
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Direct Phone <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Your direct contact number</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInput
-              v-model="profile.directPhone"
-              type="tel"
-              placeholder="+1 (555) 123-4567"
-              autocomplete="off"
-              :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
-
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Primary Physical Location <span class="text-red-400">*</span></label>
-            <p class="mt-0.5 text-xs text-muted">Your main office address where you practice law</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UTextarea
-              v-model="profile.officeAddress"
-              :rows="3"
-              placeholder="123 Main Street, Suite 100, City, State, ZIP"
-              autocomplete="off"
-              :disabled="disabled"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
-
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Website URL</label>
-            <p class="mt-0.5 text-xs text-muted">Your firm's website (optional)</p>
-          </div>
-          <div class="w-full sm:w-72">
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-highlighted">
+              Website URL
+            </label>
             <UInput
               v-model="profile.websiteUrl"
               type="url"
@@ -536,73 +655,53 @@ onBeforeRouteLeave((to) => {
               autocomplete="off"
               :disabled="disabled"
               size="md"
-              class="w-full sm:w-72"
+              class="w-full"
             />
           </div>
-        </div>
 
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Preferred Contact Method</label>
-            <p class="mt-0.5 text-xs text-muted">How you prefer to be contacted (optional)</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <USelect
-              v-model="profile.preferredContact"
-              :items="contactMethodOptions"
-              value-key="value"
-              label-key="label"
-              placeholder="Select contact method"
-              :disabled="disabled"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Support Staff -->
-    <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] overflow-hidden">
-      <div class="border-b border-[var(--ap-card-border)] px-5 py-3">
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-users" class="text-sm text-muted" />
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Support Staff</span>
-        </div>
-      </div>
-
-      <div class="divide-y divide-[var(--ap-card-divide)]">
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Assistant/Paralegal Name</label>
-            <p class="mt-0.5 text-xs text-muted">Name of your assistant or paralegal (optional)</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInput
-              v-model="profile.assistantName"
-              placeholder="Jane Smith"
-              autocomplete="off"
-              :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
-            />
-          </div>
-        </div>
-
-        <div class="flex max-sm:flex-col items-start justify-between gap-4 px-5 py-4">
-          <div class="min-w-0 flex-1">
-            <label class="text-sm font-medium text-highlighted">Assistant/Paralegal Email</label>
-            <p class="mt-0.5 text-xs text-muted">Email address for your assistant (optional)</p>
-          </div>
-          <div class="w-full sm:w-72">
-            <UInput
-              v-model="profile.assistantEmail"
-              type="email"
-              placeholder="assistant@yourfirm.com"
-              autocomplete="off"
-              :disabled="disabled"
-              size="md"
-              class="w-full sm:w-72"
-            />
+          <!-- Support Staff — integrated subsection -->
+          <div class="relative mt-1 rounded-xl border border-[var(--ap-accent)]/20 overflow-hidden">
+            <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
+            <div class="relative flex items-center gap-2 border-b border-[var(--ap-accent)]/10 px-4 py-2.5">
+              <UIcon name="i-lucide-users" class="text-xs text-[var(--ap-accent)]" />
+              <span class="text-xs font-semibold text-highlighted">
+                Support Staff
+              </span>
+              <span class="text-[11px] text-muted">
+                (optional)
+              </span>
+            </div>
+            <div class="p-4">
+              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div class="space-y-1.5">
+                  <label class="text-xs font-medium text-highlighted">
+                    Assistant Name
+                  </label>
+                  <UInput
+                    v-model="profile.assistantName"
+                    placeholder="Jane Smith"
+                    autocomplete="off"
+                    :disabled="disabled"
+                    size="md"
+                    class="w-full"
+                  />
+                </div>
+                <div class="space-y-1.5">
+                  <label class="text-xs font-medium text-highlighted">
+                    Assistant Email
+                  </label>
+                  <UInput
+                    v-model="profile.assistantEmail"
+                    type="email"
+                    placeholder="assistant@yourfirm.com"
+                    autocomplete="off"
+                    :disabled="disabled"
+                    size="md"
+                    class="w-full"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

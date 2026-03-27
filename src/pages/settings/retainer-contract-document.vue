@@ -238,12 +238,8 @@ const saveNotes = async (doc: RetainerContractDocument) => {
   }
 }
 
-const goToNextStep = () => {
-  router.push('/settings/expertise')
-}
-
 const goToPreviousStep = () => {
-  router.push('/settings/billing')
+  router.push('/settings/team-profile')
 }
 
 const loadDocuments = async () => {
@@ -305,47 +301,68 @@ onBeforeRouteLeave((_to, _from, next) => {
     @cancel="handleStay"
   />
 
-  <form class="space-y-6" @submit.prevent>
-    <div class="flex items-center justify-between gap-4">
-      <div class="flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--ap-accent)]/10">
+  <div class="space-y-6">
+    <!-- ═══ Page Header ═══ -->
+    <div class="ap-fade-in flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex items-center gap-4">
+        <div class="relative flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--ap-accent)]/10 ring-1 ring-[var(--ap-accent)]/20">
           <UIcon name="i-lucide-file-text" class="text-lg text-[var(--ap-accent)]" />
+          <div
+            class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white dark:border-[#1a1a1a] transition-colors"
+            :class="showAddForm ? 'bg-[var(--ap-accent)]' : 'bg-emerald-400'"
+          />
         </div>
         <div>
-          <h2 class="text-base font-semibold text-highlighted">
+          <h2 class="text-base font-semibold text-highlighted tracking-tight">
             Retainer Contract Documents
           </h2>
-          <p class="text-xs text-muted">
+          <p class="mt-0.5 text-xs text-muted">
             Upload retainer agreement documents for different states.
           </p>
         </div>
       </div>
-
       <div class="flex items-center gap-2">
+        <UButton
+          type="button"
+          label="Back"
+          icon="i-lucide-arrow-left"
+          variant="outline"
+          class="group rounded-lg border-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)] transition-colors duration-200"
+          :ui="{ leadingIcon: 'text-[var(--ap-accent)] group-hover:text-white transition duration-200 group-hover:-translate-x-0.5' }"
+          @click="goToPreviousStep"
+        />
         <UButton
           v-if="canAddMore && !showAddForm"
           label="Add Document"
           icon="i-lucide-plus"
-          class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90"
+          class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/80 transition-colors duration-200"
           @click="startAddDocument"
         />
       </div>
     </div>
 
-    <!-- Add Document Form -->
-    <div v-if="showAddForm" class="overflow-hidden rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)]">
-      <div class="border-b border-[var(--ap-card-border)] px-5 py-3">
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-plus-circle" class="text-sm text-muted" />
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Add New Document</span>
+    <!-- ═══ Add Document Form ═══ -->
+    <div v-if="showAddForm" class="ap-fade-in ap-delay-1 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
+      <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
+
+      <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
+        <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
+        <div class="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-[var(--ap-accent)] via-[var(--ap-accent)]/60 to-transparent" />
+        <div class="relative flex items-center gap-3 px-5 py-3.5">
+          <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
+            <UIcon name="i-lucide-plus-circle" class="text-xs text-[var(--ap-accent)]" />
+          </div>
+          <h3 class="text-[13px] font-semibold text-highlighted">
+            Add New Document
+          </h3>
         </div>
       </div>
 
-      <div class="space-y-4 px-5 py-4">
-        <div class="grid gap-4 md:grid-cols-2">
-          <div>
-            <label class="block text-sm font-medium text-highlighted mb-1">
-              State <span class="text-red-400">*</span>
+      <div class="relative space-y-4 px-5 py-5">
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-highlighted">
+              State <span class="text-red-400/80">*</span>
             </label>
             <USelect
               v-model="newDocument.state"
@@ -355,9 +372,9 @@ onBeforeRouteLeave((_to, _from, next) => {
             />
           </div>
 
-          <div>
-            <label class="block text-sm font-medium text-highlighted mb-1">
-              Document <span class="text-red-400">*</span>
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-highlighted">
+              Document <span class="text-red-400/80">*</span>
             </label>
             <input
               ref="fileInput"
@@ -367,50 +384,51 @@ onBeforeRouteLeave((_to, _from, next) => {
               @change="handleFileSelected"
             >
             <div v-if="newDocument.file" class="flex items-center gap-2">
-              <UButton
-                type="button"
-                :label="newDocument.file.name"
-                color="neutral"
-                variant="outline"
-                class="flex-1 justify-start truncate"
-                @click="openDocument"
-              />
+              <div class="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-[var(--ap-accent)]/20 bg-[var(--ap-accent)]/[0.04] px-3 py-2">
+                <UIcon name="i-lucide-file-check" class="shrink-0 text-sm text-[var(--ap-accent)]" />
+                <span class="truncate text-xs font-medium text-highlighted">{{ newDocument.file.name }}</span>
+                <span class="shrink-0 rounded bg-[var(--ap-accent)]/10 px-1.5 py-0.5 text-[10px] text-[var(--ap-accent)]">
+                  {{ formatDocumentFileSize(newDocument.file.size) }}
+                </span>
+              </div>
               <UButton
                 type="button"
                 icon="i-lucide-x"
                 color="neutral"
                 variant="ghost"
+                size="xs"
+                class="rounded-lg"
                 @click="clearSelectedFile"
               />
             </div>
-            <UButton
+            <button
               v-else
               type="button"
-              label="Upload Document"
-              icon="i-lucide-upload"
-              variant="outline"
-              class="w-full"
+              class="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--ap-accent)]/30 bg-[var(--ap-accent)]/[0.02] px-4 py-3 text-xs font-medium text-muted transition-colors hover:border-[var(--ap-accent)]/50 hover:bg-[var(--ap-accent)]/[0.06] hover:text-[var(--ap-accent)]"
               @click="openFilePicker"
-            />
-            <p class="mt-1 text-xs text-muted">
+            >
+              <UIcon name="i-lucide-upload" class="text-sm text-[var(--ap-accent)]" />
+              Click to upload document
+            </button>
+            <p class="text-[11px] text-muted">
               Accepted: PDF, DOC, DOCX. Max: {{ maxFileSizeLabel }}
             </p>
           </div>
         </div>
 
-        <div>
-          <label class="block text-sm font-medium text-highlighted mb-1">
-            Notes (Optional)
+        <div class="space-y-1.5">
+          <label class="text-xs font-medium text-highlighted">
+            Notes <span class="text-[11px] font-normal text-muted">(Optional)</span>
           </label>
           <UTextarea
             v-model="newDocument.notes"
             placeholder="Add any notes about this document..."
-            rows="3"
+            :rows="3"
             class="w-full"
           />
         </div>
 
-        <div class="flex justify-end gap-2 pt-2">
+        <div class="flex justify-end gap-2 pt-1">
           <UButton
             type="button"
             label="Cancel"
@@ -432,66 +450,87 @@ onBeforeRouteLeave((_to, _from, next) => {
       </div>
     </div>
 
-    <!-- Documents List -->
-    <div class="overflow-hidden rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)]">
-      <div class="border-b border-[var(--ap-card-border)] px-5 py-3">
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-folder-open" class="text-sm text-muted" />
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">
-            Uploaded Documents ({{ documents.length }})
+    <!-- ═══ Documents List ═══ -->
+    <div class="ap-fade-in ap-delay-1 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
+      <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
+
+      <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
+        <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
+        <div class="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-[var(--ap-accent)] via-[var(--ap-accent)]/60 to-transparent" />
+        <div class="relative flex items-center justify-between px-5 py-3.5">
+          <div class="flex items-center gap-3">
+            <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
+              <UIcon name="i-lucide-folder-open" class="text-xs text-[var(--ap-accent)]" />
+            </div>
+            <h3 class="text-[13px] font-semibold text-highlighted">
+              Uploaded Documents
+            </h3>
+          </div>
+          <span v-if="documents.length > 0" class="rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--ap-accent)] tabular-nums">
+            {{ documents.length }} {{ documents.length === 1 ? 'document' : 'documents' }}
           </span>
         </div>
       </div>
 
-      <div v-if="loading" class="flex items-center justify-center py-10">
-        <UIcon name="i-lucide-loader-2" class="animate-spin text-2xl text-muted" />
+      <!-- Loading State -->
+      <div v-if="loading" class="relative px-5 py-16 text-center">
+        <UIcon name="i-lucide-loader-2" class="mx-auto mb-2 text-2xl text-[var(--ap-accent)] animate-spin" />
+        <p class="text-sm text-muted">Loading documents...</p>
       </div>
 
-      <div v-else-if="documents.length === 0 && !showAddForm" class="px-5 py-10 text-center">
-        <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--ap-accent)]/10">
-          <UIcon name="i-lucide-file-plus-2" class="text-xl text-[var(--ap-accent)]" />
+      <!-- Empty State -->
+      <div v-else-if="documents.length === 0 && !showAddForm" class="relative px-5 py-16 text-center">
+        <div class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--ap-accent)]/10 ring-1 ring-[var(--ap-accent)]/20">
+          <UIcon name="i-lucide-file-plus-2" class="text-2xl text-[var(--ap-accent)]" />
         </div>
-        <p class="text-sm font-medium text-highlighted">
-          No documents uploaded
-        </p>
-        <p class="mt-1 text-xs text-muted">
-          Add your firm's retainer agreement documents for different states.
-        </p>
+        <p class="text-sm font-medium text-highlighted">No documents uploaded</p>
+        <p class="mt-1 text-xs text-muted">Add your firm's retainer agreement documents for different states.</p>
+        <UButton
+          v-if="canAddMore"
+          label="Add Document"
+          icon="i-lucide-plus"
+          size="sm"
+          class="mt-4 rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/80 transition-colors duration-200"
+          @click="startAddDocument"
+        />
       </div>
 
-      <div v-else class="divide-y divide-[var(--ap-card-border)]">
+      <!-- Documents -->
+      <div v-else class="relative">
         <div
           v-for="doc in documents"
           :key="doc.id"
-          class="px-5 py-4"
+          class="border-b border-black/[0.04] dark:border-white/[0.04] last:border-0 px-5 py-4 transition-colors duration-200 hover:bg-[var(--ap-accent)]/[0.02]"
         >
           <div class="flex items-start justify-between gap-4">
             <div class="flex min-w-0 items-start gap-3">
-              <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--ap-accent)]/10">
-                <UIcon name="i-lucide-file-text" class="text-lg text-[var(--ap-accent)]" />
+              <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--ap-accent)]/10 ring-1 ring-[var(--ap-accent)]/20">
+                <span class="text-[11px] font-bold text-[var(--ap-accent)]">{{ doc.state }}</span>
               </div>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 flex-wrap">
-                  <UBadge color="neutral" variant="subtle">
-                    {{ getStateName(doc.state) }} ({{ doc.state }})
-                  </UBadge>
                   <p class="truncate text-sm font-medium text-highlighted">
                     {{ doc.document_name }}
                   </p>
-                  <UBadge color="neutral" variant="subtle" size="sm">
+                  <span class="rounded-md bg-[var(--ap-accent)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--ap-accent)]">
                     {{ getRetainerContractDocumentKind(doc.document_mime_type, doc.document_name)?.toUpperCase() }}
-                  </UBadge>
+                  </span>
                 </div>
-                <p class="mt-1 text-xs text-muted">
-                  {{ formatDocumentFileSize(doc.document_size_bytes) }} | Uploaded {{ formatUploadedAt(doc.created_at) }}
-                </p>
-                
+                <div class="mt-1 flex items-center gap-2 text-xs text-muted">
+                  <span class="rounded bg-black/[0.03] dark:bg-white/[0.06] px-1.5 py-0.5 text-[11px]">
+                    {{ getStateName(doc.state) }}
+                  </span>
+                  <span>{{ formatDocumentFileSize(doc.document_size_bytes) }}</span>
+                  <span class="text-white/20">|</span>
+                  <span>{{ formatUploadedAt(doc.created_at) }}</span>
+                </div>
+
                 <!-- Notes Section -->
-                <div v-if="editingNotesId === doc.id" class="mt-2">
+                <div v-if="editingNotesId === doc.id" class="mt-3">
                   <UTextarea
                     v-model="editingNotesValue"
                     placeholder="Add notes..."
-                    rows="2"
+                    :rows="2"
                     class="w-full"
                   />
                   <div class="mt-2 flex gap-2">
@@ -499,7 +538,7 @@ onBeforeRouteLeave((_to, _from, next) => {
                       type="button"
                       label="Save"
                       size="xs"
-                      class="rounded-lg"
+                      class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90"
                       @click="saveNotes(doc)"
                     />
                     <UButton
@@ -513,8 +552,8 @@ onBeforeRouteLeave((_to, _from, next) => {
                     />
                   </div>
                 </div>
-                <div v-else-if="doc.notes" class="mt-2 text-xs text-muted">
-                  <span class="font-medium">Notes:</span> {{ doc.notes }}
+                <div v-else-if="doc.notes" class="mt-2 rounded-lg bg-[var(--ap-accent)]/[0.04] border border-[var(--ap-accent)]/10 px-3 py-2 text-xs text-muted">
+                  <span class="font-medium text-[var(--ap-accent)]">Notes:</span> {{ doc.notes }}
                 </div>
               </div>
             </div>
@@ -523,27 +562,32 @@ onBeforeRouteLeave((_to, _from, next) => {
               <UButton
                 type="button"
                 icon="i-lucide-eye"
+                color="neutral"
                 variant="ghost"
-                size="sm"
+                size="xs"
                 :loading="openingDocument"
-                title="View Document"
+                aria-label="View Document"
+                class="rounded-lg"
                 @click="openDocument(doc)"
               />
               <UButton
                 type="button"
                 icon="i-lucide-pencil"
+                color="neutral"
                 variant="ghost"
-                size="sm"
-                title="Edit Notes"
+                size="xs"
+                aria-label="Edit Notes"
+                class="rounded-lg"
                 @click="startEditNotes(doc)"
               />
               <UButton
                 type="button"
                 icon="i-lucide-trash-2"
+                color="neutral"
                 variant="ghost"
-                size="sm"
-                class="text-red-400 hover:text-red-300"
-                title="Delete Document"
+                size="xs"
+                aria-label="Delete Document"
+                class="rounded-lg text-red-400 hover:text-red-300"
                 @click="removeDocument(doc)"
               />
             </div>
@@ -551,25 +595,5 @@ onBeforeRouteLeave((_to, _from, next) => {
         </div>
       </div>
     </div>
-
-    <!-- Navigation -->
-    <div class="flex justify-between pt-4">
-      <UButton
-        type="button"
-        label="Back"
-        icon="i-lucide-arrow-left"
-        color="neutral"
-        variant="outline"
-        class="rounded-lg"
-        @click="goToPreviousStep"
-      />
-      <UButton
-        type="button"
-        label="Next"
-        icon="i-lucide-arrow-right"
-        class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90"
-        @click="goToNextStep"
-      />
-    </div>
-  </form>
+  </div>
 </template>
