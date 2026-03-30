@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import type { DropdownMenuItem } from '@nuxt/ui'
-import { useDashboard } from '../composables/useDashboard'
+// import { useDashboard } from '../composables/useDashboard'
 import { useAuth } from '../composables/useAuth'
 import { supabase } from '../lib/supabase'
 import { listInvoices, type InvoiceRow, type InvoiceStatus } from '../lib/invoices'
@@ -11,7 +11,7 @@ import DashboardMetricCard from '../components/dashboard/DashboardMetricCard.vue
 import { VisXYContainer, VisArea, VisLine, VisCrosshair, VisTooltip } from '@unovis/vue'
 
 const router = useRouter()
-const { isNotificationsSlideoverOpen } = useDashboard()
+// const { isNotificationsSlideoverOpen } = useDashboard()
 const auth = useAuth()
 
 const items = [[{
@@ -478,6 +478,7 @@ const showMonthGrowth = computed(() =>
             @click="load"
           />
 
+          <!-- Notifications panel – commented out for later use
           <UTooltip text="Notifications" :shortcuts="['N']">
             <UButton
               color="neutral"
@@ -490,6 +491,7 @@ const showMonthGrowth = computed(() =>
               </UChip>
             </UButton>
           </UTooltip>
+          -->
 
           <UDropdownMenu :items="items">
             <UButton icon="i-lucide-plus" size="md" class="rounded-full" />
