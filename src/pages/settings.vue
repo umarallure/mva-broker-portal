@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import type { NavigationMenuItem } from '@nuxt/ui'
 import ProfileCompletionMeter from '../components/settings/ProfileCompletionMeter.vue'
@@ -11,7 +11,19 @@ const auth = useAuth()
 const attorneyProfile = useAttorneyProfile()
 
 const attorneyProfileData = computed(() => attorneyProfile.state.value as unknown as Partial<AttorneyProfileState>)
-const isAccounts = computed(() => auth.state.value.profile?.role === 'accounts')
+const userId = computed(() => auth.state.value.user?.id ?? '')
+const isLawyer = computed(() => auth.state.value.profile?.role === 'lawyer')
+const canAccessTeamProfile = computed(() => {
+  const role = auth.state.value.profile?.role
+  return role === 'super_admin' || role === 'admin' || role === 'lawyer'
+})
+
+onMounted(async () => {
+  await auth.init()
+  if (isLawyer.value && userId.value) {
+    await attorneyProfile.loadProfile(userId.value)
+  }
+})
 
 const links = computed(() => {
   const items: NavigationMenuItem[][] = [[{
@@ -28,7 +40,7 @@ const links = computed(() => {
     exact: true
   }])
 
-  if (!isAccounts.value) {
+  if (canAccessTeamProfile.value) {
     items.push([{
       label: 'Team Profile',
       icon: 'i-lucide-users-round',
@@ -56,7 +68,7 @@ const links = computed(() => {
 })
 
 const showCompletionMeter = computed(() => {
-  return route.path.startsWith('/settings/')
+  return route.path.startsWith('/settings/') && isLawyer.value
 })
 </script>
 

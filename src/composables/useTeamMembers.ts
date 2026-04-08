@@ -6,10 +6,14 @@ import {
   updateTeamMember,
   deleteTeamMember,
   normalizeTeamMemberInput,
+  createDefaultWeeklyAvailability,
   type TeamMemberInput,
   type TeamMemberRow,
   type TeamMemberPosition,
-  type ShiftAvailability
+  type ReadonlyTeamMemberWeeklyAvailability,
+  type ReadonlyTeamMemberHolidayHours,
+  type TeamMemberWeeklyAvailability,
+  type TeamMemberHolidayHours
 } from '../lib/team-members'
 
 export const NEW_TEAM_MEMBER_ID = '__new__'
@@ -21,7 +25,19 @@ export interface TeamMemberDraft {
   phone: string
   position: TeamMemberPosition | undefined
   position_other: string
-  shift_availability: ShiftAvailability | undefined
+  weekly_availability: TeamMemberWeeklyAvailability
+  holiday_hours: TeamMemberHolidayHours
+}
+
+interface TeamMemberDraftSource {
+  id: string
+  full_name: string
+  email: string
+  phone: string | null
+  position: TeamMemberPosition
+  position_other: string | null
+  weekly_availability: ReadonlyTeamMemberWeeklyAvailability
+  holiday_hours: ReadonlyTeamMemberHolidayHours
 }
 
 const clone = <T>(value: T): T => {
@@ -35,17 +51,19 @@ const createEmptyDraft = (): TeamMemberDraft => ({
   phone: '',
   position: undefined,
   position_other: '',
-  shift_availability: undefined
+  weekly_availability: createDefaultWeeklyAvailability(),
+  holiday_hours: []
 })
 
-const createDraftFromMember = (member: TeamMemberRow): TeamMemberDraft => ({
+const createDraftFromMember = (member: TeamMemberDraftSource): TeamMemberDraft => ({
   id: member.id,
   full_name: member.full_name,
   email: member.email,
   phone: member.phone ?? '',
   position: member.position,
   position_other: member.position_other ?? '',
-  shift_availability: member.shift_availability
+  weekly_availability: clone(member.weekly_availability) as TeamMemberWeeklyAvailability,
+  holiday_hours: clone(member.holiday_hours) as TeamMemberHolidayHours
 })
 
 const _useTeamMembers = () => {
@@ -89,7 +107,7 @@ const _useTeamMembers = () => {
     setDraft(createEmptyDraft())
   }
 
-  const startEditingMember = (member: TeamMemberRow) => {
+  const startEditingMember = (member: TeamMemberDraftSource) => {
     editingMemberId.value = member.id
     setDraft(createDraftFromMember(member))
   }
