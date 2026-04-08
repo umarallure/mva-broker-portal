@@ -2,8 +2,10 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
 import { useAuth } from '../composables/useAuth'
 import { useDragGhost } from '../composables/useDragGhost'
+import { productGuideHints } from '../data/product-guide-hints'
 import { listOrdersForLawyer } from '../lib/orders'
 import { supabase } from '../lib/supabase'
 
@@ -15,6 +17,13 @@ const STAGES: { key: StageKey, label: string }[] = [
   { key: 'dropped_retainers', label: 'Dropped Retainers (Unsuccessful cases)' },
   { key: 'successful_cases', label: 'Successful Cases' }
 ]
+
+const getStageGuideHint = (stage: StageKey) => {
+  if (stage === 'signed_retainers') return productGuideHints.fulfillment.signedColumn
+  if (stage === 'returned_back') return productGuideHints.fulfillment.returnedColumn
+  if (stage === 'dropped_retainers') return productGuideHints.fulfillment.droppedColumn
+  return productGuideHints.fulfillment.successfulColumn
+}
 
 type FulfillmentOrder = {
   id: string
@@ -42,6 +51,7 @@ const dragFromStage = ref<StageKey | null>(null)
 
 const auth = useAuth()
 const router = useRouter()
+const fulfillmentHints = productGuideHints.fulfillment
 
 const totalOrdersCount = ref(0)
 
@@ -470,7 +480,14 @@ const onDropToStage = async (targetStage: StageKey) => {
             <div class="absolute inset-y-0 left-0 w-1 bg-orange-500 dark:bg-orange-600" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-orange-500 dark:text-orange-600">Total Orders</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-orange-500 dark:text-orange-600">Total Orders</p>
+                  <ProductGuideHint
+                    :title="fulfillmentHints.totalOrdersCard.title"
+                    :description="fulfillmentHints.totalOrdersCard.description"
+                    :guide-target="fulfillmentHints.totalOrdersCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-orange-600 tabular-nums">{{ totalOrders }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/10 dark:bg-orange-600/15">
@@ -483,7 +500,14 @@ const onDropToStage = async (targetStage: StageKey) => {
             <div class="absolute inset-y-0 left-0 w-1 bg-blue-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-blue-500 dark:text-blue-400">Signed Retainers</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-blue-500 dark:text-blue-400">Signed Retainers</p>
+                  <ProductGuideHint
+                    :title="fulfillmentHints.signedRetainersCard.title"
+                    :description="fulfillmentHints.signedRetainersCard.description"
+                    :guide-target="fulfillmentHints.signedRetainersCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-blue-500 dark:text-blue-400 tabular-nums">{{ signedCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
@@ -496,7 +520,14 @@ const onDropToStage = async (targetStage: StageKey) => {
             <div class="absolute inset-y-0 left-0 w-1 bg-amber-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">Returned Back (14 days window)</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">Returned Back (14 days window)</p>
+                  <ProductGuideHint
+                    :title="fulfillmentHints.returnedBackCard.title"
+                    :description="fulfillmentHints.returnedBackCard.description"
+                    :guide-target="fulfillmentHints.returnedBackCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-amber-500 dark:text-amber-400 tabular-nums">{{ returnedCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
@@ -509,7 +540,14 @@ const onDropToStage = async (targetStage: StageKey) => {
             <div class="absolute inset-y-0 left-0 w-1 bg-red-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">Dropped (Unsuccessful cases)</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">Dropped (Unsuccessful cases)</p>
+                  <ProductGuideHint
+                    :title="fulfillmentHints.droppedRetainersCard.title"
+                    :description="fulfillmentHints.droppedRetainersCard.description"
+                    :guide-target="fulfillmentHints.droppedRetainersCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-red-500 dark:text-red-400 tabular-nums">{{ droppedCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10">
@@ -522,7 +560,14 @@ const onDropToStage = async (targetStage: StageKey) => {
             <div class="absolute inset-y-0 left-0 w-1 bg-emerald-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-emerald-500 dark:text-emerald-400">Successful Cases</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-emerald-500 dark:text-emerald-400">Successful Cases</p>
+                  <ProductGuideHint
+                    :title="fulfillmentHints.successfulCasesCard.title"
+                    :description="fulfillmentHints.successfulCasesCard.description"
+                    :guide-target="fulfillmentHints.successfulCasesCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-emerald-500 dark:text-emerald-400 tabular-nums">{{ successfulCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10">
@@ -542,6 +587,11 @@ const onDropToStage = async (targetStage: StageKey) => {
                 icon="i-lucide-search"
                 placeholder="Search leads..."
                 size="sm"
+              />
+              <ProductGuideHint
+                :title="fulfillmentHints.filters.title"
+                :description="fulfillmentHints.filters.description"
+                :guide-target="fulfillmentHints.filters.guideTarget"
               />
             </div>
 
@@ -664,7 +714,14 @@ const onDropToStage = async (targetStage: StageKey) => {
                       :class="stageIconClass(stage.key)"
                     />
                   </div>
-                  <span class="text-sm font-semibold text-highlighted">{{ stage.label }}</span>
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-sm font-semibold text-highlighted">{{ stage.label }}</span>
+                    <ProductGuideHint
+                      :title="getStageGuideHint(stage.key).title"
+                      :description="getStageGuideHint(stage.key).description"
+                      :guide-target="getStageGuideHint(stage.key).guideTarget"
+                    />
+                  </div>
                 </div>
               </div>
 

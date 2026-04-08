@@ -3,8 +3,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { DateFormatter, getLocalTimeZone, CalendarDate, today } from '@internationalized/date'
 
+import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
 import { useAuth } from '../composables/useAuth'
 import { useDragGhost } from '../composables/useDragGhost'
+import { productGuideHints } from '../data/product-guide-hints'
 import { deleteInvoice, listInvoices, markInvoiceAsPaid, requestChargeback, updateInvoice, type InvoiceRow, type InvoiceStatus } from '../lib/invoices'
 import { supabase } from '../lib/supabase'
 
@@ -33,6 +35,7 @@ type QualifiedDealRow = {
 const route = useRoute()
 const router = useRouter()
 const auth = useAuth()
+const invoicingHints = productGuideHints.invoicing
 
 const isSuperAdmin = computed(() => auth.state.value.profile?.role === 'super_admin')
 const isAdmin = computed(() => auth.state.value.profile?.role === 'admin')
@@ -500,6 +503,13 @@ const getEmptyStateText = (status: InvoiceStatus) => {
   if (status === 'paid') return 'No paid invoices.'
   if (status === 'chargeback') return 'No chargeback invoices.'
   return 'No invoices.'
+}
+
+const getKanbanGuideHint = (status: InvoiceStatus) => {
+  if (status === 'pending') return invoicingHints.billableColumn
+  if (status === 'in_review') return invoicingHints.pendingColumn
+  if (status === 'paid') return invoicingHints.paidColumn
+  return invoicingHints.chargebackColumn
 }
 
 const getStatusIcon = (status: InvoiceStatus) => {
@@ -1054,6 +1064,12 @@ watch(pageCount, () => {
 
         <template #right>
           <div class="flex items-center gap-2">
+            <ProductGuideHint
+              v-if="isAdminOrSuper"
+              :title="invoicingHints.createInvoice.title"
+              :description="invoicingHints.createInvoice.description"
+              :guide-target="invoicingHints.createInvoice.guideTarget"
+            />
             <UButton
               v-if="isAdminOrSuper"
               color="primary"
@@ -1087,7 +1103,14 @@ watch(pageCount, () => {
             <div class="absolute inset-y-0 left-0 w-1 bg-orange-500 dark:bg-orange-600" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-orange-500 dark:text-orange-600">Total Invoiced</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-orange-500 dark:text-orange-600">Total Invoiced</p>
+                  <ProductGuideHint
+                    :title="invoicingHints.totalInvoicedCard.title"
+                    :description="invoicingHints.totalInvoicedCard.description"
+                    :guide-target="invoicingHints.totalInvoicedCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-highlighted tabular-nums">{{ formatMoney(totalAmount) }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/10 dark:bg-orange-600/15">
@@ -1100,7 +1123,14 @@ watch(pageCount, () => {
             <div class="absolute inset-y-0 left-0 w-1 bg-blue-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-blue-500 dark:text-blue-400">{{ getSummaryCardLabel('pending') }}</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-blue-500 dark:text-blue-400">{{ getSummaryCardLabel('pending') }}</p>
+                  <ProductGuideHint
+                    :title="invoicingHints.billableCard.title"
+                    :description="invoicingHints.billableCard.description"
+                    :guide-target="invoicingHints.billableCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-blue-500 dark:text-blue-400 tabular-nums">{{ formatMoney(billableAmount) }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
@@ -1113,7 +1143,14 @@ watch(pageCount, () => {
             <div class="absolute inset-y-0 left-0 w-1 bg-amber-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">{{ getSummaryCardLabel('in_review') }}</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">{{ getSummaryCardLabel('in_review') }}</p>
+                  <ProductGuideHint
+                    :title="invoicingHints.pendingCard.title"
+                    :description="invoicingHints.pendingCard.description"
+                    :guide-target="invoicingHints.pendingCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-amber-500 dark:text-amber-400 tabular-nums">{{ formatMoney(reviewAmount) }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
@@ -1126,7 +1163,14 @@ watch(pageCount, () => {
             <div class="absolute inset-y-0 left-0 w-1 bg-green-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-green-500 dark:text-green-400">{{ getSummaryCardLabel('paid') }}</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-green-500 dark:text-green-400">{{ getSummaryCardLabel('paid') }}</p>
+                  <ProductGuideHint
+                    :title="invoicingHints.paidCard.title"
+                    :description="invoicingHints.paidCard.description"
+                    :guide-target="invoicingHints.paidCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-green-500 dark:text-green-400 tabular-nums">{{ formatMoney(paidAmount) }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10">
@@ -1139,7 +1183,14 @@ watch(pageCount, () => {
             <div class="absolute inset-y-0 left-0 w-1 bg-red-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">{{ getSummaryCardLabel('chargeback') }}</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">{{ getSummaryCardLabel('chargeback') }}</p>
+                  <ProductGuideHint
+                    :title="invoicingHints.chargebackCard.title"
+                    :description="invoicingHints.chargebackCard.description"
+                    :guide-target="invoicingHints.chargebackCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-red-500 dark:text-red-400 tabular-nums">{{ formatMoney(chargebackAmount) }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10">
@@ -1159,6 +1210,11 @@ watch(pageCount, () => {
                 icon="i-lucide-search"
                 size="sm"
                 placeholder="Search invoices..."
+              />
+              <ProductGuideHint
+                :title="invoicingHints.toolbar.title"
+                :description="invoicingHints.toolbar.description"
+                :guide-target="invoicingHints.toolbar.guideTarget"
               />
 
               <USelect
@@ -1273,6 +1329,11 @@ watch(pageCount, () => {
                   {{ mode === 'kanban' ? 'Board' : 'List' }}
                 </button>
               </div>
+              <ProductGuideHint
+                :title="invoicingHints.viewToggle.title"
+                :description="invoicingHints.viewToggle.description"
+                :guide-target="invoicingHints.viewToggle.guideTarget"
+              />
             </div>
           </div>
 
@@ -1448,7 +1509,14 @@ watch(pageCount, () => {
                   >
                     <UIcon :name="getStatusIcon(status)" class="text-xs" :class="getStatusColorClass(status)" />
                   </div>
-                  <span class="text-sm font-semibold text-highlighted">{{ getStatusLabel(status) }}</span>
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-sm font-semibold text-highlighted">{{ getStatusLabel(status) }}</span>
+                    <ProductGuideHint
+                      :title="getKanbanGuideHint(status).title"
+                      :description="getKanbanGuideHint(status).description"
+                      :guide-target="getKanbanGuideHint(status).guideTarget"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1725,6 +1793,11 @@ watch(pageCount, () => {
               <span class="text-xs text-muted">
                 Showing <span class="font-medium text-highlighted">{{ pagedRows.length }}</span> of <span class="font-medium text-highlighted">{{ filteredInvoices.length }}</span>
               </span>
+              <ProductGuideHint
+                :title="invoicingHints.pagination.title"
+                :description="invoicingHints.pagination.description"
+                :guide-target="invoicingHints.pagination.guideTarget"
+              />
             </div>
 
             <div class="flex items-center gap-1.5">

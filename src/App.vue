@@ -128,6 +128,11 @@ const links = computed(() => [[
     icon: 'i-lucide-tag',
     to: '/product-portal',
     onSelect: () => { open.value = false }
+  }, {
+    label: 'Product Guide',
+    icon: 'i-lucide-book-open',
+    to: '/product-guide',
+    onSelect: () => { open.value = false }
   }] : []),
 
   // Retainer Settlements — admin, super_admin, accounts
@@ -140,11 +145,6 @@ const links = computed(() => [[
 
   // Super admin only
   ...(isSuperAdmin.value ? [{
-    label: 'Product Guide',
-    icon: 'i-lucide-play-circle',
-    to: '/product-guide',
-    onSelect: () => { open.value = false }
-  }, {
     label: 'Users',
     icon: 'i-lucide-users',
     to: '/users',

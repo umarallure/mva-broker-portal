@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import ProductGuideHint from '../product-guide/ProductGuideHint.vue'
+import type { ProductGuideTarget } from '../../lib/product-guide-navigation'
+
 defineProps<{
   title: string
   value: string | number
@@ -8,6 +11,9 @@ defineProps<{
   progressLabel?: string
   clickable?: boolean
   loading?: boolean
+  hintTitle?: string
+  hintDescription?: string
+  hintGuideTarget?: ProductGuideTarget
 }>()
 
 defineEmits<{ click: [] }>()
@@ -46,7 +52,15 @@ defineEmits<{ click: [] }>()
     <div class="relative z-10 flex flex-col justify-between h-full p-4 sm:p-5">
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0">
-          <p class="text-[10px] font-medium uppercase tracking-wider text-muted">{{ title }}</p>
+          <div class="flex items-center gap-1.5">
+            <p class="text-[10px] font-medium uppercase tracking-wider text-muted">{{ title }}</p>
+            <ProductGuideHint
+              v-if="hintTitle && hintDescription"
+              :title="hintTitle"
+              :description="hintDescription"
+              :guide-target="hintGuideTarget"
+            />
+          </div>
           <p
             class="mt-1.5 text-2xl font-bold tabular-nums sm:text-3xl"
             :class="[

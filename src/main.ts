@@ -29,7 +29,7 @@ const router = createRouter({
     { path: '/invoicing/create', component: () => import('./pages/invoicing-create.vue') },
     { path: '/invoicing/edit/:id', component: () => import('./pages/invoicing-create.vue') },
     { path: '/invoicing/:id/pdf', component: () => import('./pages/invoice-pdf.vue'), meta: { public: true } },
-    { path: '/product-guide', component: () => import('./pages/product-guide.vue'), meta: { requiresSuperAdmin: true } },
+    { path: '/product-guide', component: () => import('./pages/product-guide.vue') },
     { path: '/users', component: () => import('./pages/users.vue'), meta: { requiresSuperAdmin: true } },
     { path: '/centers', component: () => import('./pages/centers.vue'), meta: { requiresSuperAdmin: true } },
     {

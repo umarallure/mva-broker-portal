@@ -8,6 +8,8 @@ import { supabase } from '../lib/supabase'
 import { listInvoices, type InvoiceRow, type InvoiceStatus } from '../lib/invoices'
 import { listOrdersForLawyer, type OrderRow } from '../lib/orders'
 import DashboardMetricCard from '../components/dashboard/DashboardMetricCard.vue'
+import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
+import { productGuideHints } from '../data/product-guide-hints'
 import { VisXYContainer, VisArea, VisLine, VisCrosshair, VisTooltip } from '@unovis/vue'
 
 const router = useRouter()
@@ -27,6 +29,7 @@ const items = [[{
 const isSuperAdmin = computed(() => auth.state.value.profile?.role === 'super_admin')
 const isAdmin = computed(() => auth.state.value.profile?.role === 'admin')
 const isAdminOrSuper = computed(() => isSuperAdmin.value || isAdmin.value)
+const dashboardHints = productGuideHints.dashboard
 
 const loading = ref(true)
 
@@ -342,6 +345,11 @@ onMounted(() => {
 // ── New computed properties for redesigned dashboard ──
 
 const activeWorkbenchTab = ref('retainers')
+const workbenchTabs = computed(() => [
+  { key: 'retainers', label: 'Retainers', icon: 'i-lucide-briefcase', count: retainerCount.value },
+  { key: 'orders', label: 'Orders', icon: 'i-lucide-shopping-cart', count: orderCount.value },
+  { key: 'invoices', label: 'Invoices', icon: 'i-lucide-receipt', count: invoices.value.length }
+])
 
 type InvoiceTrendPoint = {
   month: string
@@ -511,6 +519,9 @@ const showMonthGrowth = computed(() =>
               icon="i-lucide-briefcase"
               accent="orange-light"
               :loading="loading"
+              :hint-title="dashboardHints.retainersCard.title"
+              :hint-description="dashboardHints.retainersCard.description"
+              :hint-guide-target="dashboardHints.retainersCard.guideTarget"
               clickable
               @click="router.push('/retainers')"
             >
@@ -530,6 +541,9 @@ const showMonthGrowth = computed(() =>
               :loading="loading"
               :progress="fulfillmentPercent"
               progress-label="Fulfillment"
+              :hint-title="dashboardHints.activeOrdersCard.title"
+              :hint-description="dashboardHints.activeOrdersCard.description"
+              :hint-guide-target="dashboardHints.activeOrdersCard.guideTarget"
               clickable
               @click="router.push('/fulfillment')"
             />
@@ -542,6 +556,9 @@ const showMonthGrowth = computed(() =>
               icon="i-lucide-circle-dollar-sign"
               accent="green"
               :loading="loading"
+              :hint-title="dashboardHints.totalInvoicedCard.title"
+              :hint-description="dashboardHints.totalInvoicedCard.description"
+              :hint-guide-target="dashboardHints.totalInvoicedCard.guideTarget"
               clickable
               @click="router.push('/invoicing')"
             >
@@ -560,6 +577,9 @@ const showMonthGrowth = computed(() =>
               icon="i-lucide-clock"
               accent="amber"
               :loading="loading"
+              :hint-title="dashboardHints.pendingInvoicesCard.title"
+              :hint-description="dashboardHints.pendingInvoicesCard.description"
+              :hint-guide-target="dashboardHints.pendingInvoicesCard.guideTarget"
               clickable
               @click="router.push('/invoicing')"
             >
@@ -581,12 +601,15 @@ const showMonthGrowth = computed(() =>
                   <UIcon name="i-lucide-trending-up" class="text-sm text-[var(--ap-accent)]" />
                 </div>
                 <div>
-                  <h3 class="text-sm font-semibold text-highlighted">
-                    Invoice Trend
-                  </h3>
-                  <p class="text-[11px] text-muted">
-                    Last 6 months
-                  </p>
+                  <div class="flex items-center gap-1.5">
+                    <h3 class="text-sm font-semibold text-highlighted">Invoice Trend</h3>
+                    <ProductGuideHint
+                      :title="dashboardHints.invoiceTrend.title"
+                      :description="dashboardHints.invoiceTrend.description"
+                      :guide-target="dashboardHints.invoiceTrend.guideTarget"
+                    />
+                  </div>
+                  <p class="text-[11px] text-muted">Last 6 months</p>
                 </div>
               </div>
 
@@ -692,9 +715,14 @@ const showMonthGrowth = computed(() =>
           <div class="ap-fade-in ap-delay-5 flex flex-col gap-5">
             <!-- Quick Actions -->
             <div class="overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm p-5">
-              <h3 class="text-sm font-semibold text-highlighted mb-4">
-                Quick Actions
-              </h3>
+              <div class="mb-4 flex items-center gap-1.5">
+                <h3 class="text-sm font-semibold text-highlighted">Quick Actions</h3>
+                <ProductGuideHint
+                  :title="dashboardHints.quickActions.title"
+                  :description="dashboardHints.quickActions.description"
+                  :guide-target="dashboardHints.quickActions.guideTarget"
+                />
+              </div>
               <div class="space-y-2.5">
                 <button
                   class="flex w-full items-center gap-3 rounded-lg border border-[var(--ap-accent)]/15 px-3.5 py-3 text-sm text-left transition-all duration-200 hover:bg-[var(--ap-accent)]/[0.06] hover:border-[var(--ap-accent)]/30 group"
@@ -748,9 +776,14 @@ const showMonthGrowth = computed(() =>
             <!-- Invoice Breakdown -->
             <div class="overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm p-5">
               <div class="mb-4 flex items-center justify-between gap-3">
-                <h3 class="text-sm font-semibold text-highlighted">
-                  Invoice Breakdown
-                </h3>
+                <div class="flex items-center gap-1.5">
+                  <h3 class="text-sm font-semibold text-highlighted">Invoice Breakdown</h3>
+                  <ProductGuideHint
+                    :title="dashboardHints.invoiceBreakdown.title"
+                    :description="dashboardHints.invoiceBreakdown.description"
+                    :guide-target="dashboardHints.invoiceBreakdown.guideTarget"
+                  />
+                </div>
                 <span class="inline-flex items-center rounded-lg bg-black/[0.04] px-2.5 py-1 text-[10px] font-semibold text-muted dark:bg-white/[0.06]">
                   {{ invoices.length }} total
                 </span>
@@ -805,13 +838,18 @@ const showMonthGrowth = computed(() =>
         <div class="ap-fade-in ap-delay-6 overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
           <!-- Tab Header -->
           <div class="flex items-center justify-between border-b border-black/[0.06] dark:border-white/[0.06] px-5">
-            <div class="flex items-center gap-1 -mb-px">
+            <div class="flex items-center gap-4">
+              <div class="hidden sm:flex items-center gap-1.5">
+                <span class="text-xs font-semibold uppercase tracking-wider text-muted">Workbench</span>
+                <ProductGuideHint
+                  :title="dashboardHints.workbench.title"
+                  :description="dashboardHints.workbench.description"
+                  :guide-target="dashboardHints.workbench.guideTarget"
+                />
+              </div>
+              <div class="flex items-center gap-1 -mb-px">
               <button
-                v-for="tab in [
-                  { key: 'retainers', label: 'Retainers', icon: 'i-lucide-briefcase', count: retainerCount },
-                  { key: 'orders', label: 'Orders', icon: 'i-lucide-shopping-cart', count: orderCount },
-                  { key: 'invoices', label: 'Invoices', icon: 'i-lucide-receipt', count: invoices.length }
-                ]"
+                v-for="tab in workbenchTabs"
                 :key="tab.key"
                 class="relative flex items-center gap-2 px-4 py-3.5 text-sm font-medium transition-colors duration-200"
                 :class="activeWorkbenchTab === tab.key
@@ -835,6 +873,7 @@ const showMonthGrowth = computed(() =>
                   class="absolute bottom-0 left-2 right-2 h-0.5 rounded-t-full bg-[var(--ap-accent)]"
                 />
               </button>
+              </div>
             </div>
 
             <button

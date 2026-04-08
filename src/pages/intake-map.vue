@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import usSvgFallbackRaw from '../assets/us.svg?raw'
 
 import { useAuth } from '../composables/useAuth'
+import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
+import { productGuideHints } from '../data/product-guide-hints'
 import { getAttorneyProfile, patchAttorneyProfile } from '../lib/attorney-profile'
 import { createOrder, listOpenOrdersForLawyer, listOrdersForLawyer, type OrderRow } from '../lib/orders'
 import { US_STATES } from '../lib/us-states'
@@ -20,6 +22,7 @@ const auth = useAuth()
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
+const orderMapHints = productGuideHints.orderMap
 const loading = ref(false)
 const tooltip = ref({ open: false, x: 0, y: 0, state: null as StateOrders | null, myOrder: null as OrderRow | null, blocked: false })
 const mapRoot = ref<HTMLDivElement | null>(null)
@@ -1261,54 +1264,71 @@ watch(myClosedOrders, () => {
         </template>
 
         <template #right>
-          <UTooltip v-if="isAccountInactive" text="Locked until Onboarding is Completed">
-            <span class="inline-flex opacity-50 cursor-not-allowed">
-              <UButton
-                color="neutral"
-                :variant="blockMode ? 'solid' : 'outline'"
-                :icon="blockMode ? 'i-lucide-check' : 'i-lucide-ban'"
-                disabled
-              >
-                {{ blockMode ? 'Done blocking' : 'Block states' }}
-              </UButton>
-            </span>
-          </UTooltip>
-          <UButton
-            v-else
-            :color="blockMode ? 'primary' : 'neutral'"
-            :variant="blockMode ? 'solid' : 'outline'"
-            :icon="blockMode ? 'i-lucide-check' : 'i-lucide-ban'"
-            @click="() => { blockMode = !blockMode }"
-          >
-            {{ blockMode ? 'Done blocking' : 'Block states' }}
-          </UButton>
+          <div class="flex items-center gap-2">
+            <ProductGuideHint
+              :title="orderMapHints.createOrder.title"
+              :description="orderMapHints.createOrder.description"
+              :guide-target="orderMapHints.createOrder.guideTarget"
+            />
 
-          <UTooltip v-if="isAccountInactive" text="Locked until Onboarding is Completed">
-            <span class="inline-flex opacity-50 cursor-not-allowed">
-              <UButton
-                color="primary"
-                variant="solid"
-                icon="i-lucide-plus"
-                disabled
-              >
-                Create Order
-              </UButton>
-            </span>
-          </UTooltip>
-          <UTooltip v-else-if="isAtMaxOrderStates && orderStateOptions.length === 0" :text="`You have active orders in ${activeOrderStateCount} states (max ${MAX_ORDER_STATES}) and all are at full capacity. Contact your account manager to increase your state limit.`">
-            <span class="inline-flex opacity-50 cursor-not-allowed">
-              <UButton
-                color="primary"
-                variant="solid"
-                icon="i-lucide-plus"
-                disabled
-              >
-                Create Order
-              </UButton>
-            </span>
-          </UTooltip>
-          <UTooltip v-else-if="isAtMaxOrderStates && orderStateOptions.length > 0" :text="`State limit reached (${activeOrderStateCount}/${MAX_ORDER_STATES}). You can only add orders in your existing states.`">
+            <UTooltip v-if="isAccountInactive" text="Locked until Onboarding is Completed">
+              <span class="inline-flex opacity-50 cursor-not-allowed">
+                <UButton
+                  color="neutral"
+                  :variant="blockMode ? 'solid' : 'outline'"
+                  :icon="blockMode ? 'i-lucide-check' : 'i-lucide-ban'"
+                  disabled
+                >
+                  {{ blockMode ? 'Done blocking' : 'Block states' }}
+                </UButton>
+              </span>
+            </UTooltip>
             <UButton
+              v-else
+              :color="blockMode ? 'primary' : 'neutral'"
+              :variant="blockMode ? 'solid' : 'outline'"
+              :icon="blockMode ? 'i-lucide-check' : 'i-lucide-ban'"
+              @click="() => { blockMode = !blockMode }"
+            >
+              {{ blockMode ? 'Done blocking' : 'Block states' }}
+            </UButton>
+
+            <UTooltip v-if="isAccountInactive" text="Locked until Onboarding is Completed">
+              <span class="inline-flex opacity-50 cursor-not-allowed">
+                <UButton
+                  color="primary"
+                  variant="solid"
+                  icon="i-lucide-plus"
+                  disabled
+                >
+                  Create Order
+                </UButton>
+              </span>
+            </UTooltip>
+            <UTooltip v-else-if="isAtMaxOrderStates && orderStateOptions.length === 0" :text="`You have active orders in ${activeOrderStateCount} states (max ${MAX_ORDER_STATES}) and all are at full capacity. Contact your account manager to increase your state limit.`">
+              <span class="inline-flex opacity-50 cursor-not-allowed">
+                <UButton
+                  color="primary"
+                  variant="solid"
+                  icon="i-lucide-plus"
+                  disabled
+                >
+                  Create Order
+                </UButton>
+              </span>
+            </UTooltip>
+            <UTooltip v-else-if="isAtMaxOrderStates && orderStateOptions.length > 0" :text="`State limit reached (${activeOrderStateCount}/${MAX_ORDER_STATES}). You can only add orders in your existing states.`">
+              <UButton
+                color="primary"
+                variant="solid"
+                icon="i-lucide-plus"
+                @click="openCreateOrder"
+              >
+                Create Order
+              </UButton>
+            </UTooltip>
+            <UButton
+              v-else
               color="primary"
               variant="solid"
               icon="i-lucide-plus"
@@ -1316,40 +1336,31 @@ watch(myClosedOrders, () => {
             >
               Create Order
             </UButton>
-          </UTooltip>
-          <UButton
-            v-else
-            color="primary"
-            variant="solid"
-            icon="i-lucide-plus"
-            @click="openCreateOrder"
-          >
-            Create Order
-          </UButton>
 
-          <UTooltip v-if="isAccountInactive" text="Locked until Onboarding is Completed">
-            <span class="inline-flex opacity-50 cursor-not-allowed">
-              <UButton
-                color="neutral"
-                variant="outline"
-                icon="i-lucide-refresh-cw"
-                :loading="loading"
-                disabled
-              >
-                Refresh
-              </UButton>
-            </span>
-          </UTooltip>
-          <UButton
-            v-else
-            color="neutral"
-            variant="outline"
-            icon="i-lucide-refresh-cw"
-            :loading="loading"
-            @click="refreshAll"
-          >
-            Refresh
-          </UButton>
+            <UTooltip v-if="isAccountInactive" text="Locked until Onboarding is Completed">
+              <span class="inline-flex opacity-50 cursor-not-allowed">
+                <UButton
+                  color="neutral"
+                  variant="outline"
+                  icon="i-lucide-refresh-cw"
+                  :loading="loading"
+                  disabled
+                >
+                  Refresh
+                </UButton>
+              </span>
+            </UTooltip>
+            <UButton
+              v-else
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-refresh-cw"
+              :loading="loading"
+              @click="refreshAll"
+            >
+              Refresh
+            </UButton>
+          </div>
         </template>
       </UDashboardNavbar>
     </template>
@@ -1712,6 +1723,17 @@ watch(myClosedOrders, () => {
         <!-- ═══ Map with integrated legend ═══ -->
         <div class="ap-fade-in ap-delay-2 rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-4 overflow-hidden">
           <div class="relative">
+            <div class="absolute right-3 top-3 z-[5] rounded-xl border border-black/[0.06] bg-white/90 px-2 py-1.5 shadow-lg backdrop-blur-sm dark:border-white/[0.08] dark:bg-[#1a1a1a]/60">
+              <div class="flex items-center gap-1.5">
+                <span class="text-[10px] font-semibold uppercase tracking-wider text-muted">Guide</span>
+                <ProductGuideHint
+                  :title="orderMapHints.map.title"
+                  :description="orderMapHints.map.description"
+                  :guide-target="orderMapHints.map.guideTarget"
+                />
+              </div>
+            </div>
+
             <div
               ref="mapRoot"
               class="w-full rounded-xl overflow-hidden opacity-0"
@@ -1886,11 +1908,23 @@ watch(myClosedOrders, () => {
                   <UIcon name="i-lucide-shopping-cart" class="text-sm text-[var(--ap-accent)]" />
                 </div>
                 <div>
-                  <h3 class="text-sm font-semibold text-highlighted">My Orders</h3>
+                  <div class="flex items-center gap-1.5">
+                    <h3 class="text-sm font-semibold text-highlighted">My Orders</h3>
+                    <ProductGuideHint
+                      :title="orderMapHints.myOrders.title"
+                      :description="orderMapHints.myOrders.description"
+                      :guide-target="orderMapHints.myOrders.guideTarget"
+                    />
+                  </div>
                   <p class="mt-0.5 text-xs text-muted">Manage and track all your active and closed orders.</p>
                 </div>
               </div>
               <div class="flex items-center gap-2">
+                <ProductGuideHint
+                  :title="orderMapHints.filters.title"
+                  :description="orderMapHints.filters.description"
+                  :guide-target="orderMapHints.filters.guideTarget"
+                />
                 <UButton
                   :icon="showOrderFilters ? 'i-lucide-filter-x' : 'i-lucide-filter'"
                   size="xs"

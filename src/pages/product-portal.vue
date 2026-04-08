@@ -2,7 +2,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
+import { productGuideHints } from '../data/product-guide-hints'
+
 const router = useRouter()
+const productOfferingHints = productGuideHints.productOffering
 
 // ── Case category toggle ──
 const selectedCategory = ref<'consumer' | 'commercial'>('consumer')
@@ -131,6 +135,14 @@ const activeTierCards = computed(() => {
   return selectedCategory.value === 'consumer' ? consumerTierCards : commercialTierCards
 })
 
+const getTierGuideHint = (tierName: string) => {
+  if (tierName === 'Tier 1 Transfer') return productOfferingHints.transferTier
+  if (tierName === 'Tier 2 Bronze') return productOfferingHints.bronzeTier
+  if (tierName === 'Tier 3 Silver') return productOfferingHints.silverTier
+  if (tierName === 'Tier 4 Gold') return productOfferingHints.goldTier
+  return productOfferingHints.commercialTier
+}
+
 const placeOrder = () => {
   router.push({ path: '/intake-map', query: { action: 'create-order' } })
 }
@@ -151,14 +163,27 @@ const placeOrder = () => {
         <!-- Header -->
         <div class="ap-fade-in flex items-start justify-between gap-4">
           <div>
-            <h2 class="text-lg font-semibold text-highlighted">
+            <div class="flex items-center gap-1.5">
+              <h2 class="text-lg font-semibold text-highlighted">
               {{ selectedCategory === 'consumer' ? 'Consumer Cases — Pricing Per Case' : 'Commercial Cases — Pricing Per Case' }}
-            </h2>
+              </h2>
+              <ProductGuideHint
+                :title="productOfferingHints.overview.title"
+                :description="productOfferingHints.overview.description"
+                :guide-target="productOfferingHints.overview.guideTarget"
+              />
+            </div>
             <p class="mt-1 text-sm text-muted">
               Each tier reflects the case value based on recency, liability strength, injury severity, and documentation quality.
             </p>
           </div>
-          <USelect
+          <div class="flex items-center gap-2">
+            <ProductGuideHint
+              :title="productOfferingHints.categoryToggle.title"
+              :description="productOfferingHints.categoryToggle.description"
+              :guide-target="productOfferingHints.categoryToggle.guideTarget"
+            />
+            <USelect
             :model-value="selectedCategory"
             :items="[
               { label: 'Consumer Cases', value: 'consumer' },
@@ -167,8 +192,9 @@ const placeOrder = () => {
             value-key="value"
             label-key="label"
             class="w-48 shrink-0"
-            @update:model-value="selectedCategory = $event as 'consumer' | 'commercial'"
-          />
+              @update:model-value="selectedCategory = $event as 'consumer' | 'commercial'"
+            />
+          </div>
         </div>
 
         <!-- ═══ Commercial paused notice ═══ -->
@@ -209,7 +235,14 @@ const placeOrder = () => {
                 class="flex items-center justify-center overflow-hidden rounded-t-xl border-b border-black/[0.06] dark:border-white/[0.08] px-4 py-3"
                 :class="tier.headerGradient || 'tier-4-header'"
               >
-                <span class="text-sm font-semibold text-highlighted">{{ tier.name }}</span>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-sm font-semibold text-highlighted">{{ tier.name }}</span>
+                  <ProductGuideHint
+                    :title="getTierGuideHint(tier.name).title"
+                    :description="getTierGuideHint(tier.name).description"
+                    :guide-target="getTierGuideHint(tier.name).guideTarget"
+                  />
+                </div>
               </div>
 
               <!-- Accent Strip -->
@@ -249,9 +282,9 @@ const placeOrder = () => {
               </div>
 
               <!-- CTA Button -->
-              <div class="px-4 pb-4">
+              <div class="flex items-center gap-2 px-4 pb-4">
                 <button
-                  class="tier-btn group/btn flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all duration-200"
+                  class="tier-btn group/btn flex flex-1 items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all duration-200"
                   :class="[
                     selectedCategory === 'consumer' && idx === 0 ? 'tier-btn--transfer' : '',
                     selectedCategory === 'consumer' && idx === 1 ? 'tier-btn--bronze' : '',
@@ -270,6 +303,11 @@ const placeOrder = () => {
                     class="text-sm transition-transform duration-200 ease-out group-hover/btn:translate-x-1"
                   />
                 </button>
+                <ProductGuideHint
+                  :title="productOfferingHints.placeOrder.title"
+                  :description="productOfferingHints.placeOrder.description"
+                  :guide-target="productOfferingHints.placeOrder.guideTarget"
+                />
               </div>
             </div>
           </div>

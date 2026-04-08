@@ -3,9 +3,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { DateFormatter, getLocalTimeZone, CalendarDate, today } from '@internationalized/date'
 
+import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../composables/useAuth'
 import { useDragGhost } from '../composables/useDragGhost'
+import { productGuideHints } from '../data/product-guide-hints'
 
 type CustomerStageKey = 'new_customers_for_review' | '24_hour_approval' | 'customer_approved' | 'customer_rejected'
 
@@ -15,6 +17,13 @@ const STAGES: { key: CustomerStageKey, label: string }[] = [
   { key: 'customer_approved', label: 'Customer Approved' },
   { key: 'customer_rejected', label: 'Customer Rejected' }
 ]
+
+const getStageGuideHint = (stage: CustomerStageKey) => {
+  if (stage === 'new_customers_for_review') return myCasesHints.myCasesColumn
+  if (stage === '24_hour_approval') return myCasesHints.approvalColumn
+  if (stage === 'customer_approved') return myCasesHints.approvedColumn
+  return myCasesHints.rejectedColumn
+}
 
 type CustomerCard = {
   id: string
@@ -54,6 +63,7 @@ type LeadRow = Record<string, unknown>
 const router = useRouter()
 const auth = useAuth()
 const toast = useToast()
+const myCasesHints = productGuideHints.myCases
 
 const isSuperAdmin = computed(() => auth.state.value.profile?.role === 'super_admin')
 const isAdmin = computed(() => auth.state.value.profile?.role === 'admin')
@@ -905,7 +915,14 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
             <div class="absolute inset-y-0 left-0 w-1 bg-blue-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-blue-500 dark:text-blue-400">New for Review</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-blue-500 dark:text-blue-400">New for Review</p>
+                  <ProductGuideHint
+                    :title="myCasesHints.newForReviewCard.title"
+                    :description="myCasesHints.newForReviewCard.description"
+                    :guide-target="myCasesHints.newForReviewCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-blue-500 dark:text-blue-400 tabular-nums">{{ newReviewCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
@@ -918,7 +935,14 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
             <div class="absolute inset-y-0 left-0 w-1 bg-amber-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">24 Hour Approval</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">24 Hour Approval</p>
+                  <ProductGuideHint
+                    :title="myCasesHints.approvalCard.title"
+                    :description="myCasesHints.approvalCard.description"
+                    :guide-target="myCasesHints.approvalCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-amber-500 dark:text-amber-400 tabular-nums">{{ approvalCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
@@ -931,7 +955,14 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
             <div class="absolute inset-y-0 left-0 w-1 bg-green-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-green-500 dark:text-green-400">Approved</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-green-500 dark:text-green-400">Approved</p>
+                  <ProductGuideHint
+                    :title="myCasesHints.approvedCard.title"
+                    :description="myCasesHints.approvedCard.description"
+                    :guide-target="myCasesHints.approvedCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-green-500 dark:text-green-400 tabular-nums">{{ approvedCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10">
@@ -944,7 +975,14 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
             <div class="absolute inset-y-0 left-0 w-1 bg-red-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">Rejected</p>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">Rejected</p>
+                  <ProductGuideHint
+                    :title="myCasesHints.rejectedCard.title"
+                    :description="myCasesHints.rejectedCard.description"
+                    :guide-target="myCasesHints.rejectedCard.guideTarget"
+                  />
+                </div>
                 <p class="mt-1 text-2xl font-bold text-red-500 dark:text-red-400 tabular-nums">{{ rejectedCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10">
@@ -965,6 +1003,11 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
                 icon="i-lucide-search"
                 placeholder="Search customers..."
                 size="sm"
+              />
+              <ProductGuideHint
+                :title="myCasesHints.filters.title"
+                :description="myCasesHints.filters.description"
+                :guide-target="myCasesHints.filters.guideTarget"
               />
 
               <!-- Date Range (outside filter panel) -->
@@ -1285,7 +1328,14 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
                       :class="stageIconClass(stage.key)"
                     />
                   </div>
-                  <span class="text-sm font-semibold text-highlighted">{{ stage.label }}</span>
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-sm font-semibold text-highlighted">{{ stage.label }}</span>
+                    <ProductGuideHint
+                      :title="getStageGuideHint(stage.key).title"
+                      :description="getStageGuideHint(stage.key).description"
+                      :guide-target="getStageGuideHint(stage.key).guideTarget"
+                    />
+                  </div>
                 </div>
               </div>
 
