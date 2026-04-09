@@ -8,6 +8,7 @@ import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
 import { productGuideHints } from '../data/product-guide-hints'
 import { getAttorneyProfile, patchAttorneyProfile } from '../lib/attorney-profile'
 import { createOrder, listOpenOrdersForLawyer, listOrdersForLawyer, type OrderRow } from '../lib/orders'
+import { upsertGeneralCoverage, getGeneralCoverageForAttorney, type GeneralCoverageRow } from '../lib/general-coverage'
 import { US_STATES } from '../lib/us-states'
 
 const US_SVG_ASSET_URL = new URL('../assets/us.svg', import.meta.url).toString()
@@ -905,6 +906,165 @@ const handleCreateOrderSubmit = async (close: () => void) => {
   }
 }
 
+// ═══ GENERAL COVERAGE ═══
+const ordersSectionView = ref<'orders' | 'coverage'>('orders')
+const existingGeneralCoverage = ref<GeneralCoverageRow | null>(null)
+const hasGeneralCoverage = computed(() => !!existingGeneralCoverage.value)
+
+const generalCoverageOpen = ref(false)
+const generalCoverageStep = ref<1 | 2>(1)
+const gcVerifyInput = ref('')
+const gcVerifyTouched = ref(false)
+const generalCoverageSubmitting = ref(false)
+
+const gcVerifyIsValid = computed(() => {
+  return String(gcVerifyInput.value || '').trim().toUpperCase() === orderVerifyPhrase
+})
+
+const gcVerifyError = computed(() => {
+  if (!gcVerifyTouched.value) return undefined
+  if (gcVerifyIsValid.value) return undefined
+  return `Type ${orderVerifyPhrase} to continue.`
+})
+
+const gcForm = ref({
+  coveredStates: [] as string[],
+  injurySeverity: [] as string[],
+  liabilityStatus: 'clear_only' as 'clear_only' | 'disputed_ok',
+  insuranceStatus: 'insured_only' as 'insured_only' | 'uninsured_ok',
+  medicalTreatment: 'ongoing' as string,
+  languages: ['English'] as string[],
+  noPriorAttorney: true as boolean
+})
+
+watch(() => [...gcForm.value.injurySeverity], (selected, previous) => {
+  if (!selected.includes(NO_CRITERIA_INJURY_SEVERITY) || selected.length <= 1) return
+  gcForm.value.injurySeverity = previous.includes(NO_CRITERIA_INJURY_SEVERITY)
+    ? selected.filter(value => value !== NO_CRITERIA_INJURY_SEVERITY)
+    : [NO_CRITERIA_INJURY_SEVERITY]
+})
+
+const gcStateOptions = computed(() => {
+  return US_STATES
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((s) => ({ label: `${s.name} (${s.code})`, value: s.code }))
+})
+
+const resetGcForm = () => {
+  gcForm.value = {
+    coveredStates: [],
+    injurySeverity: [],
+    liabilityStatus: 'clear_only',
+    insuranceStatus: 'insured_only',
+    medicalTreatment: 'ongoing',
+    languages: ['English'],
+    noPriorAttorney: true
+  }
+}
+
+const populateGcFormFromExisting = (gc: GeneralCoverageRow) => {
+  gcForm.value = {
+    coveredStates: [...gc.covered_states],
+    injurySeverity: [...gc.injury_severity],
+    liabilityStatus: gc.liability_status as 'clear_only' | 'disputed_ok',
+    insuranceStatus: gc.insurance_status as 'insured_only' | 'uninsured_ok',
+    medicalTreatment: gc.medical_treatment,
+    languages: [...gc.languages],
+    noPriorAttorney: gc.no_prior_attorney
+  }
+}
+
+const refreshGeneralCoverage = async () => {
+  const userId = auth.state.value.user?.id ?? null
+  if (!userId) {
+    existingGeneralCoverage.value = null
+    return
+  }
+  try {
+    existingGeneralCoverage.value = await getGeneralCoverageForAttorney(userId)
+  } catch {
+    existingGeneralCoverage.value = null
+  }
+}
+
+const openGeneralCoverage = () => {
+  generalCoverageOpen.value = true
+  generalCoverageStep.value = 1
+  gcVerifyInput.value = ''
+  gcVerifyTouched.value = false
+  if (existingGeneralCoverage.value) {
+    populateGcFormFromExisting(existingGeneralCoverage.value)
+  } else {
+    resetGcForm()
+  }
+}
+
+const handleGeneralCoverageOpenUpdate = (v: boolean) => {
+  generalCoverageOpen.value = v
+  if (!v) {
+    generalCoverageStep.value = 1
+    gcVerifyInput.value = ''
+    gcVerifyTouched.value = false
+  }
+}
+
+const goToGcStep2 = () => {
+  gcVerifyTouched.value = true
+  if (!gcVerifyIsValid.value) return
+  generalCoverageStep.value = 2
+}
+
+const submitGeneralCoverage = async () => {
+  const userId = auth.state.value.user?.id ?? null
+  if (!userId) return false
+  if (!gcForm.value.coveredStates.length) return false
+
+  const result = await upsertGeneralCoverage({
+    attorney_id: userId,
+    covered_states: gcForm.value.coveredStates,
+    case_category: 'Consumer Cases',
+    injury_severity: gcForm.value.injurySeverity,
+    liability_status: gcForm.value.liabilityStatus,
+    insurance_status: gcForm.value.insuranceStatus,
+    medical_treatment: gcForm.value.medicalTreatment,
+    languages: gcForm.value.languages,
+    no_prior_attorney: gcForm.value.noPriorAttorney
+  })
+
+  existingGeneralCoverage.value = result
+  generalCoverageOpen.value = false
+  resetGcForm()
+  return true
+}
+
+const handleGeneralCoverageSubmit = async (close: () => void) => {
+  if (generalCoverageSubmitting.value) return
+  const isUpdate = hasGeneralCoverage.value
+  generalCoverageSubmitting.value = true
+  try {
+    const saved = await submitGeneralCoverage()
+    if (saved) {
+      toast.add({
+        title: isUpdate ? 'General coverage updated' : 'General coverage created',
+        description: 'Your general coverage has been saved successfully.',
+        icon: 'i-lucide-check-circle',
+        color: 'success'
+      })
+      close()
+    }
+  } catch (err) {
+    toast.add({
+      title: 'Failed to save general coverage',
+      description: err instanceof Error ? err.message : 'An unexpected error occurred.',
+      icon: 'i-lucide-x-circle',
+      color: 'error'
+    })
+  } finally {
+    generalCoverageSubmitting.value = false
+  }
+}
+
 const MAP_PATH_SELECTOR = 'path[data-id], path[id]'
 
 const BLOCKED_PATTERN_ID = 'blocked-hatch'
@@ -1212,6 +1372,7 @@ onMounted(() => {
       await refreshMyOrders()
       await refreshMyClosedOrders()
       await loadBlockedStates()
+      await refreshGeneralCoverage()
       rebuildStatesFromMyOrders()
     } finally {
       loading.value = false
@@ -1335,6 +1496,28 @@ watch(myClosedOrders, () => {
               @click="openCreateOrder"
             >
               Create Order
+            </UButton>
+
+            <UTooltip v-if="isAccountInactive" text="Locked until Onboarding is Completed">
+              <span class="inline-flex opacity-50 cursor-not-allowed">
+                <UButton
+                  color="primary"
+                  variant="solid"
+                  icon="i-lucide-plus"
+                  disabled
+                >
+                  Create General Coverage
+                </UButton>
+              </span>
+            </UTooltip>
+            <UButton
+              v-else
+              color="primary"
+              variant="solid"
+              :icon="hasGeneralCoverage ? 'i-lucide-pencil' : 'i-lucide-plus'"
+              @click="openGeneralCoverage"
+            >
+              {{ hasGeneralCoverage ? 'Edit General Coverage' : 'Create General Coverage' }}
             </UButton>
 
             <UTooltip v-if="isAccountInactive" text="Locked until Onboarding is Completed">
@@ -1720,6 +1903,269 @@ watch(myClosedOrders, () => {
           </template>
         </UModal>
 
+        <!-- ═══ General Coverage Modal ═══ -->
+        <UModal
+          v-if="generalCoverageOpen"
+          :open="true"
+          :title="hasGeneralCoverage ? 'Edit General Coverage' : 'Create General Coverage'"
+          :dismissible="false"
+          :ui="{ content: 'sm:max-w-3xl', body: 'p-0' }"
+          @update:open="handleGeneralCoverageOpenUpdate"
+        >
+          <template #body="{ close }">
+            <div class="flex max-h-[78vh] min-h-[560px] flex-col">
+              <div>
+                <div class="mt-2 flex items-center justify-center">
+                  <div class="w-full max-w-sm">
+                    <div class="relative">
+                      <div class="absolute left-30 right-30 top-4 h-px border-t border-dashed border-primary/50" />
+                      <div
+                        v-if="generalCoverageStep >= 2"
+                        class="absolute left-30 right-30 top-4 h-px bg-primary"
+                      />
+                      <div class="relative flex items-start justify-center gap-24">
+                        <div class="flex flex-col items-center gap-2">
+                          <div
+                            class="flex size-8 items-center justify-center rounded-full text-xs font-semibold ring-1 ring-inset"
+                            :class="generalCoverageStep >= 1 ? 'bg-primary text-white ring-primary' : 'bg-elevated text-muted ring-default'"
+                          >
+                            1
+                          </div>
+                          <div class="text-xs" :class="generalCoverageStep === 1 ? 'font-semibold text-foreground' : 'text-muted'">
+                            Verification
+                          </div>
+                        </div>
+
+                        <div class="flex flex-col items-center gap-2">
+                          <div
+                            class="flex size-8 items-center justify-center rounded-full text-xs font-semibold ring-1 ring-inset"
+                            :class="generalCoverageStep >= 2 ? 'bg-primary text-white ring-primary' : 'bg-elevated text-[var(--ap-accent)] ring-[var(--ap-accent)]'"
+                          >
+                            2
+                          </div>
+                          <div class="text-xs" :class="generalCoverageStep === 2 ? 'font-semibold text-foreground' : 'text-muted'">
+                            Coverage Details
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="generalCoverageStep === 1" class="min-h-0 flex-1 overflow-y-auto px-6 py-4 flex items-center justify-center">
+                <div class="w-full max-w-md space-y-5">
+                  <p class="text-center text-sm text-muted">
+                    To continue, type <span class="font-semibold text-highlighted">{{ orderVerifyPhrase }}</span> below.
+                  </p>
+
+                  <div class="rounded-xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-5">
+                    <UFormField label="Verification word" required :error="gcVerifyError">
+                      <UInput
+                        v-model="gcVerifyInput"
+                        placeholder="Type the verification word"
+                        size="xl"
+                        class="w-full"
+                        @blur="() => { gcVerifyTouched = true }"
+                      />
+                    </UFormField>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+                <div class="grid gap-4 sm:grid-cols-2">
+                  <UFormField label="Covered States" required class="sm:col-span-2">
+                    <USelect
+                      v-model="gcForm.coveredStates"
+                      :items="gcStateOptions"
+                      class="w-full"
+                      value-key="value"
+                      label-key="label"
+                      multiple
+                      placeholder="Select states"
+                      :ui="multiSelectUi"
+                    >
+                      <template #item-leading>
+                        <span class="relative flex size-4 items-center justify-center">
+                          <UIcon
+                            name="i-lucide-square"
+                            class="absolute size-4 text-muted group-data-[state=checked]:hidden"
+                          />
+                          <UIcon
+                            name="i-lucide-check-square"
+                            class="absolute hidden size-4 text-primary group-data-[state=checked]:block"
+                          />
+                        </span>
+                      </template>
+                    </USelect>
+                    <div v-if="gcForm.coveredStates.length" class="mt-2 flex flex-wrap gap-1">
+                      <span
+                        v-for="code in gcForm.coveredStates"
+                        :key="code"
+                        class="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
+                      >
+                        {{ code }}
+                        <button
+                          type="button"
+                          class="ml-0.5 hover:text-red-500"
+                          @click="gcForm.coveredStates = gcForm.coveredStates.filter(s => s !== code)"
+                        >
+                          <UIcon name="i-lucide-x" class="size-3" />
+                        </button>
+                      </span>
+                    </div>
+                  </UFormField>
+
+                  <UFormField label="Case category">
+                    <USelect
+                      model-value="Consumer Cases"
+                      :items="[{ label: 'Consumer Cases', value: 'Consumer Cases' }]"
+                      class="w-full"
+                      value-key="value"
+                      label-key="label"
+                      disabled
+                    />
+                  </UFormField>
+
+                  <UFormField label="Injury severity" required>
+                    <USelect
+                      v-model="gcForm.injurySeverity"
+                      :items="injurySeverityOptions"
+                      class="w-full"
+                      value-key="value"
+                      label-key="label"
+                      multiple
+                      placeholder="Select injury severities"
+                      :ui="multiSelectUi"
+                    >
+                      <template #item-leading>
+                        <span class="relative flex size-4 items-center justify-center">
+                          <UIcon
+                            name="i-lucide-square"
+                            class="absolute size-4 text-muted group-data-[state=checked]:hidden"
+                          />
+                          <UIcon
+                            name="i-lucide-check-square"
+                            class="absolute hidden size-4 text-primary group-data-[state=checked]:block"
+                          />
+                        </span>
+                      </template>
+                    </USelect>
+                  </UFormField>
+
+                  <UFormField label="Liability status" required>
+                    <USelect
+                      v-model="gcForm.liabilityStatus"
+                      :items="liabilityOptions"
+                      class="w-full"
+                      value-key="value"
+                      label-key="label"
+                      placeholder="Select liability"
+                    />
+                  </UFormField>
+
+                  <UFormField label="Insurance status" required>
+                    <USelect
+                      v-model="gcForm.insuranceStatus"
+                      :items="insuranceOptions"
+                      class="w-full"
+                      value-key="value"
+                      label-key="label"
+                      placeholder="Select insurance"
+                    />
+                  </UFormField>
+
+                  <UFormField label="Medical treatment" required>
+                    <USelect
+                      v-model="gcForm.medicalTreatment"
+                      :items="medicalTreatmentOptions"
+                      class="w-full"
+                      value-key="value"
+                      label-key="label"
+                    />
+                  </UFormField>
+
+                  <UFormField label="Languages" required>
+                    <USelect
+                      v-model="gcForm.languages"
+                      :items="languageOptions"
+                      class="w-full"
+                      multiple
+                      placeholder="Select languages"
+                      :ui="multiSelectUi"
+                    >
+                      <template #item-leading>
+                        <span class="relative flex size-4 items-center justify-center">
+                          <UIcon
+                            name="i-lucide-square"
+                            class="absolute size-4 text-muted group-data-[state=checked]:hidden"
+                          />
+                          <UIcon
+                            name="i-lucide-check-square"
+                            class="absolute hidden size-4 text-primary group-data-[state=checked]:block"
+                          />
+                        </span>
+                      </template>
+                    </USelect>
+                  </UFormField>
+
+                  <UFormField label="Client requirements">
+                    <UCheckbox v-model="gcForm.noPriorAttorney" label="No prior attorney" />
+                  </UFormField>
+                </div>
+              </div>
+
+              <div class="flex items-center justify-end gap-2 border-t border-default px-6 py-4">
+                <UButton
+                  v-if="generalCoverageStep === 1"
+                  color="neutral"
+                  variant="outline"
+                  @click="() => { resetGcForm(); close() }"
+                >
+                  Cancel
+                </UButton>
+                <UButton
+                  v-if="generalCoverageStep === 1"
+                  color="primary"
+                  variant="solid"
+                  :disabled="!gcVerifyIsValid"
+                  @click="goToGcStep2"
+                >
+                  Next
+                </UButton>
+
+                <UButton
+                  v-else
+                  color="neutral"
+                  variant="outline"
+                  @click="() => { generalCoverageStep = 1 }"
+                >
+                  Back
+                </UButton>
+                <UButton
+                  v-if="generalCoverageStep === 2"
+                  color="neutral"
+                  variant="outline"
+                  @click="() => { resetGcForm(); close() }"
+                >
+                  Cancel
+                </UButton>
+                <UButton
+                  v-if="generalCoverageStep === 2"
+                  color="primary"
+                  variant="solid"
+                  :loading="generalCoverageSubmitting"
+                  :disabled="generalCoverageSubmitting || !gcForm.coveredStates.length"
+                  @click="async () => { await handleGeneralCoverageSubmit(close) }"
+                >
+                  Save
+                </UButton>
+              </div>
+            </div>
+          </template>
+        </UModal>
+
         <!-- ═══ Map with integrated legend ═══ -->
         <div class="ap-fade-in ap-delay-2 rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-4 overflow-hidden">
           <div class="relative">
@@ -1905,21 +2351,35 @@ watch(myClosedOrders, () => {
             <div class="flex flex-wrap items-center justify-between gap-3">
               <div class="flex items-center gap-3">
                 <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
-                  <UIcon name="i-lucide-shopping-cart" class="text-sm text-[var(--ap-accent)]" />
+                  <UIcon :name="ordersSectionView === 'orders' ? 'i-lucide-shopping-cart' : 'i-lucide-shield'" class="text-sm text-[var(--ap-accent)]" />
                 </div>
                 <div>
                   <div class="flex items-center gap-1.5">
-                    <h3 class="text-sm font-semibold text-highlighted">My Orders</h3>
+                    <USelect
+                      v-model="ordersSectionView"
+                      :items="[
+                        { label: 'My Orders', value: 'orders' },
+                        { label: 'My General Coverage', value: 'coverage' }
+                      ]"
+                      value-key="value"
+                      label-key="label"
+                      size="xs"
+                      variant="ghost"
+                      :ui="{ base: 'text-sm font-semibold text-highlighted cursor-pointer' }"
+                    />
                     <ProductGuideHint
+                      v-if="ordersSectionView === 'orders'"
                       :title="orderMapHints.myOrders.title"
                       :description="orderMapHints.myOrders.description"
                       :guide-target="orderMapHints.myOrders.guideTarget"
                     />
                   </div>
-                  <p class="mt-0.5 text-xs text-muted">Manage and track all your active and closed orders.</p>
+                  <p class="mt-0.5 text-xs text-muted">
+                    {{ ordersSectionView === 'orders' ? 'Manage and track all your active and closed orders.' : 'View and manage your general coverage preferences.' }}
+                  </p>
                 </div>
               </div>
-              <div class="flex items-center gap-2">
+              <div v-if="ordersSectionView === 'orders'" class="flex items-center gap-2">
                 <ProductGuideHint
                   :title="orderMapHints.filters.title"
                   :description="orderMapHints.filters.description"
@@ -1949,9 +2409,22 @@ watch(myClosedOrders, () => {
                   @click="resetAllFilters"
                 />
               </div>
+              <div v-else class="flex items-center gap-2">
+                <UButton
+                  size="xs"
+                  color="primary"
+                  variant="outline"
+                  icon="i-lucide-pencil"
+                  @click="openGeneralCoverage"
+                >
+                  Edit
+                </UButton>
+              </div>
             </div>
           </div>
 
+          <!-- ═══ My Orders View ═══ -->
+          <template v-if="ordersSectionView === 'orders'">
           <!-- Collapsible Filter Panel -->
           <div
             class="ap-collapse"
@@ -2246,6 +2719,116 @@ watch(myClosedOrders, () => {
               Showing {{ filteredOrders.length }} of {{ statsTotal }} orders
             </p>
           </div>
+          </template>
+
+          <!-- ═══ My General Coverage View ═══ -->
+          <template v-else>
+            <div v-if="!existingGeneralCoverage" class="flex items-center justify-center py-16 px-6">
+              <div class="text-center">
+                <div class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted/10">
+                  <UIcon name="i-lucide-shield-off" class="text-lg text-muted" />
+                </div>
+                <p class="text-sm font-medium text-highlighted">No general coverage set</p>
+                <p class="mt-1 text-xs text-muted">Create a general coverage to define your default case preferences.</p>
+                <UButton
+                  class="mt-4"
+                  color="primary"
+                  variant="solid"
+                  icon="i-lucide-plus"
+                  size="sm"
+                  @click="openGeneralCoverage"
+                >
+                  Create General Coverage
+                </UButton>
+              </div>
+            </div>
+
+            <template v-else>
+              <div class="divide-y divide-[var(--ap-card-divide)]">
+                <div class="grid gap-4 px-5 py-4 sm:grid-cols-2">
+                  <div>
+                    <div class="text-[11px] font-medium uppercase tracking-wider text-muted">Covered States</div>
+                    <div class="mt-1.5 flex flex-wrap gap-1">
+                      <span
+                        v-for="code in existingGeneralCoverage.covered_states"
+                        :key="code"
+                        class="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
+                      >
+                        {{ code }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="text-[11px] font-medium uppercase tracking-wider text-muted">Case Category</div>
+                    <div class="mt-1.5 text-sm text-highlighted">{{ existingGeneralCoverage.case_category }}</div>
+                  </div>
+
+                  <div>
+                    <div class="text-[11px] font-medium uppercase tracking-wider text-muted">Injury Severity</div>
+                    <div class="mt-1.5 flex flex-wrap gap-1">
+                      <span
+                        v-for="sev in existingGeneralCoverage.injury_severity"
+                        :key="sev"
+                        class="inline-flex items-center rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-xs font-medium text-[var(--ap-accent)]"
+                      >
+                        {{ sev === 'no_criteria' ? 'No Criteria' : sev.charAt(0).toUpperCase() + sev.slice(1) }}
+                      </span>
+                      <span v-if="!existingGeneralCoverage.injury_severity.length" class="text-sm text-muted">—</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="text-[11px] font-medium uppercase tracking-wider text-muted">Liability Status</div>
+                    <div class="mt-1.5 text-sm text-highlighted">
+                      {{ existingGeneralCoverage.liability_status === 'clear_only' ? 'Clear liability only' : 'Disputed acceptable' }}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="text-[11px] font-medium uppercase tracking-wider text-muted">Insurance Status</div>
+                    <div class="mt-1.5 text-sm text-highlighted">
+                      {{ existingGeneralCoverage.insurance_status === 'insured_only' ? 'Insured only' : 'Uninsured acceptable' }}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="text-[11px] font-medium uppercase tracking-wider text-muted">Medical Treatment</div>
+                    <div class="mt-1.5 text-sm text-highlighted">
+                      {{ existingGeneralCoverage.medical_treatment === 'no_medical' ? 'No medical' : existingGeneralCoverage.medical_treatment === 'ongoing' ? 'Ongoing' : 'Proof of medical treatment' }}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="text-[11px] font-medium uppercase tracking-wider text-muted">Languages</div>
+                    <div class="mt-1.5 flex flex-wrap gap-1">
+                      <span
+                        v-for="lang in existingGeneralCoverage.languages"
+                        :key="lang"
+                        class="inline-flex items-center rounded-md bg-[var(--ap-accent)]/10 px-2 py-0.5 text-xs font-medium text-[var(--ap-accent)]"
+                      >
+                        {{ lang }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="text-[11px] font-medium uppercase tracking-wider text-muted">Client Requirements</div>
+                    <div class="mt-1.5 text-sm text-highlighted">
+                      {{ existingGeneralCoverage.no_prior_attorney ? 'No prior attorney' : 'No requirements' }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Footer -->
+              <div class="border-t border-[var(--ap-card-border)] px-5 py-2.5">
+                <p class="text-xs text-muted">
+                  Last updated {{ existingGeneralCoverage.updated_at ? new Date(existingGeneralCoverage.updated_at).toLocaleDateString() : '—' }}
+                </p>
+              </div>
+            </template>
+          </template>
         </div>
       </div>
     </template>
