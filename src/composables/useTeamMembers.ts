@@ -23,6 +23,7 @@ export interface TeamMemberDraft {
   full_name: string
   email: string
   phone: string
+  state: string
   position: TeamMemberPosition | undefined
   position_other: string
   weekly_availability: TeamMemberWeeklyAvailability
@@ -34,6 +35,7 @@ interface TeamMemberDraftSource {
   full_name: string
   email: string
   phone: string | null
+  state: string | null
   position: TeamMemberPosition
   position_other: string | null
   weekly_availability: ReadonlyTeamMemberWeeklyAvailability
@@ -49,6 +51,7 @@ const createEmptyDraft = (): TeamMemberDraft => ({
   full_name: '',
   email: '',
   phone: '',
+  state: '',
   position: undefined,
   position_other: '',
   weekly_availability: createDefaultWeeklyAvailability(),
@@ -60,6 +63,7 @@ const createDraftFromMember = (member: TeamMemberDraftSource): TeamMemberDraft =
   full_name: member.full_name,
   email: member.email,
   phone: member.phone ?? '',
+  state: member.state ?? '',
   position: member.position,
   position_other: member.position_other ?? '',
   weekly_availability: clone(member.weekly_availability) as TeamMemberWeeklyAvailability,

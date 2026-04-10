@@ -10,8 +10,11 @@ import {
   getHolidayHoursValidationMessage,
   TEAM_MEMBER_POSITION_VALUES,
   TEAM_MEMBER_POSITIONS,
+  TEAM_MEMBER_STATE_OPTIONS,
   WEEKDAY_KEYS,
   formatWeeklyAvailabilitySummary,
+  getTeamMemberStateLabel,
+  isValidTeamMemberState,
   isValidAvailabilityDate,
   type ReadonlyTeamMemberHolidayHours,
   type ReadonlyTeamMemberWeeklyAvailability
@@ -125,11 +128,20 @@ const teamMemberSchema = z.object({
   full_name: z.string().min(2, 'Full name is required'),
   email: z.string().email('Invalid email address'),
   phone: z.string().optional().or(z.literal('')),
+  state: z.string().optional().or(z.literal('')),
   position: z.enum(TEAM_MEMBER_POSITION_VALUES),
   position_other: z.string().optional().or(z.literal('')),
   weekly_availability: weeklyAvailabilitySchema,
   holiday_hours: z.array(holidayHoursSchema)
 }).superRefine((data, ctx) => {
+  if (data.state && !isValidTeamMemberState(data.state)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Select a valid US state',
+      path: ['state']
+    })
+  }
+
   if (data.position === 'other' && (!data.position_other || data.position_other.length < 2)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -196,6 +208,10 @@ const availabilityLabel = (weeklyAvailability: ReadonlyTeamMemberWeeklyAvailabil
 
 const holidayHoursLabel = (count: number) => {
   return count > 0 ? 'Holiday Hours Configured' : ''
+}
+
+const stateLabel = (state: string | null) => {
+  return getTeamMemberStateLabel(state)
 }
 
 const persistedHolidayHours = computed<ReadonlyTeamMemberHolidayHours>(() => {
@@ -389,7 +405,7 @@ onBeforeRouteLeave((to) => {
             Team Profile
           </h2>
           <p class="mt-0.5 text-xs text-muted">
-            Manage your firm's team members, their roles, and availability.
+            Manage your firm's team members, their roles, states, and availability.
           </p>
         </div>
       </div>
@@ -433,7 +449,7 @@ onBeforeRouteLeave((to) => {
     </div>
 
     <!-- ═══ Add Member Form ═══ -->
-    <div v-if="team.editingMemberId.value === NEW_TEAM_MEMBER_ID && team.draft.value" class="ap-fade-in ap-delay-1 relative w-full max-w-5xl overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl dark:bg-[#1a1a1a]/60">
+    <div v-if="team.editingMemberId.value === NEW_TEAM_MEMBER_ID && team.draft.value" class="ap-fade-in ap-delay-1 relative w-full overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl dark:bg-[#1a1a1a]/60">
       <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
 
       <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
@@ -467,7 +483,7 @@ onBeforeRouteLeave((to) => {
         class="relative space-y-4 p-4 sm:p-5"
         @submit="onSaveMember"
       >
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
           <div class="space-y-1.5">
             <label class="text-xs font-medium text-highlighted">Full Name <span class="text-red-400/80">*</span></label>
             <UInput
@@ -488,6 +504,20 @@ onBeforeRouteLeave((to) => {
               size="sm"
               class="w-full"
             />
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-highlighted">
+              State
+            </label>
+            <div class="flex items-center gap-2">
+              <USelect
+                v-model="team.draft.value.state"
+                :items="TEAM_MEMBER_STATE_OPTIONS"
+                placeholder="Select a state"
+                size="sm"
+                class="min-w-0 flex-1"
+              />
+            </div>
           </div>
           <div class="space-y-1.5">
             <label class="text-xs font-medium text-highlighted">Phone</label>
@@ -619,7 +649,7 @@ onBeforeRouteLeave((to) => {
               class="space-y-4"
               @submit="onSaveMember"
             >
-              <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
                 <div class="space-y-1.5">
                   <label class="text-xs font-medium text-highlighted">Full Name <span class="text-red-400/80">*</span></label>
                   <UInput v-model="team.draft.value.full_name" placeholder="Jane Smith" autocomplete="off" size="md" class="w-full" />
@@ -627,6 +657,20 @@ onBeforeRouteLeave((to) => {
                 <div class="space-y-1.5">
                   <label class="text-xs font-medium text-highlighted">Email <span class="text-red-400/80">*</span></label>
                   <UInput v-model="team.draft.value.email" type="email" placeholder="jane@yourfirm.com" autocomplete="off" size="md" class="w-full" />
+                </div>
+                <div class="space-y-1.5">
+                  <label class="text-xs font-medium text-highlighted">
+                    State
+                  </label>
+                  <div class="flex items-center gap-2">
+                    <USelect
+                      v-model="team.draft.value.state"
+                      :items="TEAM_MEMBER_STATE_OPTIONS"
+                      placeholder="Select a state"
+                      size="md"
+                      class="min-w-0 flex-1"
+                    />
+                  </div>
                 </div>
                 <div class="space-y-1.5">
                   <label class="text-xs font-medium text-highlighted">Phone</label>
@@ -674,6 +718,12 @@ onBeforeRouteLeave((to) => {
                   <div class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
                     <span class="min-w-0 max-w-full truncate">
                       {{ member.email }}
+                    </span>
+                    <span
+                      v-if="member.state"
+                      class="inline-flex rounded-md border-[0.5px] border-[var(--ap-accent)]/55 bg-[var(--ap-accent)]/20 px-2 py-0.5 text-[11px] font-medium text-white/90"
+                    >
+                      {{ stateLabel(member.state) }}
                     </span>
                     <span
                       v-if="member.phone"

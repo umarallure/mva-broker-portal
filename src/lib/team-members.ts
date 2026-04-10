@@ -1,3 +1,4 @@
+import { US_STATES } from './us-states'
 import { supabase } from './supabase'
 
 export const TEAM_MEMBER_POSITION_VALUES = [
@@ -83,6 +84,13 @@ export const SHIFT_AVAILABILITY_OPTIONS = [
   { label: 'Full Day', value: 'full_day' }
 ] satisfies Array<{ label: string; value: ShiftAvailability }>
 
+export const TEAM_MEMBER_STATE_VALUES = US_STATES.map(state => state.code)
+
+export const TEAM_MEMBER_STATE_OPTIONS = US_STATES.map(state => ({
+  label: `${state.name} (${state.code})`,
+  value: state.code
+})) satisfies Array<{ label: string; value: string }>
+
 export const WEEKDAY_OPTIONS = [
   { label: 'Monday', shortLabel: 'Mon', value: 'monday' },
   { label: 'Tuesday', shortLabel: 'Tue', value: 'tuesday' },
@@ -109,6 +117,7 @@ const LEGACY_SHIFT_SLOT_MAP: Record<ShiftAvailability, AvailabilityTimeSlot> = {
 }
 
 const TIME_VALUE_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/
+const TEAM_MEMBER_STATE_SET = new Set(TEAM_MEMBER_STATE_VALUES)
 
 export interface TeamMemberRow {
   id: string
@@ -116,6 +125,7 @@ export interface TeamMemberRow {
   full_name: string
   email: string
   phone: string | null
+  state: string | null
   position: TeamMemberPosition
   position_other: string | null
   shift_availability: ShiftAvailability
@@ -129,6 +139,7 @@ export interface TeamMemberInput {
   full_name: string
   email: string
   phone?: string | null
+  state?: string | null
   position: TeamMemberPosition
   position_other?: string | null
   weekly_availability: TeamMemberWeeklyAvailability
@@ -137,6 +148,7 @@ export interface TeamMemberInput {
 
 export interface TeamMemberWrite extends TeamMemberInput {
   phone: string | null
+  state: string | null
   position_other: string | null
   shift_availability: ShiftAvailability
 }
@@ -146,6 +158,24 @@ export interface TeamMemberInsert extends TeamMemberWrite {
 }
 
 export type TeamMemberUpdate = Partial<TeamMemberWrite>
+
+export function isValidTeamMemberState(value: string | null | undefined): boolean {
+  const normalized = String(value || '').trim().toUpperCase()
+  return TEAM_MEMBER_STATE_SET.has(normalized)
+}
+
+export function normalizeTeamMemberState(value: string | null | undefined): string | null {
+  const normalized = String(value || '').trim().toUpperCase()
+  return TEAM_MEMBER_STATE_SET.has(normalized) ? normalized : null
+}
+
+export function getTeamMemberStateLabel(value: string | null | undefined): string {
+  const normalized = normalizeTeamMemberState(value)
+  if (!normalized) return ''
+
+  const state = US_STATES.find(candidate => candidate.code === normalized)
+  return state ? `${state.name} (${state.code})` : normalized
+}
 
 const cloneSlot = (slot: AvailabilityTimeSlot): AvailabilityTimeSlot => ({
   start: slot.start,
@@ -416,6 +446,7 @@ const normalizeTeamMemberRecord = (member: TeamMemberRow): TeamMemberRow => {
 
   return {
     ...member,
+    state: normalizeTeamMemberState(member.state),
     shift_availability: shiftAvailability,
     weekly_availability: normalizeWeeklyAvailability(member.weekly_availability, shiftAvailability),
     holiday_hours: normalizeHolidayHours(member.holiday_hours)
@@ -513,6 +544,7 @@ export function normalizeTeamMemberInput(member: TeamMemberInput): TeamMemberWri
     full_name: member.full_name.trim(),
     email: member.email.trim().toLowerCase(),
     phone: member.phone?.trim() || null,
+    state: normalizeTeamMemberState(member.state),
     position: member.position,
     position_other: member.position === 'other'
       ? member.position_other?.trim() || null
