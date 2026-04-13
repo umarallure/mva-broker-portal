@@ -34,7 +34,7 @@ const generalInfoSchema = z.object({
   preferredContact: z.enum(['email', 'phone', 'text']).optional(),
   assistantName: z.string().optional(),
   assistantEmail: z.string().email().optional().or(z.literal(''))
-})
+}).passthrough()
 
 const auth = useAuth()
 const attorneyProfile = useAttorneyProfile()
@@ -203,6 +203,12 @@ async function submitAttorneyProfile() {
 }
 
 async function onSubmit() {
+  const result = generalInfoSchema.safeParse(profile.value)
+  if (!result.success) {
+    const msg = result.error.issues[0]?.message || 'Please check your input'
+    toast.add({ title: 'Validation Error', description: msg, icon: 'i-lucide-alert-triangle', color: 'warning' })
+    return
+  }
   await submitAttorneyProfile()
 }
 
@@ -263,13 +269,7 @@ onBeforeRouteLeave((to) => {
     @cancel="handleStay"
   />
 
-  <UForm
-    id="attorney-profile"
-    :schema="generalInfoSchema"
-    :state="profile"
-    @submit="onSubmit"
-    class="space-y-6"
-  >
+  <div class="space-y-6">
     <!-- ═══ Page Header ═══ -->
     <div class="ap-fade-in flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div class="flex items-center gap-4">
@@ -308,10 +308,11 @@ onBeforeRouteLeave((to) => {
           />
           <UButton
             label="Save"
-            type="submit"
+            type="button"
             icon="i-lucide-check"
             :loading="saving"
             class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90"
+            @click="onSubmit"
           />
         </template>
         <UButton
@@ -707,5 +708,5 @@ onBeforeRouteLeave((to) => {
         </div>
       </div>
     </div>
-  </UForm>
+  </div>
 </template>

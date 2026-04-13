@@ -113,6 +113,9 @@ const _useAttorneyProfile = () => {
     return JSON.parse(JSON.stringify(v)) as T
   }
 
+  const numOrNull = (v: unknown): number | null =>
+    typeof v === 'number' ? v : null
+
   const toDbPatch = (data: Partial<AttorneyProfileState>): Partial<AttorneyProfileData> => {
     const out: Partial<AttorneyProfileData> = {}
 
@@ -129,7 +132,7 @@ const _useAttorneyProfile = () => {
       out.bar_association_numbers = n ? [n] : []
     }
     if ('bio' in data) out.professional_bio = data.bio ? data.bio : null
-    if ('yearsExperience' in data) out.years_experience = data.yearsExperience ?? null
+    if ('yearsExperience' in data) out.years_experience = numOrNull(data.yearsExperience)
     if ('languages' in data) out.languages_spoken = data.languages ?? []
     if ('primaryEmail' in data) out.primary_email = data.primaryEmail ?? ''
     if ('personalEmail' in data) out.personal_email = data.personalEmail ? data.personalEmail : null
@@ -149,16 +152,16 @@ const _useAttorneyProfile = () => {
     if ('primaryPracticeFocus' in data) out.primary_practice_focus = data.primaryPracticeFocus ?? ''
     if ('injuryCategories' in data) out.injury_categories = data.injuryCategories ?? []
     if ('exclusionaryCriteria' in data) out.exclusionary_criteria = data.exclusionaryCriteria ?? []
-    if ('minimumCaseValue' in data) out.minimum_case_value = data.minimumCaseValue ?? null
+    if ('minimumCaseValue' in data) out.minimum_case_value = numOrNull(data.minimumCaseValue)
 
-    if ('caseRatePerDeal' in data) out.case_rate_per_deal = data.caseRatePerDeal ?? null
-    if ('upfrontPaymentPercentage' in data) out.upfront_payment_percentage = data.upfrontPaymentPercentage ?? null
-    if ('paymentWindowDays' in data) out.payment_window_days = data.paymentWindowDays ?? null
+    if ('caseRatePerDeal' in data) out.case_rate_per_deal = numOrNull(data.caseRatePerDeal)
+    if ('upfrontPaymentPercentage' in data) out.upfront_payment_percentage = numOrNull(data.upfrontPaymentPercentage)
+    if ('paymentWindowDays' in data) out.payment_window_days = numOrNull(data.paymentWindowDays)
     if ('pricingTier' in data) out.pricing_tier = (data.pricingTier ?? null) as AttorneyProfileData['pricing_tier']
     if ('retainerContractDocumentPath' in data) out.retainer_contract_document_path = data.retainerContractDocumentPath ?? null
     if ('retainerContractDocumentName' in data) out.retainer_contract_document_name = data.retainerContractDocumentName ?? null
     if ('retainerContractDocumentMimeType' in data) out.retainer_contract_document_mime_type = data.retainerContractDocumentMimeType ?? null
-    if ('retainerContractDocumentSizeBytes' in data) out.retainer_contract_document_size_bytes = data.retainerContractDocumentSizeBytes ?? null
+    if ('retainerContractDocumentSizeBytes' in data) out.retainer_contract_document_size_bytes = numOrNull(data.retainerContractDocumentSizeBytes)
     if ('retainerContractDocumentUploadedAt' in data) out.retainer_contract_document_uploaded_at = data.retainerContractDocumentUploadedAt ?? null
 
     return out
@@ -252,7 +255,7 @@ const _useAttorneyProfile = () => {
         bar_association_number: getLegacyBarNumberFromEncoded((mergedData.barNumbers?.[0] ?? '').trim()),
         bar_association_numbers: (mergedData.barNumbers ?? []).map(v => v.trim()).filter(Boolean),
         professional_bio: mergedData.bio || null,
-        years_experience: mergedData.yearsExperience ?? null,
+        years_experience: numOrNull(mergedData.yearsExperience),
         languages_spoken: mergedData.languages || [],
         primary_email: mergedData.primaryEmail ?? '',
         personal_email: mergedData.personalEmail || null,
@@ -269,15 +272,15 @@ const _useAttorneyProfile = () => {
         primary_practice_focus: mergedData.primaryPracticeFocus ?? '',
         injury_categories: mergedData.injuryCategories || [],
         exclusionary_criteria: mergedData.exclusionaryCriteria || [],
-        minimum_case_value: mergedData.minimumCaseValue ?? null,
-        case_rate_per_deal: mergedData.caseRatePerDeal ?? null,
-        upfront_payment_percentage: mergedData.upfrontPaymentPercentage ?? null,
-        payment_window_days: mergedData.paymentWindowDays ?? null,
+        minimum_case_value: numOrNull(mergedData.minimumCaseValue),
+        case_rate_per_deal: numOrNull(mergedData.caseRatePerDeal),
+        upfront_payment_percentage: numOrNull(mergedData.upfrontPaymentPercentage),
+        payment_window_days: numOrNull(mergedData.paymentWindowDays),
         pricing_tier: (mergedData.pricingTier || null) as AttorneyProfileData['pricing_tier'],
         retainer_contract_document_path: mergedData.retainerContractDocumentPath || null,
         retainer_contract_document_name: mergedData.retainerContractDocumentName || null,
         retainer_contract_document_mime_type: mergedData.retainerContractDocumentMimeType || null,
-        retainer_contract_document_size_bytes: mergedData.retainerContractDocumentSizeBytes ?? null,
+        retainer_contract_document_size_bytes: numOrNull(mergedData.retainerContractDocumentSizeBytes),
         retainer_contract_document_uploaded_at: mergedData.retainerContractDocumentUploadedAt || null
       }
 
