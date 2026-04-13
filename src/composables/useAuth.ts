@@ -3,6 +3,8 @@ import { createSharedComposable } from '@vueuse/core'
 import type { Session, User } from '@supabase/supabase-js'
 
 import { supabase } from '../lib/supabase'
+import { clearLaunchedPortalWindow } from '../lib/launchedSession'
+import { useManagedLaunch } from './useManagedLaunch'
 
 export type AppRole = 'super_admin' | 'admin' | 'lawyer' | 'agent' | 'accounts'
 
@@ -24,6 +26,7 @@ type AuthState = {
 }
 
 const _useAuth = () => {
+  const managedLaunch = useManagedLaunch()
   const state = ref<AuthState>({
     ready: false,
     loading: true,
@@ -107,11 +110,15 @@ const _useAuth = () => {
     state.value.session = null
     state.value.user = null
     state.value.profile = null
+    clearLaunchedPortalWindow()
+    managedLaunch.clearContext()
     if (error) console.warn('[auth] signOut server error (local session cleared):', error.message)
   }
 
   return {
     state: readonly(state),
+    managedLaunch: managedLaunch.context,
+    isManagedSession: managedLaunch.isManaged,
     init,
     refreshProfile: loadProfile,
     signInWithPassword,

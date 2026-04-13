@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useStorage } from '@vueuse/core'
 import type { NavigationMenuItem } from '@nuxt/ui'
 
@@ -19,6 +19,7 @@ type HubSpotWindow = Window & typeof globalThis & {
 
 const toast = useToast()
 const route = useRoute()
+const router = useRouter()
 const auth = useAuth()
 
 const open = ref(false)
@@ -27,7 +28,7 @@ const chatOpen = ref(false)
 let collapsedBeforeGuide = false
 
 const isPublicPage = computed(() =>
-  ['/login', '/', '/get-started'].includes(route.path) ||
+  ['/login', '/', '/get-started', '/launch-auth', '/managed-auth/callback'].includes(route.path) ||
   route.path.endsWith('/pdf')
 )
 
@@ -77,6 +78,8 @@ watch(
 )
 
 const role = computed(() => auth.state.value.profile?.role)
+const managedLaunch = computed(() => auth.managedLaunch.value)
+const isManagedSession = computed(() => auth.isManagedSession.value)
 const isAdmin = computed(() => role.value === 'super_admin' || role.value === 'admin')
 const isSuperAdmin = computed(() => role.value === 'super_admin')
 const isAccounts = computed(() => role.value === 'accounts')
@@ -211,6 +214,25 @@ const groups = computed(() => [{
   items: links.value.flat()
 }])
 
+const managedBannerLabel = computed(() => {
+  const actor = managedLaunch.value?.actorDisplayName || managedLaunch.value?.actorEmail
+  if (!actor) return 'Managed session started from Lawyer Management.'
+  return `Opened from Lawyer Management by ${actor}.`
+})
+
+const handleEndManagedSession = async () => {
+  try {
+    await auth.signOut()
+    toast.add({
+      title: 'Managed session ended',
+      description: 'This lawyer window has been signed out.',
+      color: 'success',
+    })
+  } finally {
+    await router.push('/login')
+  }
+}
+
 const cookie = useStorage('cookie-consent', 'pending')
 if (cookie.value !== 'accepted') {
   toast.add({
@@ -293,6 +315,43 @@ if (cookie.value !== 'accepted') {
         </UDashboardSidebar>
 
         <UDashboardSearch :groups="groups" />
+
+        <div
+          v-if="isManagedSession"
+          class="border-b border-(--ui-border) bg-amber-500/10 px-4 py-3 text-sm text-amber-100 backdrop-blur"
+        >
+          <div class="mx-auto flex w-full max-w-[1600px] flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div class="flex items-start gap-3">
+              <div class="mt-0.5 flex h-9 w-9 items-center justify-center rounded-full border border-amber-300/25 bg-amber-400/10 text-amber-200">
+                <UIcon name="i-lucide-shield-check" class="size-4" />
+              </div>
+              <div class="space-y-1">
+                <p class="text-sm font-semibold text-amber-50">Managed lawyer session</p>
+                <p class="text-xs leading-5 text-amber-100/75">
+                  {{ managedBannerLabel }}
+                </p>
+                <p
+                  v-if="managedLaunch?.lawyerEmail"
+                  class="text-xs leading-5 text-amber-100/65"
+                >
+                  Active account: {{ managedLaunch.lawyerEmail }}
+                </p>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                size="sm"
+                icon="i-lucide-log-out"
+                @click="handleEndManagedSession"
+              >
+                End session
+              </UButton>
+            </div>
+          </div>
+        </div>
 
         <RouterView />
 
