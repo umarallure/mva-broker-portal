@@ -2,8 +2,6 @@
 import * as z from 'zod'
 import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
-import type { FormSubmitEvent } from '@nuxt/ui'
-
 import { useAuth } from '../../composables/useAuth'
 import { useAttorneyProfile } from '../../composables/useAttorneyProfile'
 import UnsavedChangesModal from '../../components/settings/UnsavedChangesModal.vue'
@@ -19,9 +17,7 @@ const expertiseSchema = z.object({
   injuryCategories: z.array(z.string()).min(1, 'At least one injury category is required'),
   exclusionaryCriteria: z.string().optional(),
   minimumCaseValue: z.number().min(0).optional().or(z.literal(''))
-})
-
-type ExpertiseSchema = z.output<typeof expertiseSchema>
+}).passthrough()
 
 type ExpertiseFormState = {
   licensedStates?: string[]
@@ -155,8 +151,13 @@ async function submitExpertiseSection() {
   }
 }
 
-async function onSubmit(_event: FormSubmitEvent<ExpertiseSchema>) {
-  void _event
+async function onSubmit() {
+  const result = expertiseSchema.safeParse(profile.value)
+  if (!result.success) {
+    const msg = result.error.issues[0]?.message || 'Please check your input'
+    toast.add({ title: 'Validation Error', description: msg, icon: 'i-lucide-alert-triangle', color: 'warning' })
+    return
+  }
   await submitExpertiseSection()
 }
 
@@ -220,13 +221,7 @@ onBeforeRouteLeave((_to, _from, next) => {
     @cancel="handleStay"
   />
 
-  <UForm
-    id="expertise"
-    :schema="expertiseSchema"
-    :state="profile"
-    @submit="onSubmit"
-    class="space-y-6"
-  >
+  <div class="space-y-6">
     <!-- ═══ Page Header ═══ -->
     <div class="ap-fade-in flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div class="flex items-center gap-4">
@@ -274,10 +269,11 @@ onBeforeRouteLeave((_to, _from, next) => {
           />
           <UButton
             label="Save"
-            type="submit"
+            type="button"
             icon="i-lucide-check"
             :loading="saving"
             class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90"
+            @click="onSubmit"
           />
         </template>
         <UButton
@@ -468,5 +464,5 @@ onBeforeRouteLeave((_to, _from, next) => {
         </div>
       </div>
     </div>
-  </UForm>
+  </div>
 </template>
