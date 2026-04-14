@@ -12,6 +12,40 @@ type AppUserRow = {
   updated_at: string
 }
 
+const ensureAttorneyProfileExists = async (
+  supabaseAdmin: ReturnType<typeof createClient>,
+  options: {
+    userId: string
+    email?: string | null
+    displayName?: string | null
+  }
+) => {
+  const payload: {
+    user_id: string
+    primary_email?: string
+    full_name?: string
+  } = {
+    user_id: options.userId
+  }
+
+  const email = String(options.email ?? '').trim().toLowerCase()
+  if (email) payload.primary_email = email
+
+  const displayName = String(options.displayName ?? '').trim()
+  if (displayName) payload.full_name = displayName
+
+  const { error } = await supabaseAdmin
+    .from('attorney_profiles')
+    .upsert(payload, {
+      onConflict: 'user_id',
+      ignoreDuplicates: true
+    })
+
+  if (error) {
+    throw new Error(error.message || 'Failed to create attorney profile')
+  }
+}
+
 const getEnv = (key: string) => {
   const val = process.env[key]
   if (!val) throw new Error(`Missing ${key}`)
@@ -126,6 +160,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (rowErr) return json(res, 500, { error: rowErr.message })
 
+      if (row.role === 'lawyer') {
+        await ensureAttorneyProfileExists(supabaseAdmin, {
+          userId,
+          email: row.email,
+          displayName: row.display_name
+        })
+      }
+
       return json(res, 201, { user: row as AppUserRow })
     }
 
@@ -160,6 +202,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .single()
 
       if (rowErr) return json(res, 500, { error: rowErr.message })
+
+      if (row.role === 'lawyer') {
+        await ensureAttorneyProfileExists(supabaseAdmin, {
+          userId,
+          email: row.email,
+          displayName: row.display_name
+        })
+      }
 
       return json(res, 200, { user: row as AppUserRow })
     }

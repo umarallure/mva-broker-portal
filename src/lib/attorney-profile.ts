@@ -320,6 +320,25 @@ export async function saveAttorneyProfile(
   return profile
 }
 
+export async function ensureAttorneyProfileExists(userId: string) {
+  const existingProfile = await getAttorneyProfile(userId)
+  if (existingProfile) return existingProfile
+
+  const { data: profile, error } = await supabase
+    .from('attorney_profiles')
+    .insert({ user_id: userId })
+    .select()
+    .single()
+
+  if (error) {
+    const racedProfile = await getAttorneyProfile(userId)
+    if (racedProfile) return racedProfile
+    throw new Error(error.message || 'Failed to create attorney profile')
+  }
+
+  return profile
+}
+
 /**
  * Partially update attorney profile without touching other columns.
  * This is important for per-tab saves so we don't overwrite other tab fields.

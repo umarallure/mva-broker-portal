@@ -1,6 +1,7 @@
 import { ref, readonly, computed, watch } from 'vue'
 import { createSharedComposable } from '@vueuse/core'
 import { getAttorneyProfile, patchAttorneyProfile, saveAttorneyProfile, type AttorneyProfileData, type PricingTierKey } from '../lib/attorney-profile'
+import { useAuth } from './useAuth'
 
 export interface AttorneyProfileState {
   // Tab 1: General Information
@@ -91,11 +92,14 @@ export const isAttorneyProfileFieldFilled = (
 }
 
 const _useAttorneyProfile = () => {
+  const auth = useAuth()
   const state = ref<AttorneyProfileState>({})
   const draft = ref<AttorneyProfileState>({})
   const loading = ref(false)
   const loaded = ref(false)
   const hasRow = ref(false)
+  const loadedUserId = ref<string | null>(null)
+  let activeLoadToken = 0
 
   const getLegacyBarNumberFromEncoded = (value: string) => {
     const trimmed = String(value ?? '').trim()
@@ -115,6 +119,12 @@ const _useAttorneyProfile = () => {
 
   const numOrNull = (v: unknown): number | null =>
     typeof v === 'number' ? v : null
+
+  const syncDraftWithState = () => {
+    draft.value = clone(state.value)
+    baseline.value = JSON.stringify(draft.value)
+    isDirty.value = false
+  }
 
   const toDbPatch = (data: Partial<AttorneyProfileState>): Partial<AttorneyProfileData> => {
     const out: Partial<AttorneyProfileData> = {}
@@ -215,33 +225,62 @@ const _useAttorneyProfile = () => {
   }
 
   const loadProfile = async (userId: string) => {
-    if (loaded.value) return
+    const normalizedUserId = String(userId ?? '').trim()
+    if (!normalizedUserId) {
+      resetProfile()
+      return
+    }
+
+    if (loaded.value && loadedUserId.value === normalizedUserId) return
+
+    if (loadedUserId.value !== normalizedUserId) {
+      resetProfile()
+      loadedUserId.value = normalizedUserId
+    }
+
+    const loadToken = ++activeLoadToken
 
     loading.value = true
     try {
-      const profile = await getAttorneyProfile(userId)
+      const profile = await getAttorneyProfile(normalizedUserId)
+      if (loadToken !== activeLoadToken || loadedUserId.value !== normalizedUserId) return
+
       if (profile) {
         state.value = mapDatabaseToState(profile)
         hasRow.value = true
       } else {
+        state.value = {}
         hasRow.value = false
       }
 
-      if (!isEditing.value) {
-        draft.value = clone(state.value)
-        baseline.value = JSON.stringify(draft.value)
-        isDirty.value = false
-      }
-
+      syncDraftWithState()
       loaded.value = true
     } catch (error) {
+      if (loadToken === activeLoadToken && loadedUserId.value === normalizedUserId) {
+        state.value = {}
+        hasRow.value = false
+        loaded.value = false
+        syncDraftWithState()
+      }
       console.error('Failed to load attorney profile:', error)
     } finally {
-      loading.value = false
+      if (loadToken === activeLoadToken) {
+        loading.value = false
+      }
     }
   }
 
   const saveProfile = async (userId: string, data: Partial<AttorneyProfileState>) => {
+    const normalizedUserId = String(userId ?? '').trim()
+    if (!normalizedUserId) {
+      throw new Error('Missing user id')
+    }
+
+    if (loadedUserId.value !== normalizedUserId) {
+      resetProfile()
+      loadedUserId.value = normalizedUserId
+    }
+
     loading.value = true
     try {
       // Merge with existing state
@@ -284,13 +323,12 @@ const _useAttorneyProfile = () => {
         retainer_contract_document_uploaded_at: mergedData.retainerContractDocumentUploadedAt || null
       }
 
-      const profile = await saveAttorneyProfile(userId, dbData)
+      const profile = await saveAttorneyProfile(normalizedUserId, dbData)
       if (profile) {
         state.value = mapDatabaseToState(profile)
-        draft.value = clone(state.value)
-        baseline.value = JSON.stringify(draft.value)
-        isDirty.value = false
+        syncDraftWithState()
         loaded.value = true
+        hasRow.value = true
       }
       return profile
     } finally {
@@ -313,6 +351,16 @@ const _useAttorneyProfile = () => {
   }
 
   const commitEditing = async (userId: string, fields?: Array<keyof AttorneyProfileState>) => {
+    const normalizedUserId = String(userId ?? '').trim()
+    if (!normalizedUserId) {
+      throw new Error('Missing user id')
+    }
+
+    if (loadedUserId.value !== normalizedUserId) {
+      resetProfile()
+      loadedUserId.value = normalizedUserId
+    }
+
     const selected = fields ?? []
     const partial = {} as Partial<AttorneyProfileState>
     for (const key of selected) {
@@ -322,15 +370,14 @@ const _useAttorneyProfile = () => {
     loading.value = true
     try {
       const result = hasRow.value
-        ? await patchAttorneyProfile(userId, toDbPatch(partial))
-        : await saveAttorneyProfile(userId, toDbPatch(partial))
+        ? await patchAttorneyProfile(normalizedUserId, toDbPatch(partial))
+        : await saveAttorneyProfile(normalizedUserId, toDbPatch(partial))
 
       state.value = mapDatabaseToState(result)
-      draft.value = clone(state.value)
-      baseline.value = JSON.stringify(draft.value)
-      isDirty.value = false
+      syncDraftWithState()
       isEditing.value = false
       hasRow.value = true
+      loaded.value = true
       return result
     } finally {
       loading.value = false
@@ -347,10 +394,25 @@ const _useAttorneyProfile = () => {
   )
 
   const resetProfile = () => {
+    activeLoadToken++
     state.value = {}
+    draft.value = {}
+    baseline.value = ''
+    isDirty.value = false
+    isEditing.value = false
     loaded.value = false
     hasRow.value = false
+    loadedUserId.value = null
+    loading.value = false
   }
+
+  watch(
+    () => auth.state.value.user?.id ?? null,
+    (nextUserId, previousUserId) => {
+      if (nextUserId === previousUserId) return
+      resetProfile()
+    }
+  )
 
   const completionPercentage = computed(() => {
     let filledRequired = 0

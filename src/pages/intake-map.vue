@@ -6,7 +6,7 @@ import usSvgFallbackRaw from '../assets/us.svg?raw'
 import { useAuth } from '../composables/useAuth'
 import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
 import { productGuideHints } from '../data/product-guide-hints'
-import { getAttorneyProfile, patchAttorneyProfile } from '../lib/attorney-profile'
+import { ensureAttorneyProfileExists, getAttorneyProfile, patchAttorneyProfile } from '../lib/attorney-profile'
 import { createOrder, listOpenOrdersForLawyer, listOrdersForLawyer, type OrderRow } from '../lib/orders'
 import { upsertGeneralCoverage, getGeneralCoverageForAttorney, type GeneralCoverageRow } from '../lib/general-coverage'
 import { US_STATES } from '../lib/us-states'
@@ -1019,6 +1019,8 @@ const submitGeneralCoverage = async () => {
   const userId = auth.state.value.user?.id ?? null
   if (!userId) return false
   if (!gcForm.value.coveredStates.length) return false
+
+  await ensureAttorneyProfileExists(userId)
 
   const result = await upsertGeneralCoverage({
     attorney_id: userId,
