@@ -125,18 +125,22 @@ const links = computed(() => [[
     onSelect: () => { open.value = false }
   }] : []),
 
-  // Product Portal — visible to all non-accounts roles
-  ...(!isAccounts.value ? [{
-    label: 'Product Offering',
-    icon: 'i-lucide-tag',
-    to: '/product-portal',
-    onSelect: () => { open.value = false }
-  }, {
-    label: 'Product Guide',
-    icon: 'i-lucide-book-open',
-    to: '/product-guide',
-    onSelect: () => { open.value = false }
-  }] : []),
+  // Product Portal is temporarily hidden from lawyers.
+  ...(!isAccounts.value ? [
+    // TODO: re-enable Product Offering with the /product-portal route.
+    // {
+    //   label: 'Product Offering',
+    //   icon: 'i-lucide-tag',
+    //   to: '/product-portal',
+    //   onSelect: () => { open.value = false }
+    // },
+    {
+      label: 'Product Guide',
+      icon: 'i-lucide-book-open',
+      to: '/product-guide',
+      onSelect: () => { open.value = false }
+    }
+  ] : []),
 
   // Retainer Settlements — admin, super_admin, accounts
   ...(isAdminOrAccounts.value ? [{
