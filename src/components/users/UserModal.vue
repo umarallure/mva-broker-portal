@@ -16,7 +16,7 @@ const emit = defineEmits<{
   'submit': [
     payload:
       | { mode: 'create'; email: string; password: string; role: ManageUserRole | null; center_id: string | null }
-      | { mode: 'edit'; user_id: string; role: ManageUserRole | null; center_id: string | null }
+      | { mode: 'edit'; user_id: string; role: ManageUserRole | null; center_id: string | null; urgency_orders_enabled: boolean | null }
   ]
 }>()
 
@@ -27,6 +27,9 @@ const email = ref('')
 const password = ref('')
 const role = ref<ManageUserRole | typeof NO_ROLE>(NO_ROLE)
 const centerId = ref<string | typeof NO_CENTER>(NO_CENTER)
+const urgencyOrdersEnabled = ref(false)
+
+const isLawyerRole = computed(() => role.value === 'lawyer')
 
 const roleOptions = [
   { value: NO_ROLE, label: 'No role' },
@@ -51,6 +54,7 @@ const resetForm = () => {
   password.value = ''
   role.value = NO_ROLE
   centerId.value = NO_CENTER
+  urgencyOrdersEnabled.value = false
 }
 
 const setFromUser = (user: ManageUserRow) => {
@@ -58,6 +62,7 @@ const setFromUser = (user: ManageUserRow) => {
   password.value = ''
   role.value = (user.role ?? NO_ROLE) as ManageUserRole | typeof NO_ROLE
   centerId.value = (user.center_id ?? NO_CENTER) as string | typeof NO_CENTER
+  urgencyOrdersEnabled.value = user.urgency_orders_enabled === true
 }
 
 const previousOpen = ref(props.open)
@@ -93,11 +98,13 @@ const handleClose = () => {
 const handleSubmit = () => {
   if (isEditMode.value) {
     if (!props.user) return
+    const nextRole = role.value === NO_ROLE ? null : (role.value as ManageUserRole)
     emit('submit', {
       mode: 'edit',
       user_id: props.user.user_id,
-      role: role.value === NO_ROLE ? null : (role.value as ManageUserRole),
-      center_id: centerId.value === NO_CENTER ? null : centerId.value
+      role: nextRole,
+      center_id: centerId.value === NO_CENTER ? null : centerId.value,
+      urgency_orders_enabled: nextRole === 'lawyer' ? urgencyOrdersEnabled.value : null
     })
     return
   }
@@ -156,6 +163,17 @@ const handleUpdateOpen = (value: boolean) => {
 
         <UFormField label="Center" description="Optional: Assign user to a center">
           <USelect v-model="centerId" :items="centerOptions" value-key="value" label-key="label" />
+        </UFormField>
+
+        <UFormField
+          v-if="isEditMode && isLawyerRole"
+          label="Urgency Orders"
+          description="Allow this lawyer to create Urgency Orders."
+        >
+          <UCheckbox
+            v-model="urgencyOrdersEnabled"
+            label="Allow Urgency Orders"
+          />
         </UFormField>
 
         <div class="flex justify-end gap-2">

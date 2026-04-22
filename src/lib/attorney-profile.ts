@@ -160,6 +160,7 @@ export interface AttorneyProfileData {
   pricing_tier?: PricingTierKey | null
 
   order_limit?: number | null
+  urgency_orders_enabled?: boolean | null
   retainer_contract_document_path?: string | null
   retainer_contract_document_name?: string | null
   retainer_contract_document_mime_type?: string | null

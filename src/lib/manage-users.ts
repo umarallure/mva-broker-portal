@@ -6,6 +6,7 @@ export type ManageUserRow = {
   display_name: string | null
   role: ManageUserRole | null
   center_id: string | null
+  urgency_orders_enabled: boolean | null
   created_at: string
   updated_at: string
 }
@@ -70,6 +71,7 @@ export const updateUser = (token: string, body: {
   user_id: string
   role: ManageUserRole | null
   center_id?: string | null
+  urgency_orders_enabled?: boolean | null
 }) =>
   callEdge<{ user: ManageUserRow }>({ method: 'PATCH', token, body })
 
