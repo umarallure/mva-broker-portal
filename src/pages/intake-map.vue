@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import type { LocationQueryRaw } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import usSvgFallbackRaw from '../assets/us.svg?raw'
 
 import { useAuth } from '../composables/useAuth'
 import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
 import { productGuideHints } from '../data/product-guide-hints'
 import { ensureAttorneyProfileExists, getAttorneyProfile, patchAttorneyProfile } from '../lib/attorney-profile'
-import { createOrder, listOpenOrdersForLawyer, listOpenOrderTargetStateCounts, listOrdersForLawyer, type OrderRow } from '../lib/orders'
+import { createOrder, listOpenOrdersForLawyer, listOrdersForLawyer, type OrderRow } from '../lib/orders'
 import { upsertGeneralCoverage, getGeneralCoverageForAttorney, type GeneralCoverageRow } from '../lib/general-coverage'
 import { US_STATES } from '../lib/us-states'
 
@@ -374,7 +373,6 @@ const refreshAll = async () => {
     await refreshMyClosedOrders()
     await loadBlockedStates()
     await refreshGeneralCoverage()
-    await refreshCoverageOrderCounts()
     rebuildStatesFromMyOrders()
     applyMapColors()
   } finally {
@@ -409,16 +407,11 @@ watch(mapFilter, () => {
 
 const blockMode = ref(false)
 const blockedStateCodes = ref<string[]>([])
-const licensedStateCodes = ref<string[]>([])
 const urgencyOrdersEnabled = ref(true)
 const urgencyOrderAccessModalOpen = ref(false)
 
 const blockedStateSet = computed(() => {
   return new Set(normalizeValidStateCodes(blockedStateCodes.value))
-})
-
-const licensedStateSet = computed(() => {
-  return new Set(normalizeValidStateCodes(licensedStateCodes.value))
 })
 
 const canUseUrgencyOrders = computed(() => urgencyOrdersEnabled.value)
@@ -457,7 +450,6 @@ const loadBlockedStates = async () => {
   const userId = auth.state.value.user?.id ?? null
   if (!userId) {
     blockedStateCodes.value = []
-    licensedStateCodes.value = []
     urgencyOrdersEnabled.value = true
     maxOrderStates.value = DEFAULT_MAX_ORDER_STATES
     return
@@ -474,7 +466,6 @@ const loadBlockedStates = async () => {
       blockedStateCodes.value = loadBlockedStatesFromLocalStorage()
     }
 
-    licensedStateCodes.value = normalizeValidStateCodes((profile as unknown as Record<string, unknown>)?.licensed_states)
     const rawUrgencyOrdersEnabled = (profile as unknown as Record<string, unknown>)?.urgency_orders_enabled
     urgencyOrdersEnabled.value = rawUrgencyOrdersEnabled === false ? false : true
 
@@ -488,7 +479,6 @@ const loadBlockedStates = async () => {
 
     return
   } catch {
-    licensedStateCodes.value = []
     urgencyOrdersEnabled.value = true
   }
 
@@ -923,7 +913,6 @@ const submitCreateOrder = async () => {
   resetOrderForm()
   await refreshMyOrders()
   await refreshMyClosedOrders()
-  await refreshCoverageOrderCounts()
   rebuildStatesFromMyOrders()
   applyMapColors()
 
@@ -1055,23 +1044,17 @@ const isUrgencyView = computed(() => orderMapView.value === 'urgency_order')
 
 // ═══ GENERAL COVERAGE ═══
 const existingGeneralCoverage = ref<GeneralCoverageRow | null>(null)
-const coverageOrderCountByStateCode = ref<Map<string, number>>(new Map())
 
-const isStateLicensedForCoverage = (stateCode: string) => {
-  const code = normalizeStateCode(stateCode)
-  return !!code && licensedStateSet.value.has(code)
-}
-
-const filterToLicensedStateCodes = (stateCodes: unknown) => {
-  return normalizeValidStateCodes(stateCodes).filter((code) => licensedStateSet.value.has(code))
+const normalizeCoverageStateCodes = (stateCodes: unknown) => {
+  return normalizeValidStateCodes(stateCodes).filter((code) => !isTemporarilyUnavailableState(code))
 }
 
 const coveredStateSet = computed(() => {
   const set = new Set<string>()
-  const codes = existingGeneralCoverage.value?.covered_states ?? []
+  const codes = normalizeCoverageStateCodes(existingGeneralCoverage.value?.covered_states ?? [])
   codes.forEach((c) => {
     const code = normalizeStateCode(String(c))
-    if (code && licensedStateSet.value.has(code)) set.add(code)
+    if (code && VALID_STATE_CODE_SET.has(code)) set.add(code)
   })
   return set
 })
@@ -1080,43 +1063,15 @@ const coveredStateCount = computed(() => coveredStateSet.value.size)
 
 const coverageStateCodes = computed(() => Array.from(coveredStateSet.value))
 
-const getCoverageOpenOrderCount = (stateCode: string) => {
-  const code = normalizeStateCode(stateCode)
-  if (!code) return 0
-  return coverageOrderCountByStateCode.value.get(code) ?? 0
-}
-
-const coverageHighTrafficCount = computed(() => {
-  return coverageStateCodes.value.filter((code) => {
-    return !isTemporarilyUnavailableState(code) && getCoverageOpenOrderCount(code) > 8
-  }).length
-})
-
-const coverageModerateTrafficCount = computed(() => {
-  return coverageStateCodes.value.filter((code) => {
-    const openOrderCount = getCoverageOpenOrderCount(code)
-    return !isTemporarilyUnavailableState(code) && openOrderCount >= 1 && openOrderCount <= 8
-  }).length
-})
-
-const coverageClosedCount = computed(() => {
-  return coverageStateCodes.value.filter((code) => {
-    return !isTemporarilyUnavailableState(code)
-      && getCoverageOpenOrderCount(code) === 0
-  }).length
-})
+const coverageHighTrafficCount = computed(() => coverageStateCodes.value.length)
+const coverageModerateTrafficCount = computed(() => 0)
+const coverageClosedCount = computed(() => 0)
 
 const getCoverageStateFillColor = (stateCode: string) => {
   const code = normalizeStateCode(stateCode)
-  if (!code) return `url(#${BLOCKED_PATTERN_ID})`
+  if (!code) return COLOR_GC_NOT_OPEN
   if (isTemporarilyUnavailableState(code)) return `url(#${TEMPORARILY_UNAVAILABLE_PATTERN_ID})`
-  if (!licensedStateSet.value.has(code)) return `url(#${BLOCKED_PATTERN_ID})`
-  if (!coveredStateSet.value.has(code)) return COLOR_GC_NOT_OPEN
-
-  const openOrderCount = getCoverageOpenOrderCount(code)
-  if (openOrderCount > 8) return COLOR_GREEN
-  if (openOrderCount >= 1) return COLOR_YELLOW
-  return COLOR_RED
+  return coveredStateSet.value.has(code) ? COLOR_GREEN : COLOR_GC_NOT_OPEN
 }
 const hasGeneralCoverage = computed(() => !!existingGeneralCoverage.value)
 
@@ -1166,7 +1121,7 @@ const gcStateOptions = computed(() => {
   return US_STATES
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name))
-    .filter((s) => licensedStateSet.value.has(s.code))
+    .filter((s) => !isTemporarilyUnavailableState(s.code))
     .map((s) => ({ label: `${s.name} (${s.code})`, value: s.code }))
 })
 
@@ -1185,7 +1140,7 @@ const resetGcForm = () => {
 
 const populateGcFormFromExisting = (gc: GeneralCoverageRow) => {
   gcForm.value = {
-    coveredStates: filterToLicensedStateCodes(gc.covered_states),
+    coveredStates: normalizeCoverageStateCodes(gc.covered_states),
     caseCategory: gc.case_category || GC_CASE_CATEGORY_CONSUMER,
     injurySeverity: [...gc.injury_severity],
     liabilityStatus: gc.liability_status as 'clear_only' | 'disputed_ok',
@@ -1194,16 +1149,6 @@ const populateGcFormFromExisting = (gc: GeneralCoverageRow) => {
     languages: [...gc.languages],
     noPriorAttorney: gc.no_prior_attorney
   }
-}
-
-const refreshCoverageOrderCounts = async () => {
-  const counts = await listOpenOrderTargetStateCounts()
-  const countByStateCode = new Map<string, number>()
-  counts.forEach((row) => {
-    const code = normalizeStateCode(row.state_code)
-    if (code) countByStateCode.set(code, Number(row.open_orders) || 0)
-  })
-  coverageOrderCountByStateCode.value = countByStateCode
 }
 
 const refreshGeneralCoverage = async () => {
@@ -1249,7 +1194,7 @@ const goToGcStep2 = () => {
 const submitGeneralCoverage = async () => {
   const userId = auth.state.value.user?.id ?? null
   if (!userId) return false
-  const coveredStates = filterToLicensedStateCodes(gcForm.value.coveredStates)
+  const coveredStates = normalizeCoverageStateCodes(gcForm.value.coveredStates)
   if (!coveredStates.length) return false
 
   await ensureAttorneyProfileExists(userId)
@@ -1622,7 +1567,6 @@ onMounted(() => {
       await refreshMyClosedOrders()
       await loadBlockedStates()
       await refreshGeneralCoverage()
-      await refreshCoverageOrderCounts()
       rebuildStatesFromMyOrders()
     } finally {
       loading.value = false
@@ -1689,15 +1633,6 @@ watch(
 )
 
 watch(existingGeneralCoverage, () => {
-  if (isCoverageView.value) applyMapColors()
-})
-
-watch(licensedStateCodes, () => {
-  gcForm.value.coveredStates = filterToLicensedStateCodes(gcForm.value.coveredStates)
-  if (isCoverageView.value) applyMapColors()
-})
-
-watch(coverageOrderCountByStateCode, () => {
   if (isCoverageView.value) applyMapColors()
 })
 </script>
@@ -2320,7 +2255,6 @@ watch(coverageOrderCountByStateCode, () => {
                       label-key="label"
                       multiple
                       placeholder="Select states"
-                      :disabled="!gcStateOptions.length"
                       :ui="multiSelectUi"
                     >
                       <template #item-leading>
@@ -2742,13 +2676,6 @@ watch(coverageOrderCountByStateCode, () => {
                     size="xs"
                   />
                   <UBadge
-                    v-else-if="!isStateLicensedForCoverage(tooltip.state.code)"
-                    color="neutral"
-                    variant="subtle"
-                    label="Not licensed"
-                    size="xs"
-                  />
-                  <UBadge
                     v-else-if="!coveredStateSet.has(tooltip.state.code)"
                     color="neutral"
                     variant="subtle"
@@ -2756,24 +2683,10 @@ watch(coverageOrderCountByStateCode, () => {
                     size="xs"
                   />
                   <UBadge
-                    v-else-if="getCoverageOpenOrderCount(tooltip.state.code) > 8"
+                    v-else
                     color="success"
                     variant="subtle"
                     label="High traffic"
-                    size="xs"
-                  />
-                  <UBadge
-                    v-else-if="getCoverageOpenOrderCount(tooltip.state.code) >= 1"
-                    color="warning"
-                    variant="subtle"
-                    label="Moderate traffic"
-                    size="xs"
-                  />
-                  <UBadge
-                    v-else
-                    color="error"
-                    variant="subtle"
-                    label="Closed"
                     size="xs"
                   />
                 </div>

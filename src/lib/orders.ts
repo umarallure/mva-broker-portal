@@ -1,5 +1,4 @@
 import { supabase } from './supabase'
-import { US_STATES } from './us-states'
 
 export type OrderStatus = 'OPEN' | 'FULFILLED' | 'EXPIRED' | 'IN_PROGRESS' | 'PENDING'
 
@@ -22,13 +21,6 @@ export type OpenOrderCountRow = {
   open_orders: number
 }
 
-const VALID_STATE_CODES = new Set(US_STATES.map((state) => state.code))
-const OPEN_ORDER_TARGET_STATES_BATCH_SIZE = 1000
-
-const normalizeOrderStateCode = (stateCode: unknown) => {
-  return String(stateCode || '').trim().toUpperCase()
-}
-
 export async function listOpenOrderCountsByState() {
   const { data, error } = await supabase
     .from('open_order_counts_by_state')
@@ -36,45 +28,6 @@ export async function listOpenOrderCountsByState() {
 
   if (error) throw new Error(error.message)
   return (data ?? []) as OpenOrderCountRow[]
-}
-
-export async function listOpenOrderTargetStateCounts() {
-  const counts = new Map<string, number>()
-  let from = 0
-
-  while (true) {
-    const { data, error } = await supabase
-      .from('orders')
-      .select('target_states')
-      .eq('status', 'OPEN')
-      .range(from, from + OPEN_ORDER_TARGET_STATES_BATCH_SIZE - 1)
-
-    if (error) throw new Error(error.message)
-
-    const rows = (data ?? []) as Array<{ target_states: unknown }>
-    rows.forEach((order) => {
-      if (!Array.isArray(order.target_states)) return
-
-      const uniqueOrderStateCodes = new Set<string>()
-      order.target_states.forEach((stateCode) => {
-        const code = normalizeOrderStateCode(stateCode)
-        if (VALID_STATE_CODES.has(code)) uniqueOrderStateCodes.add(code)
-      })
-
-      uniqueOrderStateCodes.forEach((code) => {
-        counts.set(code, (counts.get(code) ?? 0) + 1)
-      })
-    })
-
-    if (rows.length < OPEN_ORDER_TARGET_STATES_BATCH_SIZE) break
-    from += OPEN_ORDER_TARGET_STATES_BATCH_SIZE
-  }
-
-  const rows: OpenOrderCountRow[] = Array.from(counts.entries())
-    .map(([state_code, open_orders]) => ({ state_code, open_orders }))
-    .sort((a, b) => a.state_code.localeCompare(b.state_code))
-
-  return rows
 }
 
 export async function createOrder(input: {
