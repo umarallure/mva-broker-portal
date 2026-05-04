@@ -16,14 +16,14 @@ const showPassword = ref(false)
 
 const redirectTo = computed(() => {
   const fromQuery = route.query.redirect
-  return typeof fromQuery === 'string' && fromQuery.length ? fromQuery : '/dashboard'
+  return typeof fromQuery === 'string' && fromQuery.length ? fromQuery : '/retainers'
 })
 
 
 const isSubmitting = ref(false)
 const showedRoleBlockMessage = ref(false)
 
-const allowedRoles = new Set(['super_admin', 'admin', 'lawyer'])
+const allowedRoles = new Set(['super_admin', 'broker'])
 
 const showRoleBlockedMessage = () => {
   const description = 'Your account does not have access to this portal. Please contact an administrator if you believe this is a mistake.'
@@ -57,10 +57,9 @@ const handleSubmit = async () => {
       return
     }
 
-    const isAdmin = auth.state.value.profile?.role === 'admin'
     const isSuperAdmin = auth.state.value.profile?.role === 'super_admin'
 
-    if (!isSuperAdmin && !isAdmin && auth.state.value.profile === null) {
+    if (!isSuperAdmin && auth.state.value.profile === null) {
       await auth.signOut()
       errorMessage.value = 'Your account is not provisioned yet. Please contact an administrator.'
       toast.add({
@@ -104,10 +103,10 @@ const handleSubmit = async () => {
           <div class="space-y-8">
             <div class="space-y-4">
               <img src="/assets/logo-white.png" alt="Accident Payments" class="h-15 w-auto mb-8" />
-              <p class="text-xs uppercase tracking-[0.4em] text-white/60">Lawyer Portal</p>
-              <h1 class="text-4xl font-semibold leading-tight text-white md:text-5xl">Secure entry for your MVA workspace.</h1>
+              <p class="text-xs uppercase tracking-[0.4em] text-white/60">Broker Portal</p>
+              <h1 class="text-4xl font-semibold leading-tight text-white md:text-5xl">Secure entry for your MVA broker workspace.</h1>
               <p class="text-base leading-relaxed text-white/70">
-                Sign in with your work email to access your dashboard, manage intake workflows, and keep handoffs moving.
+                Sign in with your work email to access your broker workspace, manage intake workflows, and keep handoffs moving.
               </p>
             </div>
 
@@ -131,7 +130,7 @@ const handleSubmit = async () => {
             <div class="space-y-6">
               <div>
                 <p class="text-xs uppercase tracking-[0.4em] text-white/60">Sign in</p>
-                <h2 class="mt-2 text-3xl font-semibold text-white">Access your dashboard</h2>
+                <h2 class="mt-2 text-3xl font-semibold text-white">Access your workspace</h2>
               </div>
 
               <form class="space-y-4" @submit.prevent="handleSubmit">

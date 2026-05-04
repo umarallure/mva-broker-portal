@@ -5,10 +5,13 @@ import { createRouter, createWebHistory } from 'vue-router'
 import ui from '@nuxt/ui/vue-plugin'
 import App from './App.vue'
 import { useAuth } from './composables/useAuth'
-import { useAttorneyProfile } from './composables/useAttorneyProfile'
 
 const app = createApp(App)
 
+const BROKER_DEFAULT_PATH = '/retainers'
+
+// Pages still imported by super_admin tooling are kept registered; they are
+// hidden from the broker-only nav in App.vue.
 const router = createRouter({
   routes: [
     { path: '/', component: () => import('./pages/index.vue'), meta: { public: true } },
@@ -16,40 +19,37 @@ const router = createRouter({
     { path: '/login', component: () => import('./pages/login.vue'), meta: { public: true } },
     { path: '/launch-auth', component: () => import('./pages/launch-auth.vue'), meta: { public: true } },
     { path: '/managed-auth/callback', component: () => import('./pages/managed-auth-callback.vue'), meta: { public: true } },
-    { path: '/dashboard', component: () => import('./pages/dashboard.vue') },
+    // Dashboard is intentionally hidden for now. Keep this route here to
+    // re-enable later without touching page code.
+    // { path: '/dashboard', component: () => import('./pages/dashboard.vue'), meta: { requiresSuperAdmin: true } },
     { path: '/inbox', component: () => import('./pages/not-found.vue') },
-    { path: '/intake-map', component: () => import('./pages/intake-map.vue') },
-    { path: '/orders/:id', component: () => import('./pages/orders-details.vue') },
+    { path: '/intake-map', component: () => import('./pages/intake-map.vue'), meta: { requiresSuperAdmin: true } },
+    { path: '/orders/:id', component: () => import('./pages/orders-details.vue'), meta: { requiresSuperAdmin: true } },
     { path: '/retainers', component: () => import('./pages/retainers.vue') },
     { path: '/retainers/:id', component: () => import('./pages/retainers-details.vue') },
-    { path: '/fulfillment', component: () => import('./pages/fulfillment.vue') },
-    { path: '/retainer-settlements', component: () => import('./pages/retainer-settlements.vue'), meta: { requiresAdmin: true } },
-    // TODO: re-enable Product Offering when lawyer access should resume.
-    // { path: '/product-portal', component: () => import('./pages/product-portal.vue') },
+    { path: '/task-management', component: () => import('./pages/task-management.vue') },
+    { path: '/fulfillment', component: () => import('./pages/fulfillment.vue'), meta: { requiresSuperAdmin: true } },
+    { path: '/retainer-settlements', component: () => import('./pages/retainer-settlements.vue'), meta: { requiresSuperAdmin: true } },
     { path: '/invoicing', redirect: '/invoicing/lawyer' },
-    { path: '/invoicing/lawyer', component: () => import('./pages/invoicing.vue') },
-    { path: '/invoicing/publisher', component: () => import('./pages/invoicing.vue'), meta: { requiresAdmin: true } },
-    { path: '/invoicing/create', component: () => import('./pages/invoicing-create.vue') },
-    { path: '/invoicing/edit/:id', component: () => import('./pages/invoicing-create.vue') },
+    { path: '/invoicing/lawyer', component: () => import('./pages/invoicing.vue'), meta: { requiresSuperAdmin: true } },
+    { path: '/invoicing/publisher', component: () => import('./pages/invoicing.vue'), meta: { requiresSuperAdmin: true } },
+    { path: '/invoicing/create', component: () => import('./pages/invoicing-create.vue'), meta: { requiresSuperAdmin: true } },
+    { path: '/invoicing/edit/:id', component: () => import('./pages/invoicing-create.vue'), meta: { requiresSuperAdmin: true } },
     { path: '/invoicing/:id/pdf', component: () => import('./pages/invoice-pdf.vue'), meta: { public: true } },
-    { path: '/product-guide', component: () => import('./pages/product-guide.vue') },
+    { path: '/product-guide', component: () => import('./pages/product-guide.vue'), meta: { requiresSuperAdmin: true } },
     { path: '/users', component: () => import('./pages/users.vue'), meta: { requiresSuperAdmin: true } },
     { path: '/centers', component: () => import('./pages/centers.vue'), meta: { requiresSuperAdmin: true } },
     {
       path: '/settings',
       component: () => import('./pages/settings.vue'),
       children: [
-        { path: '', redirect: '/settings/attorney-profile' },
-        { path: 'attorney-profile', component: () => import('./pages/settings/attorney-profile.vue') },
-        {
-          path: 'team-profile',
-          component: () => import('./pages/settings/team-profile.vue'),
-          meta: { requiresTeamProfileAccess: true }
-        },
-        { path: 'expertise', component: () => import('./pages/settings/expertise.vue') },
-        { path: 'retainer-contract-document', component: () => import('./pages/settings/retainer-contract-document.vue') }
-        // TODO: re-enable with pricing redesign
-        // { path: 'capacity', component: () => import('./pages/settings/capacity.vue') }
+        { path: '', redirect: '/settings/broker-profile' },
+        { path: 'broker-profile', component: () => import('./pages/settings/broker-profile.vue') },
+        // Hidden but kept for later re-enable.
+        { path: 'attorney-profile', component: () => import('./pages/settings/attorney-profile.vue'), meta: { requiresSuperAdmin: true } },
+        { path: 'team-profile', component: () => import('./pages/settings/team-profile.vue') },
+        { path: 'expertise', component: () => import('./pages/settings/expertise.vue'), meta: { requiresSuperAdmin: true } },
+        { path: 'retainer-contract-document', component: () => import('./pages/settings/retainer-contract-document.vue'), meta: { requiresSuperAdmin: true } }
       ]
     },
     { path: '/:pathMatch(.*)*', component: () => import('./pages/not-found.vue') }
@@ -57,42 +57,20 @@ const router = createRouter({
   history: createWebHistory()
 })
 
-router.beforeEach(async (to, from) => {
+router.beforeEach(async (to) => {
   const auth = useAuth()
-  const attorneyProfile = useAttorneyProfile()
-
   await auth.init()
 
   const isPublic = Boolean(to.meta.public)
   const isLoggedIn = Boolean(auth.state.value.user)
   const requiresSuperAdmin = Boolean(to.meta.requiresSuperAdmin)
-  const requiresAdmin = Boolean(to.meta.requiresAdmin)
-  const requiresTeamProfileAccess = Boolean(to.meta.requiresTeamProfileAccess)
-  const isSuperAdmin = auth.state.value.profile?.role === 'super_admin'
   const role = auth.state.value.profile?.role
-  const isRoleAllowed = role === 'super_admin' || role === 'admin' || role === 'lawyer' || role === 'accounts'
-  const isAccounts = role === 'accounts'
-
-  const userId = auth.state.value.user?.id ?? null
-  const lawyerCompletion = async () => {
-    if (role !== 'lawyer' || !userId) return null
-    await attorneyProfile.loadProfile(userId)
-    return attorneyProfile.completionPercentage.value
-  }
-
-  if (from.path === '/login' && isLoggedIn) {
-    const completion = await lawyerCompletion()
-    if (completion !== null && completion < 50 && !to.path.startsWith('/settings')) {
-      return { path: '/settings' }
-    }
-  }
+  const isSuperAdmin = role === 'super_admin'
+  const isBroker = role === 'broker'
+  const isRoleAllowed = isSuperAdmin || isBroker
 
   if (to.path === '/login' && isLoggedIn) {
-    const completion = await lawyerCompletion()
-    if (completion !== null && completion < 50) {
-      return { path: '/settings' }
-    }
-    return { path: '/dashboard' }
+    return { path: BROKER_DEFAULT_PATH }
   }
 
   if (isPublic) return true
@@ -106,48 +84,10 @@ router.beforeEach(async (to, from) => {
     if (!isLoggedIn) {
       return { path: '/login', query: { redirect: to.fullPath } }
     }
-
     if (!isSuperAdmin) {
-      return { path: '/dashboard' }
+      return { path: BROKER_DEFAULT_PATH }
     }
-
     return true
-  }
-
-  if (requiresAdmin) {
-    if (!isLoggedIn) {
-      return { path: '/login', query: { redirect: to.fullPath } }
-    }
-
-    if (!isSuperAdmin && role !== 'admin' && role !== 'accounts') {
-      return { path: '/dashboard' }
-    }
-
-    return true
-  }
-
-  if (requiresTeamProfileAccess) {
-    if (!isLoggedIn) {
-      return { path: '/login', query: { redirect: to.fullPath } }
-    }
-
-    if (!isSuperAdmin && role !== 'admin' && role !== 'lawyer') {
-      return { path: '/dashboard' }
-    }
-
-    return true
-  }
-
-  if (isLoggedIn && isAccounts) {
-    const allowed = [
-      '/invoicing',
-      '/retainer-settlements',
-      '/settings',
-      '/retainers/'
-    ]
-    const isAllowed = allowed.some(p => to.path.startsWith(p))
-      || to.path.startsWith('/invoicing')
-    if (!isAllowed) return { path: '/invoicing/lawyer' }
   }
 
   if (isLoggedIn) return true

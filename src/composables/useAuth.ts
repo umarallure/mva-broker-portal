@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase'
 import { clearLaunchedPortalWindow } from '../lib/launchedSession'
 import { useManagedLaunch } from './useManagedLaunch'
 
-export type AppRole = 'super_admin' | 'admin' | 'lawyer' | 'agent' | 'accounts'
+export type AppRole = 'super_admin' | 'admin' | 'lawyer' | 'agent' | 'accounts' | 'broker'
 
 export type AppUserProfile = {
   user_id: string

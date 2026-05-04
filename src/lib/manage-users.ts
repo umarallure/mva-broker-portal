@@ -1,4 +1,4 @@
-export type ManageUserRole = 'admin' | 'lawyer' | 'agent' | 'accounts'
+export type ManageUserRole = 'admin' | 'lawyer' | 'agent' | 'accounts' | 'broker'
 
 export type ManageUserRow = {
   user_id: string

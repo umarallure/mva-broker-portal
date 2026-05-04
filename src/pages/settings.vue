@@ -2,74 +2,67 @@
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import type { NavigationMenuItem } from '@nuxt/ui'
+
 import ProfileCompletionMeter from '../components/settings/ProfileCompletionMeter.vue'
 import { useAuth } from '../composables/useAuth'
-import { useAttorneyProfile, type AttorneyProfileState } from '../composables/useAttorneyProfile'
+import {
+  useBrokerProfile,
+  BROKER_PROFILE_REQUIRED_FIELDS,
+  BROKER_PROFILE_OPTIONAL_FIELDS,
+  isBrokerProfileFieldFilled,
+  type BrokerProfileState
+} from '../composables/useBrokerProfile'
 
 const route = useRoute()
 const auth = useAuth()
-const attorneyProfile = useAttorneyProfile()
+const brokerProfile = useBrokerProfile()
 
-const attorneyProfileData = computed(() => attorneyProfile.state.value as unknown as Partial<AttorneyProfileState>)
 const userId = computed(() => auth.state.value.user?.id ?? '')
-const isLawyer = computed(() => auth.state.value.profile?.role === 'lawyer')
-const canAccessTeamProfile = computed(() => {
-  const role = auth.state.value.profile?.role
-  return role === 'super_admin' || role === 'admin' || role === 'lawyer'
-})
+const isBroker = computed(() => auth.state.value.profile?.role === 'broker')
+
+const brokerProfileData = computed(
+  () => brokerProfile.state.value as unknown as Partial<BrokerProfileState>
+)
+
+const requiredFilled = computed(() =>
+  BROKER_PROFILE_REQUIRED_FIELDS
+    .filter(field => isBrokerProfileFieldFilled(brokerProfileData.value, field))
+    .length
+)
+
+const optionalFilled = computed(() =>
+  BROKER_PROFILE_OPTIONAL_FIELDS
+    .filter(field => isBrokerProfileFieldFilled(brokerProfileData.value, field))
+    .length
+)
+
+const completionPercentage = computed(() => brokerProfile.completionPercentage.value)
 
 onMounted(async () => {
   await auth.init()
-  if (isLawyer.value && userId.value) {
-    await attorneyProfile.loadProfile(userId.value)
+  if (isBroker.value && userId.value) {
+    await brokerProfile.loadProfile(userId.value)
   }
 })
 
-const links = computed(() => {
-  const items: NavigationMenuItem[][] = [[{
-    label: 'Attorney Profile',
+const links = computed<NavigationMenuItem[][]>(() => [
+  [{
+    label: 'Broker Profile',
     icon: 'i-lucide-briefcase',
-    to: '/settings/attorney-profile',
+    to: '/settings/broker-profile',
     exact: true
-  }]]
-
-  items.push([{
-    label: 'Expertise & Jurisdiction',
-    icon: 'i-lucide-map-pin',
-    to: '/settings/expertise',
+  }],
+  [{
+    label: 'Team Profile',
+    icon: 'i-lucide-users-round',
+    to: '/settings/team-profile',
     exact: true
-  }])
+  }]
+])
 
-  if (canAccessTeamProfile.value) {
-    items.push([{
-      label: 'Team Profile',
-      icon: 'i-lucide-users-round',
-      to: '/settings/team-profile',
-      exact: true
-    }])
-  }
-
-  items.push([{
-    label: 'Retainer Contract Document',
-    icon: 'i-lucide-file-text',
-    to: '/settings/retainer-contract-document',
-    exact: true
-  }])
-
-  // TODO: re-enable with pricing redesign
-  // items.push([{
-  //   label: 'Pricing',
-  //   icon: 'i-lucide-activity',
-  //   to: '/settings/capacity',
-  //   exact: true
-  // }])
-
-  return items
-})
-
-const showCompletionMeter = computed(() => {
-  return route.path.startsWith('/settings/') && isLawyer.value
-})
+const showCompletionMeter = computed(() =>
+  isBroker.value && route.path.startsWith('/settings/')
+)
 </script>
 
 <template>
@@ -88,7 +81,14 @@ const showCompletionMeter = computed(() => {
 
     <template #body>
       <div class="flex w-full flex-col gap-6">
-        <ProfileCompletionMeter v-if="showCompletionMeter" :profile-data="attorneyProfileData" />
+        <ProfileCompletionMeter
+          v-if="showCompletionMeter"
+          :percentage="completionPercentage"
+          :required-filled="requiredFilled"
+          :required-total="BROKER_PROFILE_REQUIRED_FIELDS.length"
+          :optional-filled="optionalFilled"
+          :optional-total="BROKER_PROFILE_OPTIONAL_FIELDS.length"
+        />
         <RouterView />
       </div>
     </template>

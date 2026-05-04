@@ -1,31 +1,28 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { DateFormatter, getLocalTimeZone, CalendarDate, today } from '@internationalized/date'
 
-import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../composables/useAuth'
 import { useDragGhost } from '../composables/useDragGhost'
-import { productGuideHints } from '../data/product-guide-hints'
 
-type CustomerStageKey = 'new_customers_for_review' | '24_hour_approval' | 'customer_approved' | 'customer_rejected'
+type LeadStatus = 'attorney_review' | 'attorney_approved' | 'attorney_rejected'
 
-const STAGES: { key: CustomerStageKey, label: string }[] = [
-  { key: 'new_customers_for_review', label: 'My Cases' },
-  { key: '24_hour_approval', label: '24 Hour Approval' },
-  { key: 'customer_approved', label: 'Customer Approved' },
-  { key: 'customer_rejected', label: 'Customer Rejected' }
+type StageKey = 'review' | 'approved' | 'rejected'
+
+const STAGES: { key: StageKey, label: string, status: LeadStatus }[] = [
+  { key: 'review', label: 'My Cases', status: 'attorney_review' },
+  { key: 'approved', label: 'Approved', status: 'attorney_approved' },
+  { key: 'rejected', label: 'Rejected', status: 'attorney_rejected' }
 ]
 
-const getStageGuideHint = (stage: CustomerStageKey) => {
-  if (stage === 'new_customers_for_review') return myCasesHints.myCasesColumn
-  if (stage === '24_hour_approval') return myCasesHints.approvalColumn
-  if (stage === 'customer_approved') return myCasesHints.approvedColumn
-  return myCasesHints.rejectedColumn
+const STATUS_TO_STAGE: Record<LeadStatus, StageKey> = {
+  attorney_review: 'review',
+  attorney_approved: 'approved',
+  attorney_rejected: 'rejected'
 }
 
-type CustomerCard = {
+type LeadCard = {
   id: string
   submissionId: string
   clientName: string
@@ -33,69 +30,42 @@ type CustomerCard = {
   date: string
   rawDate: string | null
   state: string
-  status: string
-  stage: CustomerStageKey
+  status: LeadStatus
+  stage: StageKey
   leadVendor: string
+  assignedAttorneyId: string | null
   assignedAttorneyName: string
-  source: 'daily_deal_flow' | 'leads'
 }
 
-type DailyDealFlow = {
+type LeadRow = {
   id: string
   submission_id: string
-  insured_name: string | null
-  client_phone_number: string | null
+  customer_full_name: string | null
+  phone_number: string | null
   lead_vendor: string | null
   state: string | null
-  date: string | null
   status: string | null
-  submitted_attorney_status?: string | null
-  assigned_attorney_id?: string | null
-  assigned_attorney_name?: string | null
-  agent: string | null
-  carrier: string | null
+  submission_date: string | null
   created_at: string | null
-  source?: 'daily_deal_flow' | 'leads'
+  assigned_attorney_id: string | null
 }
 
-type LeadRow = Record<string, unknown>
-
-const router = useRouter()
 const auth = useAuth()
 const toast = useToast()
-const myCasesHints = productGuideHints.myCases
-
-const isSuperAdmin = computed(() => auth.state.value.profile?.role === 'super_admin')
-const isAdmin = computed(() => auth.state.value.profile?.role === 'admin')
-const canSeeAssignments = computed(() => isSuperAdmin.value || isAdmin.value)
 
 const loading = ref(false)
 const query = ref('')
-const selectedStage = ref<'all' | CustomerStageKey>('all')
+const selectedStage = ref<'all' | StageKey>('all')
 const selectedDateRange = ref('all')
 const showFilters = ref(false)
-
-// ── Order Map–style multi-select filters (empty = no filter) ──
 const filterStates = ref<string[]>([])
-const filterCaseCategory = ref<string[]>([])
-const filterInjurySeverity = ref<string[]>([])
-const filterInsuranceStatus = ref<string[]>([])
-const filterLiabilityStatus = ref<string[]>([])
-const filterMedicalTreatment = ref<string[]>([])
-const filterLanguage = ref<string[]>([])
-const filterExpiry = ref<string>('all')
+const filterAttorneys = ref<string[]>([])
 
-// ── Custom date range calendar ──
 const calendarDf = new DateFormatter('en-US', { dateStyle: 'medium' })
-
-const toCalendarDate = (date: Date) =>
-  new CalendarDate(date.getFullYear(), date.getMonth() + 1, date.getDate())
-
-const calendarRange = ref<{ start: CalendarDate | undefined; end: CalendarDate | undefined }>({
+const calendarRange = shallowRef<{ start: CalendarDate | undefined; end: CalendarDate | undefined }>({
   start: undefined,
   end: undefined
 })
-
 const calendarOpen = ref(false)
 const calendarMaxDate = computed(() => today(getLocalTimeZone()))
 
@@ -131,15 +101,13 @@ const selectPresetRange = (range: { days?: number; months?: number }) => {
   calendarOpen.value = false
 }
 
-// Sync calendarRange → selectedDateRange + matchesDateFilter
 watch(calendarRange, (val) => {
   if (val.start && val.end) {
     selectedDateRange.value = 'custom'
   }
 }, { deep: true })
 
-type DateRangeOption = { label: string; value: string }
-const DATE_RANGE_OPTIONS: DateRangeOption[] = [
+const DATE_RANGE_OPTIONS = [
   { label: 'All Dates', value: 'all' },
   { label: 'Today', value: 'today' },
   { label: 'Yesterday', value: 'yesterday' },
@@ -149,24 +117,12 @@ const DATE_RANGE_OPTIONS: DateRangeOption[] = [
   { label: 'Custom Range', value: 'custom' }
 ]
 
-const rows = ref<DailyDealFlow[]>([])
-const leads = ref<CustomerCard[]>([])
-
+const leads = ref<LeadCard[]>([])
 const dragLeadId = ref<string | null>(null)
-const dragFromStage = ref<CustomerStageKey | null>(null)
+const dragFromStage = ref<StageKey | null>(null)
 
-const normalize = (v: unknown) => String(v ?? '').trim().toLowerCase()
-
-const toStage = (row: DailyDealFlow): CustomerStageKey => {
-  const s = normalize(row.status)
-
-  if (s === 'attorney_review') return '24_hour_approval'
-  if (s === 'qualified_payable') return 'customer_approved'
-  if (s === 'attorney_rejected') return 'customer_rejected'
-
-  // Default: everything else goes to "My Cases"
-  return 'new_customers_for_review'
-}
+const isBrokerStatus = (s: string | null): s is LeadStatus =>
+  s === 'attorney_review' || s === 'attorney_approved' || s === 'attorney_rejected'
 
 const formatDate = (value: string | null) => {
   if (!value) return '—'
@@ -181,12 +137,8 @@ const formatDate = (value: string | null) => {
 const formatPhone = (phone: string | null) => {
   if (!phone) return '—'
   const digits = phone.replace(/\D/g, '')
-  if (digits.length === 10) {
-    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
-  }
-  if (digits.length === 11 && digits[0] === '1') {
-    return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
-  }
+  if (digits.length === 10) return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+  if (digits.length === 11 && digits[0] === '1') return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
   return phone
 }
 
@@ -195,41 +147,42 @@ const getInitials = (name: string | null) => {
   return name.split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
 }
 
+const STATE_NAME_TO_CODE: Record<string, string> = {
+  ALABAMA: 'AL', ALASKA: 'AK', ARIZONA: 'AZ', ARKANSAS: 'AR', CALIFORNIA: 'CA',
+  COLORADO: 'CO', CONNECTICUT: 'CT', DELAWARE: 'DE', FLORIDA: 'FL', GEORGIA: 'GA',
+  HAWAII: 'HI', IDAHO: 'ID', ILLINOIS: 'IL', INDIANA: 'IN', IOWA: 'IA',
+  KANSAS: 'KS', KENTUCKY: 'KY', LOUISIANA: 'LA', MAINE: 'ME', MARYLAND: 'MD',
+  MASSACHUSETTS: 'MA', MICHIGAN: 'MI', MINNESOTA: 'MN', MISSISSIPPI: 'MS', MISSOURI: 'MO',
+  MONTANA: 'MT', NEBRASKA: 'NE', NEVADA: 'NV', 'NEW HAMPSHIRE': 'NH', 'NEW JERSEY': 'NJ',
+  'NEW MEXICO': 'NM', 'NEW YORK': 'NY', 'NORTH CAROLINA': 'NC', 'NORTH DAKOTA': 'ND',
+  OHIO: 'OH', OKLAHOMA: 'OK', OREGON: 'OR', PENNSYLVANIA: 'PA', 'RHODE ISLAND': 'RI',
+  'SOUTH CAROLINA': 'SC', 'SOUTH DAKOTA': 'SD', TENNESSEE: 'TN', TEXAS: 'TX', UTAH: 'UT',
+  VERMONT: 'VT', VIRGINIA: 'VA', WASHINGTON: 'WA', 'WEST VIRGINIA': 'WV',
+  WISCONSIN: 'WI', WYOMING: 'WY', 'DISTRICT OF COLUMBIA': 'DC'
+}
+
 const normalizeState = (v: string | null): string => {
   if (!v) return '—'
   const s = v.trim().toUpperCase()
   if (s.length === 2) return s
-  // Common full-name mappings
-  const map: Record<string, string> = {
-    ALABAMA: 'AL', ALASKA: 'AK', ARIZONA: 'AZ', ARKANSAS: 'AR', CALIFORNIA: 'CA',
-    COLORADO: 'CO', CONNECTICUT: 'CT', DELAWARE: 'DE', FLORIDA: 'FL', GEORGIA: 'GA',
-    HAWAII: 'HI', IDAHO: 'ID', ILLINOIS: 'IL', INDIANA: 'IN', IOWA: 'IA',
-    KANSAS: 'KS', KENTUCKY: 'KY', LOUISIANA: 'LA', MAINE: 'ME', MARYLAND: 'MD',
-    MASSACHUSETTS: 'MA', MICHIGAN: 'MI', MINNESOTA: 'MN', MISSISSIPPI: 'MS', MISSOURI: 'MO',
-    MONTANA: 'MT', NEBRASKA: 'NE', NEVADA: 'NV', 'NEW HAMPSHIRE': 'NH', 'NEW JERSEY': 'NJ',
-    'NEW MEXICO': 'NM', 'NEW YORK': 'NY', 'NORTH CAROLINA': 'NC', 'NORTH DAKOTA': 'ND',
-    OHIO: 'OH', OKLAHOMA: 'OK', OREGON: 'OR', PENNSYLVANIA: 'PA', 'RHODE ISLAND': 'RI',
-    'SOUTH CAROLINA': 'SC', 'SOUTH DAKOTA': 'SD', TENNESSEE: 'TN', TEXAS: 'TX', UTAH: 'UT',
-    VERMONT: 'VT', VIRGINIA: 'VA', WASHINGTON: 'WA', 'WEST VIRGINIA': 'WV',
-    WISCONSIN: 'WI', WYOMING: 'WY', 'DISTRICT OF COLUMBIA': 'DC'
-  }
-  return map[s] ?? v.trim()
+  return STATE_NAME_TO_CODE[s] ?? v.trim()
 }
 
-const coerceCard = (row: DailyDealFlow): CustomerCard => {
+const coerceCard = (row: LeadRow, attorneyName: string): LeadCard | null => {
+  if (!isBrokerStatus(row.status)) return null
   return {
     id: row.id,
     submissionId: row.submission_id,
-    clientName: row.insured_name ?? 'Unknown Client',
-    phone: row.client_phone_number ?? '—',
-    date: formatDate(row.date ?? row.created_at),
-    rawDate: row.date ?? row.created_at ?? null,
+    clientName: row.customer_full_name ?? 'Unknown Client',
+    phone: row.phone_number ?? '—',
+    date: formatDate(row.submission_date ?? row.created_at),
+    rawDate: row.submission_date ?? row.created_at ?? null,
     state: normalizeState(row.state),
-    status: row.status ?? '—',
-    stage: toStage(row),
+    status: row.status,
+    stage: STATUS_TO_STAGE[row.status],
     leadVendor: row.lead_vendor ?? '—',
-    assignedAttorneyName: row.assigned_attorney_name ?? '—',
-    source: row.source ?? 'daily_deal_flow'
+    assignedAttorneyId: row.assigned_attorney_id,
+    assignedAttorneyName: attorneyName
   }
 }
 
@@ -238,195 +191,52 @@ const load = async () => {
 
   try {
     await auth.init()
+    const role = auth.state.value.profile?.role
+    if (role !== 'broker' && role !== 'super_admin') {
+      leads.value = []
+      return
+    }
 
-    const userId = auth.state.value.profile?.user_id ?? null
-    const userRole = auth.state.value.profile?.role ?? null
+    const { data, error } = await supabase
+      .from('leads')
+      .select('id,submission_id,customer_full_name,phone_number,lead_vendor,state,status,submission_date,created_at,assigned_attorney_id')
+      .in('status', ['attorney_review', 'attorney_approved', 'attorney_rejected'])
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(2000)
 
-    // For lawyers, build a list of name keywords for fallback matching
-    let nameKeywords: string[] = []
-    if (userRole === 'lawyer' && userId) {
-      const { data: attorneyProfile } = await supabase
+    if (error) throw error
+
+    const rows = (data ?? []) as LeadRow[]
+    const attorneyIds = [...new Set(
+      rows.map(r => r.assigned_attorney_id).filter((id): id is string => Boolean(id))
+    )]
+
+    const attorneyNameById = new Map<string, string>()
+    if (attorneyIds.length > 0) {
+      const { data: attorneys } = await supabase
         .from('attorney_profiles')
-        .select('full_name')
-        .eq('user_id', userId)
-        .maybeSingle()
+        .select('user_id,full_name')
+        .in('user_id', attorneyIds)
 
-      const fullName = attorneyProfile?.full_name?.trim() || null
-      const displayName = auth.state.value.profile?.display_name?.trim() || null
-      const email = auth.state.value.profile?.email || null
-      // Extract name from email prefix (e.g. "bradleydworkin" from "bradleydworkin@...")
-      const emailName = email ? email.split('@')[0].replace(/[^a-zA-Z]/g, ' ').trim() : null
-
-      // Collect name keywords from all sources
-      const rawName = fullName || displayName || emailName || ''
-      nameKeywords = rawName
-        .split(/[\s\-_]+/)
-        .map((w: string) => w.trim().toLowerCase())
-        .filter((w: string) => w.length >= 3)
-    }
-
-    const selectCols = 'id,submission_id,insured_name,client_phone_number,lead_vendor,state,date,status,submitted_attorney_status,assigned_attorney_id,submitted_attorney,agent,carrier,created_at'
-
-    let dealFlows: DailyDealFlow[] = []
-
-    if (userRole === 'lawyer' && userId) {
-      // First try matching by assigned_attorney_id
-      const { data: byId, error: byIdErr } = await supabase
-        .from('daily_deal_flow')
-        .select(selectCols)
-        .ilike('submitted_attorney_status', '%submitted%')
-        .eq('assigned_attorney_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(1000)
-
-      if (byIdErr) throw byIdErr
-      dealFlows = (byId ?? []) as DailyDealFlow[]
-
-      // Fallback: match by any name keyword in submitted_attorney field
-      if (dealFlows.length === 0 && nameKeywords.length > 0) {
-        // Build OR filter for each keyword: submitted_attorney.ilike.%keyword1%,submitted_attorney.ilike.%keyword2%
-        const orFilter = nameKeywords
-          .map((kw: string) => `submitted_attorney.ilike.%${kw}%`)
-          .join(',')
-
-        const { data: byName, error: byNameErr } = await supabase
-          .from('daily_deal_flow')
-          .select(selectCols)
-          .ilike('submitted_attorney_status', '%submitted%')
-          .or(orFilter)
-          .order('created_at', { ascending: false })
-          .limit(1000)
-
-        if (byNameErr) throw byNameErr
-        dealFlows = (byName ?? []) as DailyDealFlow[]
-      }
-    } else if (!userRole && userId) {
-      const { data: userData } = await supabase
-        .from('app_users')
-        .select('center_id')
-        .eq('user_id', userId)
-        .maybeSingle()
-
-      if (userData?.center_id) {
-        const { data: centerData } = await supabase
-          .from('centers')
-          .select('lead_vendor')
-          .eq('id', userData.center_id)
-          .maybeSingle()
-
-        if (centerData?.lead_vendor) {
-          const { data, error: supaError } = await supabase
-            .from('daily_deal_flow')
-            .select(selectCols)
-            .ilike('submitted_attorney_status', '%submitted%')
-            .eq('lead_vendor', centerData.lead_vendor)
-            .order('created_at', { ascending: false })
-            .limit(1000)
-
-          if (supaError) throw supaError
-          dealFlows = (data ?? []) as DailyDealFlow[]
-        } else {
-          rows.value = []
-          leads.value = []
-          return
-        }
-      } else {
-        rows.value = []
-        leads.value = []
-        return
-      }
-    } else {
-      // Admin/agent: fetch all
-      const { data, error: supaError } = await supabase
-        .from('daily_deal_flow')
-        .select(selectCols)
-        .ilike('submitted_attorney_status', '%submitted%')
-        .order('created_at', { ascending: false })
-        .limit(1000)
-
-      if (supaError) throw supaError
-      dealFlows = (data ?? []) as DailyDealFlow[]
-    }
-
-    dealFlows.forEach((r) => {
-      r.source = 'daily_deal_flow'
-    })
-
-    // Fallback to leads table for lawyers with no daily_deal_flow data
-    if (userRole === 'lawyer' && userId && dealFlows.length === 0) {
-      const { data: leadsData, error: leadsErr } = await supabase
-        .from('leads')
-        .select('*')
-        .eq('assigned_attorney_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(1000)
-
-      if (leadsErr) throw leadsErr
-
-      const mapped = (leadsData ?? []).map((r: unknown): DailyDealFlow => {
-        const row = (r ?? {}) as LeadRow
-        const createdAt = (row.created_at ? String(row.created_at) : null)
-        const date = (row.submission_date ? String(row.submission_date) : createdAt)
-        return {
-          id: String(row.id ?? ''),
-          submission_id: String(row.submission_id ?? ''),
-          insured_name: (row.customer_full_name ? String(row.customer_full_name) : null),
-          client_phone_number: (row.phone_number ? String(row.phone_number) : null),
-          lead_vendor: (row.lead_vendor ? String(row.lead_vendor) : null),
-          state: (row.state ? String(row.state) : null),
-          date,
-          status: (row.status ? String(row.status) : null),
-          submitted_attorney_status: (row.submitted_attorney_status ? String(row.submitted_attorney_status) : null),
-          assigned_attorney_id: (row.assigned_attorney_id ? String(row.assigned_attorney_id) : null),
-          agent: null,
-          carrier: null,
-          created_at: createdAt,
-          source: 'leads'
-        }
-      }).filter((r) => {
-        if (!r.id || !r.submission_id) return false
-        const s = String(r.submitted_attorney_status ?? '').toLowerCase()
-        return s.includes('submitted')
-      })
-
-      dealFlows = mapped
-    }
-
-    // Resolve attorney names for admin+
-    if (canSeeAssignments.value) {
-      const attorneyIds = [...new Set(dealFlows
-        .map(d => d.assigned_attorney_id)
-        .filter((id): id is string => Boolean(id))
-      )]
-
-      if (attorneyIds.length) {
-        const { data: attorneys, error: attorneysError } = await supabase
-          .from('attorney_profiles')
-          .select('user_id,full_name')
-          .in('user_id', attorneyIds)
-
-        if (!attorneysError && attorneys) {
-          const attorneyNameByUserId = new Map(
-            (attorneys ?? []).map((a: unknown) => {
-              const row = (a ?? {}) as Record<string, unknown>
-              return [String(row.user_id ?? ''), String(row.full_name ?? '').trim()]
-            })
-          )
-
-          dealFlows.forEach((flow) => {
-            const id = flow.assigned_attorney_id ?? null
-            if (!id) return
-            const name = attorneyNameByUserId.get(id) ?? ''
-            flow.assigned_attorney_name = name.length ? name : null
-          })
-        }
+      for (const a of (attorneys ?? []) as Array<{ user_id: string | null, full_name: string | null }>) {
+        const id = a.user_id
+        const name = (a.full_name ?? '').trim()
+        if (id && name) attorneyNameById.set(id, name)
       }
     }
 
-    rows.value = dealFlows
-    leads.value = dealFlows.map(coerceCard)
+    const cards: LeadCard[] = []
+    for (const row of rows) {
+      const name = row.assigned_attorney_id
+        ? (attorneyNameById.get(row.assigned_attorney_id) ?? 'Unknown attorney')
+        : '—'
+      const card = coerceCard(row, name)
+      if (card) cards.push(card)
+    }
+    leads.value = cards
   } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Failed to load customers'
+    const msg = e instanceof Error ? e.message : 'Failed to load cases'
     toast.add({
       title: 'Error',
       description: msg,
@@ -442,10 +252,6 @@ onMounted(() => {
   load().catch(() => {})
 })
 
-watch(query, () => {
-  // query filtering is done client-side via filteredLeads
-})
-
 const availableStates = computed(() => {
   const states = new Set<string>()
   leads.value.forEach(l => {
@@ -454,7 +260,6 @@ const availableStates = computed(() => {
   return [...states].sort()
 })
 
-// ── Filter options (same as Order Map) ──
 const stateFilterOptions = computed(() => [
   { label: 'All states', value: '__all__' },
   ...availableStates.value.map(s => ({ label: s, value: s }))
@@ -492,60 +297,21 @@ const multiSelectUi = {
   itemTrailingIcon: 'hidden'
 }
 
-const filterCaseCategoryOptions = [
-  { label: 'Consumer Cases', value: 'Consumer Cases' },
-  { label: 'Commercial Cases', value: 'Commercial Cases' },
-]
-
-const injurySeverityOptions = [
-  { label: 'Minor', value: 'minor' },
-  { label: 'Moderate', value: 'moderate' },
-  { label: 'Severe', value: 'severe' }
-]
-
-const insuranceOptions = [
-  { label: 'Insured only', value: 'insured_only' },
-  { label: 'Uninsured acceptable', value: 'uninsured_ok' }
-]
-
-const liabilityOptions = [
-  { label: 'Clear liability only', value: 'clear_only' },
-  { label: 'Disputed acceptable', value: 'disputed_ok' }
-]
-
-const medicalTreatmentOptions = [
-  { label: 'No medical', value: 'no_medical' },
-  { label: 'Ongoing', value: 'ongoing' },
-  { label: 'Proof of medical treatment', value: 'proof_of_medical_treatment' }
-]
-
-const filterExpiryOptions = [
-  { label: 'Any expiry', value: 'all' },
-  { label: 'Next 30 days', value: '30' },
-  { label: 'Next 60 days', value: '60' },
-  { label: 'Next 90 days', value: '90' },
-  { label: 'No expiry date', value: 'no_expiry' },
-]
-
-const filterLanguageOptions = computed(() => {
-  const langs = new Set<string>()
-  leads.value.forEach(l => {
-    // Language is not currently on CustomerCard; placeholder for future data
-  })
-  // Default options matching Order Map
-  return [{ label: 'English', value: 'English' }]
+const availableAttorneys = computed(() => {
+  const seen = new Map<string, string>()
+  for (const l of leads.value) {
+    if (!l.assignedAttorneyId) continue
+    if (!seen.has(l.assignedAttorneyId)) seen.set(l.assignedAttorneyId, l.assignedAttorneyName)
+  }
+  return [...seen.entries()]
+    .map(([value, label]) => ({ value, label }))
+    .sort((a, b) => a.label.localeCompare(b.label))
 })
 
 const activeFilterCount = computed(() => {
   let count = 0
   if (filterStates.value.filter(v => v !== '__all__').length > 0) count++
-  if (filterCaseCategory.value.length > 0) count++
-  if (filterInjurySeverity.value.length > 0) count++
-  if (filterInsuranceStatus.value.length > 0) count++
-  if (filterLiabilityStatus.value.length > 0) count++
-  if (filterMedicalTreatment.value.length > 0) count++
-  if (filterLanguage.value.length > 0) count++
-  if (filterExpiry.value !== 'all') count++
+  if (filterAttorneys.value.length > 0) count++
   return count
 })
 
@@ -553,24 +319,52 @@ const hasActiveFilters = computed(() => activeFilterCount.value > 0 || selectedD
 
 const resetAllFilters = () => {
   filterStates.value = []
-  filterCaseCategory.value = []
-  filterInjurySeverity.value = []
-  filterInsuranceStatus.value = []
-  filterLiabilityStatus.value = []
-  filterMedicalTreatment.value = []
-  filterLanguage.value = []
-  filterExpiry.value = 'all'
+  filterAttorneys.value = []
   selectedDateRange.value = 'all'
   calendarRange.value = { start: undefined, end: undefined }
   query.value = ''
 }
 
-const stageHeaderBg = (key: CustomerStageKey) => {
+const stageHeaderBg = (key: StageKey) => {
   switch (key) {
-    case 'new_customers_for_review': return 'bg-gradient-to-r from-blue-500/[0.10] via-blue-500/[0.04] to-transparent dark:from-blue-400/[0.14] dark:via-blue-400/[0.06] dark:to-transparent'
-    case '24_hour_approval': return 'bg-gradient-to-r from-amber-500/[0.10] via-amber-500/[0.04] to-transparent dark:from-amber-400/[0.14] dark:via-amber-400/[0.06] dark:to-transparent'
-    case 'customer_approved': return 'bg-gradient-to-r from-green-500/[0.10] via-green-500/[0.04] to-transparent dark:from-green-400/[0.14] dark:via-green-400/[0.06] dark:to-transparent'
-    case 'customer_rejected': return 'bg-gradient-to-r from-red-500/[0.10] via-red-500/[0.04] to-transparent dark:from-red-400/[0.14] dark:via-red-400/[0.06] dark:to-transparent'
+    case 'review': return 'bg-gradient-to-r from-blue-500/[0.10] via-blue-500/[0.04] to-transparent dark:from-blue-400/[0.14] dark:via-blue-400/[0.06] dark:to-transparent'
+    case 'approved': return 'bg-gradient-to-r from-green-500/[0.10] via-green-500/[0.04] to-transparent dark:from-green-400/[0.14] dark:via-green-400/[0.06] dark:to-transparent'
+    case 'rejected': return 'bg-gradient-to-r from-red-500/[0.10] via-red-500/[0.04] to-transparent dark:from-red-400/[0.14] dark:via-red-400/[0.06] dark:to-transparent'
+  }
+}
+
+const stageBgClass = (key: StageKey) => {
+  switch (key) {
+    case 'review': return 'bg-blue-500/10'
+    case 'approved': return 'bg-green-500/10'
+    case 'rejected': return 'bg-red-500/10'
+  }
+}
+
+const stageIcon = (key: StageKey) => {
+  switch (key) {
+    case 'review': return 'i-lucide-user-plus'
+    case 'approved': return 'i-lucide-check-circle'
+    case 'rejected': return 'i-lucide-x-circle'
+  }
+}
+
+const stageIconClass = (key: StageKey) => {
+  switch (key) {
+    case 'review': return 'text-blue-400'
+    case 'approved': return 'text-green-400'
+    case 'rejected': return 'text-red-400'
+  }
+}
+
+const stageCardAccentStyle = (key: StageKey) => {
+  switch (key) {
+    case 'review':
+      return { '--ap-accent': '#60a5fa', '--ap-accent-rgb': '96 165 250' }
+    case 'approved':
+      return { '--ap-accent': '#4ade80', '--ap-accent-rgb': '74 222 128' }
+    case 'rejected':
+      return { '--ap-accent': '#f87171', '--ap-accent-rgb': '248 113 113' }
   }
 }
 
@@ -586,12 +380,9 @@ const matchesDateFilter = (rawDate: string | null): boolean => {
   if (!rawDate) return false
 
   const leadDate = getStartOfDay(new Date(rawDate))
-  const now = new Date()
-  const todayDate = getStartOfDay(now)
+  const todayDate = getStartOfDay(new Date())
 
-  if (range === 'today') {
-    return leadDate.getTime() === todayDate.getTime()
-  }
+  if (range === 'today') return leadDate.getTime() === todayDate.getTime()
   if (range === 'yesterday') {
     const yesterday = new Date(todayDate)
     yesterday.setDate(yesterday.getDate() - 1)
@@ -635,15 +426,18 @@ const filteredLeads = computed(() => {
   return leads.value.filter((l) => {
     if (stageFilter !== 'all' && l.stage !== stageFilter) return false
     if (activeStates.length > 0 && !activeStates.includes(l.state)) return false
+    if (filterAttorneys.value.length > 0) {
+      if (!l.assignedAttorneyId || !filterAttorneys.value.includes(l.assignedAttorneyId)) return false
+    }
     if (!matchesDateFilter(l.rawDate)) return false
     if (!q) return true
-    return [l.clientName, l.phone, l.submissionId, l.status, l.leadVendor, l.assignedAttorneyName, l.state]
+    return [l.clientName, l.phone, l.submissionId, l.status, l.leadVendor, l.state, l.assignedAttorneyName]
       .some(v => String(v ?? '').toLowerCase().includes(q))
   })
 })
 
 const leadsByStage = computed(() => {
-  const grouped = new Map<CustomerStageKey, CustomerCard[]>()
+  const grouped = new Map<StageKey, LeadCard[]>()
   STAGES.forEach((s) => grouped.set(s.key, []))
   filteredLeads.value.forEach((l) => {
     const arr = grouped.get(l.stage) ?? []
@@ -653,18 +447,13 @@ const leadsByStage = computed(() => {
   return grouped
 })
 
-const newReviewCount = computed(() => (leadsByStage.value.get('new_customers_for_review') ?? []).length)
-const approvalCount = computed(() => (leadsByStage.value.get('24_hour_approval') ?? []).length)
-const approvedCount = computed(() => (leadsByStage.value.get('customer_approved') ?? []).length)
-const rejectedCount = computed(() => (leadsByStage.value.get('customer_rejected') ?? []).length)
-
-const openLead = (lead: CustomerCard) => {
-  router.push(`/retainers/${lead.id}`)
-}
+const reviewCount = computed(() => (leadsByStage.value.get('review') ?? []).length)
+const approvedCount = computed(() => (leadsByStage.value.get('approved') ?? []).length)
+const rejectedCount = computed(() => (leadsByStage.value.get('rejected') ?? []).length)
 
 const { startDrag, endDrag } = useDragGhost()
 
-const onDragStartLead = (e: DragEvent, lead: CustomerCard) => {
+const onDragStartLead = (e: DragEvent, lead: LeadCard) => {
   startDrag(e)
   dragLeadId.value = lead.id
   dragFromStage.value = lead.stage
@@ -676,12 +465,11 @@ const onDragEndLead = () => {
   dragFromStage.value = null
 }
 
-// Confirmation modal state
 const moveConfirmOpen = ref(false)
 const moveConfirmBusy = ref(false)
 const pendingMoveLeadId = ref<string | null>(null)
-const pendingMoveFromStage = ref<CustomerStageKey | null>(null)
-const pendingMoveToStage = ref<CustomerStageKey | null>(null)
+const pendingMoveFromStage = ref<StageKey | null>(null)
+const pendingMoveToStage = ref<StageKey | null>(null)
 
 const pendingMoveLeadName = computed(() => {
   if (!pendingMoveLeadId.value) return ''
@@ -698,7 +486,7 @@ const pendingMoveToLabel = computed(() => {
   return STAGES.find(s => s.key === pendingMoveToStage.value)?.label ?? ''
 })
 
-const onDropToStage = (targetStage: CustomerStageKey) => {
+const onDropToStage = (targetStage: StageKey) => {
   const leadId = dragLeadId.value
   const fromStage = dragFromStage.value
   onDragEndLead()
@@ -734,54 +522,36 @@ const confirmMove = async () => {
   const idx = leads.value.findIndex(l => l.id === leadId)
   if (idx < 0) return
 
+  const targetStatus = STAGES.find(s => s.key === targetStage)?.status
+  if (!targetStatus) return
+
   moveConfirmBusy.value = true
+  const prev = leads.value[idx]
 
-  const prevStage = leads.value[idx].stage
-  const prevStatus = leads.value[idx].status
-
-  const targetDbStatus: string | null | undefined = (() => {
-    if (targetStage === 'new_customers_for_review') return undefined
-    if (targetStage === '24_hour_approval') return 'attorney_review'
-    if (targetStage === 'customer_approved') return 'qualified_payable'
-    if (targetStage === 'customer_rejected') return 'attorney_rejected'
-    return targetStage
-  })()
-
-  leads.value[idx] = {
-    ...leads.value[idx],
-    stage: targetStage,
-    status: targetDbStatus === undefined ? prevStatus : (targetDbStatus ?? '')
-  }
+  leads.value[idx] = { ...prev, stage: targetStage, status: targetStatus }
 
   try {
-    if (targetDbStatus !== undefined) {
-      const { error } = await supabase
-        .from('daily_deal_flow')
-        .update({ status: targetDbStatus })
-        .eq('id', leadId)
+    const { error } = await supabase
+      .from('leads')
+      .update({ status: targetStatus })
+      .eq('id', leadId)
 
-      if (error) throw error
+    if (error) throw error
 
-      const toLabel = STAGES.find(s => s.key === targetStage)?.label ?? targetStage
-      toast.add({
-        title: 'Updated',
-        description: `Moved to ${toLabel}.`,
-        icon: 'i-lucide-check-circle',
-        color: 'success'
-      })
-    }
+    const toLabel = STAGES.find(s => s.key === targetStage)?.label ?? targetStage
+    toast.add({
+      title: 'Updated',
+      description: `Moved to ${toLabel}.`,
+      icon: 'i-lucide-check-circle',
+      color: 'success'
+    })
 
     moveConfirmOpen.value = false
     pendingMoveLeadId.value = null
     pendingMoveFromStage.value = null
     pendingMoveToStage.value = null
   } catch (err) {
-    leads.value[idx] = {
-      ...leads.value[idx],
-      stage: prevStage,
-      status: prevStatus
-    }
-
+    leads.value[idx] = prev
     const msg = err instanceof Error ? err.message : 'Unable to update stage'
     toast.add({
       title: 'Error',
@@ -793,50 +563,10 @@ const confirmMove = async () => {
     moveConfirmBusy.value = false
   }
 }
-
-const stageIcon = (key: CustomerStageKey) => {
-  switch (key) {
-    case 'new_customers_for_review': return 'i-lucide-user-plus'
-    case '24_hour_approval': return 'i-lucide-clock'
-    case 'customer_approved': return 'i-lucide-check-circle'
-    case 'customer_rejected': return 'i-lucide-x-circle'
-  }
-}
-
-const stageBgClass = (key: CustomerStageKey) => {
-  switch (key) {
-    case 'new_customers_for_review': return 'bg-blue-500/10'
-    case '24_hour_approval': return 'bg-amber-500/10'
-    case 'customer_approved': return 'bg-green-500/10'
-    case 'customer_rejected': return 'bg-red-500/10'
-  }
-}
-
-const stageIconClass = (key: CustomerStageKey) => {
-  switch (key) {
-    case 'new_customers_for_review': return 'text-blue-400'
-    case '24_hour_approval': return 'text-amber-400'
-    case 'customer_approved': return 'text-green-400'
-    case 'customer_rejected': return 'text-red-400'
-  }
-}
-
-const stageCardAccentStyle = (key: CustomerStageKey) => {
-  switch (key) {
-    case 'new_customers_for_review':
-      return { '--ap-accent': '#60a5fa', '--ap-accent-rgb': '96 165 250' }
-    case '24_hour_approval':
-      return { '--ap-accent': '#fbbf24', '--ap-accent-rgb': '251 191 36' }
-    case 'customer_approved':
-      return { '--ap-accent': '#4ade80', '--ap-accent-rgb': '74 222 128' }
-    case 'customer_rejected':
-      return { '--ap-accent': '#f87171', '--ap-accent-rgb': '248 113 113' }
-  }
-}
 </script>
 
 <template>
-  <UDashboardPanel id="retainers">
+  <UDashboardPanel id="my-cases">
     <template #header>
       <UDashboardNavbar title="My Cases">
         <template #leading>
@@ -859,10 +589,9 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
 
     <template #body>
       <div class="flex h-full min-h-0 flex-col gap-5">
-        <!-- Move Confirmation Modal -->
         <UModal
           :open="moveConfirmOpen"
-          title="Move Customer"
+          title="Move Case"
           :dismissible="false"
           @update:open="handleMoveConfirmUpdate"
         >
@@ -910,20 +639,13 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
         </UModal>
 
         <!-- Stat Cards -->
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div class="ap-fade-in group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
             <div class="absolute inset-y-0 left-0 w-1 bg-blue-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <div class="flex items-start gap-1.5">
-                  <p class="text-[10px] font-medium uppercase tracking-wider text-blue-500 dark:text-blue-400">New for Review</p>
-                  <ProductGuideHint
-                    :title="myCasesHints.newForReviewCard.title"
-                    :description="myCasesHints.newForReviewCard.description"
-                    :guide-target="myCasesHints.newForReviewCard.guideTarget"
-                  />
-                </div>
-                <p class="mt-1 text-2xl font-bold text-blue-500 dark:text-blue-400 tabular-nums">{{ newReviewCount }}</p>
+                <p class="text-[10px] font-medium uppercase tracking-wider text-blue-500 dark:text-blue-400">New for Review</p>
+                <p class="mt-1 text-2xl font-bold text-blue-500 dark:text-blue-400 tabular-nums">{{ reviewCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
                 <UIcon name="i-lucide-user-plus" class="text-lg text-blue-400" />
@@ -932,37 +654,10 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
           </div>
 
           <div class="ap-fade-in ap-delay-1 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
-            <div class="absolute inset-y-0 left-0 w-1 bg-amber-400" />
-            <div class="flex items-center justify-between px-5 py-4 pl-5">
-              <div>
-                <div class="flex items-start gap-1.5">
-                  <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">24 Hour Approval</p>
-                  <ProductGuideHint
-                    :title="myCasesHints.approvalCard.title"
-                    :description="myCasesHints.approvalCard.description"
-                    :guide-target="myCasesHints.approvalCard.guideTarget"
-                  />
-                </div>
-                <p class="mt-1 text-2xl font-bold text-amber-500 dark:text-amber-400 tabular-nums">{{ approvalCount }}</p>
-              </div>
-              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
-                <UIcon name="i-lucide-clock" class="text-lg text-amber-400" />
-              </div>
-            </div>
-          </div>
-
-          <div class="ap-fade-in ap-delay-2 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
             <div class="absolute inset-y-0 left-0 w-1 bg-green-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <div class="flex items-start gap-1.5">
-                  <p class="text-[10px] font-medium uppercase tracking-wider text-green-500 dark:text-green-400">Approved</p>
-                  <ProductGuideHint
-                    :title="myCasesHints.approvedCard.title"
-                    :description="myCasesHints.approvedCard.description"
-                    :guide-target="myCasesHints.approvedCard.guideTarget"
-                  />
-                </div>
+                <p class="text-[10px] font-medium uppercase tracking-wider text-green-500 dark:text-green-400">Approved</p>
                 <p class="mt-1 text-2xl font-bold text-green-500 dark:text-green-400 tabular-nums">{{ approvedCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10">
@@ -971,18 +666,11 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
             </div>
           </div>
 
-          <div class="ap-fade-in ap-delay-3 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
+          <div class="ap-fade-in ap-delay-2 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
             <div class="absolute inset-y-0 left-0 w-1 bg-red-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <div class="flex items-start gap-1.5">
-                  <p class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">Rejected</p>
-                  <ProductGuideHint
-                    :title="myCasesHints.rejectedCard.title"
-                    :description="myCasesHints.rejectedCard.description"
-                    :guide-target="myCasesHints.rejectedCard.guideTarget"
-                  />
-                </div>
+                <p class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">Rejected</p>
                 <p class="mt-1 text-2xl font-bold text-red-500 dark:text-red-400 tabular-nums">{{ rejectedCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10">
@@ -993,24 +681,17 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
         </div>
 
         <!-- Filters -->
-        <div class="ap-fade-in ap-delay-4 overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
-          <!-- Filter Header -->
+        <div class="ap-fade-in ap-delay-3 overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
           <div class="flex flex-wrap items-center gap-3 px-5 py-3">
             <div class="flex flex-wrap items-center gap-3 min-w-0">
               <UInput
                 v-model="query"
                 class="max-w-xs"
                 icon="i-lucide-search"
-                placeholder="Search customers..."
+                placeholder="Search cases..."
                 size="sm"
               />
-              <ProductGuideHint
-                :title="myCasesHints.filters.title"
-                :description="myCasesHints.filters.description"
-                :guide-target="myCasesHints.filters.guideTarget"
-              />
 
-              <!-- Date Range (outside filter panel) -->
               <USelect
                 v-if="selectedDateRange !== 'custom'"
                 v-model="selectedDateRange"
@@ -1021,7 +702,6 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
                 class="w-44"
               />
 
-              <!-- Custom date range picker -->
               <UPopover
                 v-if="selectedDateRange === 'custom'"
                 v-model:open="calendarOpen"
@@ -1085,7 +765,7 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
                 aria-live="polite"
                 class="text-sm font-medium text-muted tabular-nums"
               >
-                {{ filteredLeads.length }} customers
+                {{ filteredLeads.length }} cases
               </p>
               <UButton
                 :icon="showFilters ? 'i-lucide-filter-x' : 'i-lucide-filter'"
@@ -1113,189 +793,57 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
             </div>
           </div>
 
-          <!-- Collapsible Filter Panel (same 8 filters as Order Map) -->
           <div
             class="ap-collapse"
             :class="showFilters ? 'ap-collapse--open' : ''"
           >
             <div>
               <div class="border-t border-black/[0.06] dark:border-white/[0.08] bg-black/[0.015] dark:bg-white/[0.02] px-5 py-4">
-              <div class="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
-              <!-- States -->
-              <div>
-                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">States</label>
-                <USelect
-                  v-model="filterStates"
-                  :items="stateFilterOptions"
-                  value-key="value"
-                  label-key="label"
-                  multiple
-                  placeholder="All states"
-                  size="xs"
-                  class="w-full"
-                  :ui="multiSelectUi"
-                >
-                  <template #item-leading>
-                    <span class="relative flex size-4 items-center justify-center">
-                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
-                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
-                    </span>
-                  </template>
-                </USelect>
-              </div>
+                <div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3">
+                  <div>
+                    <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">States</label>
+                    <USelect
+                      v-model="filterStates"
+                      :items="stateFilterOptions"
+                      value-key="value"
+                      label-key="label"
+                      multiple
+                      placeholder="All states"
+                      size="xs"
+                      class="w-full"
+                      :ui="multiSelectUi"
+                    >
+                      <template #item-leading>
+                        <span class="relative flex size-4 items-center justify-center">
+                          <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
+                          <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
+                        </span>
+                      </template>
+                    </USelect>
+                  </div>
 
-              <!-- Case Category -->
-              <div>
-                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Case Category</label>
-                <USelect
-                  v-model="filterCaseCategory"
-                  :items="filterCaseCategoryOptions"
-                  value-key="value"
-                  label-key="label"
-                  multiple
-                  placeholder="All categories"
-                  size="xs"
-                  class="w-full"
-                  :ui="multiSelectUi"
-                >
-                  <template #item-leading>
-                    <span class="relative flex size-4 items-center justify-center">
-                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
-                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
-                    </span>
-                  </template>
-                </USelect>
-              </div>
-
-              <!-- Injury Severity -->
-              <div>
-                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Injury Severity</label>
-                <USelect
-                  v-model="filterInjurySeverity"
-                  :items="injurySeverityOptions"
-                  value-key="value"
-                  label-key="label"
-                  multiple
-                  placeholder="All severities"
-                  size="xs"
-                  class="w-full"
-                  :ui="multiSelectUi"
-                >
-                  <template #item-leading>
-                    <span class="relative flex size-4 items-center justify-center">
-                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
-                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
-                    </span>
-                  </template>
-                </USelect>
-              </div>
-
-              <!-- Insurance Status -->
-              <div>
-                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Insurance Status</label>
-                <USelect
-                  v-model="filterInsuranceStatus"
-                  :items="insuranceOptions"
-                  value-key="value"
-                  label-key="label"
-                  multiple
-                  placeholder="All"
-                  size="xs"
-                  class="w-full"
-                  :ui="multiSelectUi"
-                >
-                  <template #item-leading>
-                    <span class="relative flex size-4 items-center justify-center">
-                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
-                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
-                    </span>
-                  </template>
-                </USelect>
-              </div>
-
-              <!-- Liability Status -->
-              <div>
-                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Liability Status</label>
-                <USelect
-                  v-model="filterLiabilityStatus"
-                  :items="liabilityOptions"
-                  value-key="value"
-                  label-key="label"
-                  multiple
-                  placeholder="All"
-                  size="xs"
-                  class="w-full"
-                  :ui="multiSelectUi"
-                >
-                  <template #item-leading>
-                    <span class="relative flex size-4 items-center justify-center">
-                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
-                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
-                    </span>
-                  </template>
-                </USelect>
-              </div>
-
-              <!-- Medical Treatment -->
-              <div>
-                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Medical Treatment</label>
-                <USelect
-                  v-model="filterMedicalTreatment"
-                  :items="medicalTreatmentOptions"
-                  value-key="value"
-                  label-key="label"
-                  multiple
-                  placeholder="All"
-                  size="xs"
-                  class="w-full"
-                  :ui="multiSelectUi"
-                >
-                  <template #item-leading>
-                    <span class="relative flex size-4 items-center justify-center">
-                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
-                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
-                    </span>
-                  </template>
-                </USelect>
-              </div>
-
-              <!-- Expiration -->
-              <div>
-                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Expiration</label>
-                <USelect
-                  v-model="filterExpiry"
-                  :items="filterExpiryOptions"
-                  value-key="value"
-                  label-key="label"
-                  placeholder="Any expiry"
-                  size="xs"
-                  class="w-full"
-                />
-              </div>
-
-              <!-- Language -->
-              <div>
-                <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Language</label>
-                <USelect
-                  v-model="filterLanguage"
-                  :items="filterLanguageOptions"
-                  value-key="value"
-                  label-key="label"
-                  multiple
-                  placeholder="All languages"
-                  size="xs"
-                  class="w-full"
-                  :ui="multiSelectUi"
-                >
-                  <template #item-leading>
-                    <span class="relative flex size-4 items-center justify-center">
-                      <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
-                      <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
-                    </span>
-                  </template>
-                </USelect>
-              </div>
-            </div>
+                  <div>
+                    <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted">Lawyer</label>
+                    <USelect
+                      v-model="filterAttorneys"
+                      :items="availableAttorneys"
+                      value-key="value"
+                      label-key="label"
+                      multiple
+                      placeholder="All lawyers"
+                      size="xs"
+                      class="w-full"
+                      :ui="multiSelectUi"
+                    >
+                      <template #item-leading>
+                        <span class="relative flex size-4 items-center justify-center">
+                          <UIcon name="i-lucide-square" class="absolute size-4 text-muted group-data-[state=checked]:hidden" />
+                          <UIcon name="i-lucide-check-square" class="absolute hidden size-4 text-primary group-data-[state=checked]:block" />
+                        </span>
+                      </template>
+                    </USelect>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1312,7 +860,6 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
               @dragover.prevent
               @drop.prevent="onDropToStage(stage.key)"
             >
-              <!-- Column Header -->
               <div
                 class="flex items-center justify-between border-b border-black/[0.06] dark:border-white/[0.08] px-4 py-3"
                 :class="stageHeaderBg(stage.key)"
@@ -1328,32 +875,22 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
                       :class="stageIconClass(stage.key)"
                     />
                   </div>
-                  <div class="flex items-center gap-1.5">
-                    <span class="text-sm font-semibold text-highlighted">{{ stage.label }}</span>
-                    <ProductGuideHint
-                      :title="getStageGuideHint(stage.key).title"
-                      :description="getStageGuideHint(stage.key).description"
-                      :guide-target="getStageGuideHint(stage.key).guideTarget"
-                    />
-                  </div>
+                  <span class="text-sm font-semibold text-highlighted">{{ stage.label }}</span>
                 </div>
               </div>
 
-              <!-- Column Cards -->
-              <div class="flex-1 space-y-2 overflow-y-auto p-3 retainers-scroll">
+              <div class="flex-1 space-y-2 overflow-y-auto p-3 cases-scroll">
                 <div
                   v-for="lead in (leadsByStage.get(stage.key) ?? [])"
                   :key="lead.id"
-                  class="retainer-card group cursor-pointer rounded-lg border border-black/[0.05] dark:border-white/[0.06] bg-white/60 dark:bg-white/[0.03] p-3 transition-all duration-200"
+                  class="case-card group cursor-grab rounded-lg border border-black/[0.05] dark:border-white/[0.06] bg-white/60 dark:bg-white/[0.03] p-3 transition-all duration-200 active:cursor-grabbing"
                   :style="stageCardAccentStyle(stage.key)"
                   draggable="true"
                   @dragstart="onDragStartLead($event, lead)"
                   @dragend="onDragEndLead"
-                  @click="openLead(lead)"
                 >
-                  <!-- Client Name & Initials -->
                   <div class="flex items-start gap-2.5">
-                    <div class="retainer-card__initials flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold transition-all duration-200">
+                    <div class="case-card__initials flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold transition-all duration-200">
                       {{ getInitials(lead.clientName) }}
                     </div>
                     <div class="min-w-0">
@@ -1362,7 +899,14 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
                     </div>
                   </div>
 
-                  <!-- Date & State -->
+                  <div
+                    v-if="lead.assignedAttorneyName && lead.assignedAttorneyName !== '—'"
+                    class="mt-2 flex items-center gap-1.5 text-[11px] text-muted"
+                  >
+                    <UIcon name="i-lucide-scale" class="size-3 shrink-0" />
+                    <span class="truncate">{{ lead.assignedAttorneyName }}</span>
+                  </div>
+
                   <div class="mt-2 flex items-center justify-between">
                     <div class="flex items-center gap-1.5 text-[11px] text-muted">
                       <UIcon name="i-lucide-calendar" class="size-3" />
@@ -1375,12 +919,11 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
                   </div>
                 </div>
 
-                <!-- Empty State -->
                 <div
                   v-if="(leadsByStage.get(stage.key)?.length ?? 0) === 0"
                   class="flex items-center justify-center rounded-lg border border-dashed border-black/[0.06] dark:border-white/[0.08] px-3 py-8 text-center text-xs text-muted"
                 >
-                  No Customers
+                  No Cases
                 </div>
               </div>
             </div>
@@ -1392,31 +935,31 @@ const stageCardAccentStyle = (key: CustomerStageKey) => {
 </template>
 
 <style scoped>
-.retainers-scroll::-webkit-scrollbar {
+.cases-scroll::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
-.retainers-scroll::-webkit-scrollbar-track {
+.cases-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
-.retainers-scroll::-webkit-scrollbar-thumb {
+.cases-scroll::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.08);
   border-radius: 999px;
 }
-.retainers-scroll::-webkit-scrollbar-thumb:hover {
+.cases-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
 }
-.retainer-card:hover {
+.case-card:hover {
   border-color: rgb(var(--ap-accent-rgb) / 0.24);
   background: rgb(var(--ap-accent-rgb) / 0.055);
   box-shadow: 0 6px 16px rgb(var(--ap-accent-rgb) / 0.08);
 }
-.retainer-card__initials {
+.case-card__initials {
   background: rgb(24 24 27 / 0.9);
   color: rgb(255 255 255 / 0.96);
   border: 1px solid rgb(15 23 42 / 0.1);
 }
-.retainer-card:hover .retainer-card__initials {
+.case-card:hover .case-card__initials {
   background: linear-gradient(135deg, rgb(var(--ap-accent-rgb) / 0.2), rgb(var(--ap-accent-rgb) / 0.05));
   color: var(--ap-accent);
   border-color: rgb(var(--ap-accent-rgb) / 0.22);

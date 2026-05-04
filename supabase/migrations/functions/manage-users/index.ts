@@ -2,7 +2,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.56.0'
 
-type Role = 'super_admin' | 'admin' | 'lawyer' | 'agent' | 'publisher_admin' | 'publisher_closer'
+type Role = 'super_admin' | 'admin' | 'lawyer' | 'agent' | 'publisher_admin' | 'publisher_closer' | 'broker'
 
 type AppUserRow = {
   user_id: string
@@ -76,7 +76,13 @@ const getBearerToken = (req: Request) => {
 }
 
 const validateRole = (role: unknown): role is Role =>
-  role === 'super_admin' || role === 'admin' || role === 'lawyer' || role === 'agent' || role === 'publisher_admin' || role === 'publisher_closer'
+  role === 'super_admin'
+  || role === 'admin'
+  || role === 'lawyer'
+  || role === 'agent'
+  || role === 'publisher_admin'
+  || role === 'publisher_closer'
+  || role === 'broker'
 
 // CHANGED: allow both admin + super_admin
 const requireAdminOrSuperAdmin = async (req: Request) => {

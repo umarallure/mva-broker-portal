@@ -25,7 +25,6 @@ const auth = useAuth()
 const open = ref(false)
 const sidebarCollapsed = ref(false)
 const chatOpen = ref(false)
-let collapsedBeforeGuide = false
 
 const isPublicPage = computed(() =>
   ['/login', '/', '/get-started', '/launch-auth', '/managed-auth/callback'].includes(route.path) ||
@@ -80,105 +79,46 @@ watch(
 const role = computed(() => auth.state.value.profile?.role)
 const managedLaunch = computed(() => auth.managedLaunch.value)
 const isManagedSession = computed(() => auth.isManagedSession.value)
-const isAdmin = computed(() => role.value === 'super_admin' || role.value === 'admin')
 const isSuperAdmin = computed(() => role.value === 'super_admin')
-const isAccounts = computed(() => role.value === 'accounts')
-const isAdminOrAccounts = computed(() => isAdmin.value || isAccounts.value)
 
-const links = computed(() => [[
-  // Pages hidden from accounts role
-  ...(!isAccounts.value ? [{
-    label: 'Dashboard',
-    icon: 'i-lucide-house',
-    to: '/dashboard',
-    onSelect: () => { open.value = false }
-  }, {
-    label: 'Order Map',
-    icon: 'i-lucide-map',
-    to: '/intake-map',
-    onSelect: () => { open.value = false }
-  }, {
-    label: 'My Cases',
-    icon: 'i-lucide-briefcase',
-    to: '/retainers',
-    onSelect: () => { open.value = false }
-  }, {
-    label: 'Fulfillment',
-    icon: 'i-lucide-package',
-    to: '/fulfillment',
-    onSelect: () => { open.value = false }
-  }] : []),
-
-  // Invoicing — visible to all roles that can log in (lawyer sees lawyer only via route guard)
-  {
-    label: 'Invoicing',
-    icon: 'i-lucide-receipt',
-    to: '/invoicing/lawyer',
-    onSelect: () => { open.value = false }
-  },
-
-  // Publisher Invoicing — admin, super_admin, accounts
-  ...(isAdminOrAccounts.value ? [{
-    label: 'Publisher Invoicing',
-    icon: 'i-lucide-store',
-    to: '/invoicing/publisher',
-    onSelect: () => { open.value = false }
-  }] : []),
-
-  // Product Portal is temporarily hidden from lawyers.
-  ...(!isAccounts.value ? [
-    // TODO: re-enable Product Offering with the /product-portal route.
-    // {
-    //   label: 'Product Offering',
-    //   icon: 'i-lucide-tag',
-    //   to: '/product-portal',
-    //   onSelect: () => { open.value = false }
-    // },
+const links = computed(() => [
+  [
     {
-      label: 'Product Guide',
-      icon: 'i-lucide-book-open',
-      to: '/product-guide',
+      label: 'My Cases',
+      icon: 'i-lucide-briefcase',
+      to: '/retainers',
       onSelect: () => { open.value = false }
-    }
-  ] : []),
+    },
+    {
+      label: 'Task Assignment',
+      icon: 'i-lucide-list-checks',
+      to: '/task-management',
+      onSelect: () => { open.value = false }
+    },
 
-  // Retainer Settlements — admin, super_admin, accounts
-  ...(isAdminOrAccounts.value ? [{
-    label: 'Retainer Settlements',
-    icon: 'i-lucide-landmark',
-    to: '/retainer-settlements',
-    onSelect: () => { open.value = false }
-  }] : []),
-
-  // Super admin only
-  ...(isSuperAdmin.value ? [{
-    label: 'Users',
-    icon: 'i-lucide-users',
-    to: '/users',
-    onSelect: () => { open.value = false }
-  }, {
-    label: 'Centers',
-    icon: 'i-lucide-building-2',
-    to: '/centers',
-    onSelect: () => { open.value = false }
-  }] : []),
-
-  // Settings — accounts sees General only; others see all sub-pages
-  {
-    label: 'Settings',
-    to: '/settings',
-    icon: 'i-lucide-settings',
-    defaultOpen: route.path.startsWith('/settings'),
-    type: 'trigger',
-    children: [
-      ...(!isAccounts.value ? [{
-        label: 'Attorney Profile',
-        to: '/settings/attorney-profile',
-        exact: true,
-        onSelect: () => { open.value = false }
-      }, {
-        label: 'Expertise & Jurisdiction',
-        to: '/settings/expertise',
+    // Dashboard is hidden for now; keep the route/page available to re-enable later.
+    ...(isSuperAdmin.value ? [{
+      label: 'Users',
+      icon: 'i-lucide-users',
+      to: '/users',
+      onSelect: () => { open.value = false }
+    }, {
+      label: 'Centers',
+      icon: 'i-lucide-building-2',
+      to: '/centers',
+      onSelect: () => { open.value = false }
+    }] : [])
+  ],
+  [
+    {
+      label: 'Settings',
+      to: '/settings',
+      icon: 'i-lucide-settings',
+      defaultOpen: route.path.startsWith('/settings'),
+      type: 'trigger',
+      children: [{
+        label: 'Broker Profile',
+        to: '/settings/broker-profile',
         exact: true,
         onSelect: () => { open.value = false }
       }, {
@@ -186,31 +126,10 @@ const links = computed(() => [[
         to: '/settings/team-profile',
         exact: true,
         onSelect: () => { open.value = false }
-      }, {
-        label: 'Retainer Contract Document',
-        to: '/settings/retainer-contract-document',
-        exact: true,
-        onSelect: () => { open.value = false }
-      }] : [])
-      // TODO: re-enable with pricing redesign
-      // , {
-      //   label: 'Pricing',
-      //   to: '/settings/capacity',
-      //   exact: true,
-      //   onSelect: () => { open.value = false }
-      // }
-    ]
-  }
-]] satisfies NavigationMenuItem[][])
-
-watch(() => route.path, (to, from) => {
-  if (to === '/product-guide' && from !== '/product-guide') {
-    collapsedBeforeGuide = sidebarCollapsed.value
-    sidebarCollapsed.value = true
-  } else if (from === '/product-guide' && to !== '/product-guide') {
-    sidebarCollapsed.value = collapsedBeforeGuide
-  }
-})
+      }]
+    }
+  ]
+] satisfies NavigationMenuItem[][])
 
 const groups = computed(() => [{
   id: 'links',
@@ -220,8 +139,8 @@ const groups = computed(() => [{
 
 const managedBannerLabel = computed(() => {
   const actor = managedLaunch.value?.actorDisplayName || managedLaunch.value?.actorEmail
-  if (!actor) return 'Managed session started from Lawyer Management.'
-  return `Opened from Lawyer Management by ${actor}.`
+  if (!actor) return 'Managed session started from Broker Management.'
+  return `Opened from Broker Management by ${actor}.`
 })
 
 const handleEndManagedSession = async () => {
@@ -229,7 +148,7 @@ const handleEndManagedSession = async () => {
     await auth.signOut()
     toast.add({
       title: 'Managed session ended',
-      description: 'This lawyer window has been signed out.',
+      description: 'This broker window has been signed out.',
       color: 'success',
     })
   } finally {
@@ -330,7 +249,7 @@ if (cookie.value !== 'accepted') {
                 <UIcon name="i-lucide-shield-check" class="size-4" />
               </div>
               <div class="space-y-1">
-                <p class="text-sm font-semibold text-amber-50">Managed lawyer session</p>
+                <p class="text-sm font-semibold text-amber-50">Managed broker session</p>
                 <p class="text-xs leading-5 text-amber-100/75">
                   {{ managedBannerLabel }}
                 </p>
