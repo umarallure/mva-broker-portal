@@ -84,6 +84,18 @@ const isSuperAdmin = computed(() => role.value === 'super_admin')
 const links = computed(() => [
   [
     {
+      label: 'Dashboard',
+      icon: 'i-lucide-house',
+      to: '/dashboard',
+      onSelect: () => { open.value = false }
+    },
+    {
+      label: 'Order Map',
+      icon: 'i-lucide-map',
+      to: '/intake-map',
+      onSelect: () => { open.value = false }
+    },
+    {
       label: 'My Cases',
       icon: 'i-lucide-briefcase',
       to: '/retainers',
@@ -95,8 +107,19 @@ const links = computed(() => [
       to: '/task-management',
       onSelect: () => { open.value = false }
     },
+    {
+      label: 'Fulfillment',
+      icon: 'i-lucide-package',
+      to: '/fulfillment',
+      onSelect: () => { open.value = false }
+    },
+    {
+      label: 'Invoicing',
+      icon: 'i-lucide-receipt',
+      to: '/invoicing/lawyer',
+      onSelect: () => { open.value = false }
+    },
 
-    // Dashboard is hidden for now; keep the route/page available to re-enable later.
     ...(isSuperAdmin.value ? [{
       label: 'Users',
       icon: 'i-lucide-users',
