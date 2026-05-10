@@ -9,7 +9,7 @@ import { useAuth } from './composables/useAuth'
 const app = createApp(App)
 
 const BROKER_DEFAULT_PATH = '/retainers'
-
+ 
 // Pages still imported by super_admin tooling are kept registered; they are
 // hidden from the broker-only nav in App.vue.
 const router = createRouter({
