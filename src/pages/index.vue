@@ -41,7 +41,7 @@ const steps = [{
   title: 'Review new retainers',
   copy: 'Review new retainer requests, key facts, and contact details. Move fast without digging through messages.'
 }, {
-  title: 'Track fulfillment outcomes',
+  title: 'Track case outcomes',
   copy: 'See what’s signed, dropped, or returned for follow-up. Keep context for every decision.'
 }, {
   title: 'Stay on top of billing',
@@ -115,7 +115,7 @@ const steps = [{
                   <p class="text-sm text-white/60">New retainers ready for review and signature follow-up.</p>
                 </div>
                 <div class="rounded-2xl bg-white/5 p-4">
-                  <p class="text-xs uppercase tracking-[0.4em] text-white/50">Fulfillment</p>
+                  <p class="text-xs uppercase tracking-[0.4em] text-white/50">Case Outcomes</p>
                   <p class="mt-2 text-3xl font-semibold text-white">17 pending</p>
                   <p class="text-sm text-white/60">Cases pending outcome updates or additional information.</p>
                 </div>

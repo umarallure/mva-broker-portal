@@ -8,7 +8,7 @@ import { useAuth } from './composables/useAuth'
 
 const app = createApp(App)
 
-const BROKER_DEFAULT_PATH = '/retainers'
+const BROKER_DEFAULT_PATH = '/dashboard'
  
 // Pages still imported by super_admin tooling are kept registered; they are
 // hidden from the broker-only nav in App.vue.
@@ -28,7 +28,6 @@ const router = createRouter({
     { path: '/retainers', component: () => import('./pages/retainers.vue') },
     { path: '/retainers/:id', component: () => import('./pages/retainers-details.vue') },
     { path: '/task-management', component: () => import('./pages/task-management.vue') },
-    { path: '/fulfillment', component: () => import('./pages/fulfillment.vue') },
     { path: '/retainer-settlements', component: () => import('./pages/retainer-settlements.vue'), meta: { requiresSuperAdmin: true } },
     { path: '/invoicing', redirect: '/invoicing/lawyer' },
     { path: '/invoicing/lawyer', component: () => import('./pages/invoicing.vue') },
@@ -36,6 +35,8 @@ const router = createRouter({
     { path: '/invoicing/create', component: () => import('./pages/invoicing-create.vue') },
     { path: '/invoicing/edit/:id', component: () => import('./pages/invoicing-create.vue') },
     { path: '/invoicing/:id/pdf', component: () => import('./pages/invoice-pdf.vue'), meta: { public: true } },
+    { path: '/attorneys', component: () => import('./pages/attorneys.vue') },
+    { path: '/attorneys/:id', component: () => import('./pages/attorneys-details.vue') },
     { path: '/product-guide', component: () => import('./pages/product-guide.vue'), meta: { requiresSuperAdmin: true } },
     { path: '/users', component: () => import('./pages/users.vue'), meta: { requiresSuperAdmin: true } },
     { path: '/centers', component: () => import('./pages/centers.vue'), meta: { requiresSuperAdmin: true } },

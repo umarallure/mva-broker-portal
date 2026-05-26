@@ -5,7 +5,7 @@ import type { DropdownMenuItem } from '@nuxt/ui'
 // import { useDashboard } from '../composables/useDashboard'
 import { useAuth } from '../composables/useAuth'
 import { supabase } from '../lib/supabase'
-import { listInvoices, type InvoiceRow, type InvoiceStatus } from '../lib/invoices'
+import { listInvoices, type InvoiceRow, type InvoiceStatus, type InvoiceType } from '../lib/invoices'
 import { listOrdersForLawyer, type OrderRow } from '../lib/orders'
 import DashboardMetricCard from '../components/dashboard/DashboardMetricCard.vue'
 import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
@@ -50,6 +50,7 @@ type InvoiceRowWithLawyerName = InvoiceRow & { lawyer_name?: string | null }
 
 const retainers = ref<RetainerRow[]>([])
 const retainerCount = ref(0)
+const approvedRetainerCount = ref(0)
 
 const orders = ref<OrderRow[]>([])
 const orderCount = ref(0)
@@ -63,7 +64,7 @@ type DashboardInvoiceStage = 'billable' | 'pending' | 'paid' | 'chargeback'
 const getDashboardInvoiceStage = (status: InvoiceStatus): DashboardInvoiceStage => {
   if (status === 'paid') return 'paid'
   if (status === 'chargeback') return 'chargeback'
-  if (status === 'in_review' || status === 'signed_awaiting' || status === 'in_preview') return 'pending'
+  if (status === 'pending' || status === 'in_review' || status === 'signed_awaiting' || status === 'in_preview') return 'pending'
   return 'billable'
 }
 
@@ -89,7 +90,7 @@ const pendingInvoiceAmount = computed(() => dashboardInvoiceStageSummary.value.p
 const paidInvoiceAmount = computed(() => dashboardInvoiceStageSummary.value.paid.amount)
 const pendingReviewInvoiceCount = computed(() => dashboardInvoiceStageSummary.value.pending.count)
 
-const fulfillmentPercent = computed(() => {
+const orderProgressPercent = computed(() => {
   if (!orderQuotaTotal.value) return 0
   return Math.round((orderQuotaFilled.value / orderQuotaTotal.value) * 100)
 })
@@ -159,6 +160,9 @@ const getStatusLabel = (status: InvoiceStatus) => {
 
 const getRetainerStatusStyle = (status: string | null) => {
   const s = (status ?? '').toLowerCase()
+  if (s === 'attorney_review') return 'bg-amber-500/10 text-amber-400'
+  if (s === 'attorney_approved') return 'bg-green-500/10 text-green-400'
+  if (s === 'attorney_rejected') return 'bg-red-500/10 text-red-400'
   if (s.includes('sign')) return 'bg-green-500/10 text-green-400'
   if (s.includes('drop') || s.includes('cancel')) return 'bg-red-500/10 text-red-400'
   if (s.includes('return') || s.includes('back')) return 'bg-blue-500/10 text-blue-400'
@@ -166,9 +170,12 @@ const getRetainerStatusStyle = (status: string | null) => {
   return 'bg-[var(--ap-card-divide)] text-muted'
 }
 
-const getFulfillmentRetainerStatusLabel = (status: string | null) => {
+const getRetainerOutcomeStatusLabel = (status: string | null) => {
   const s = String(status ?? '').trim().toLowerCase()
   if (!s) return null
+  if (s === 'attorney_review') return 'Sent Retainers'
+  if (s === 'attorney_approved') return 'Approved Retainers'
+  if (s === 'attorney_rejected') return 'Rejected Retainers'
   if (s.includes('sign')) return 'Signed Retainers'
   if (s.includes('success') || s.includes('qualified') || s.includes('won')) return 'Successful Cases'
   if (s.includes('drop') || s.includes('dropped') || s.includes('cancel')) return 'Dropped Retainers'
@@ -203,74 +210,148 @@ const load = async () => {
     const userId = auth.state.value.profile?.user_id ?? null
     const role = auth.state.value.profile?.role ?? null
 
-    // For lawyers, build name keywords for fallback matching
-    let nameKeywords: string[] = []
-    if (role === 'lawyer' && userId) {
-      const { data: attorneyProfile } = await supabase
-        .from('attorney_profiles')
-        .select('full_name')
-        .eq('user_id', userId)
-        .maybeSingle()
+    if (role === 'broker') {
+      type LeadRetainerRow = {
+        id: string
+        submission_id: string
+        customer_full_name: string | null
+        phone_number: string | null
+        lead_vendor: string | null
+        status: string | null
+        created_at: string | null
+        assigned_broker_attorney_id: string | null
+      }
 
-      const fullName = attorneyProfile?.full_name?.trim() || null
-      const displayName = auth.state.value.profile?.display_name?.trim() || null
-      const email = auth.state.value.profile?.email || null
-      const emailName = email ? email.split('@')[0].replace(/[^a-zA-Z]/g, ' ').trim() : null
+      if (!userId) {
+        retainers.value = []
+        retainerCount.value = 0
+        approvedRetainerCount.value = 0
+      } else {
+        const { data: brokerAttorneyRows, error: brokerAttorneyError } = await supabase
+          .from('broker_attorneys')
+          .select('id')
+          .eq('broker_id', userId)
 
-      const rawName = fullName || displayName || emailName || ''
-      nameKeywords = rawName
-        .split(/[\s\-_]+/)
-        .map((w: string) => w.trim().toLowerCase())
-        .filter((w: string) => w.length >= 3)
-    }
+        if (brokerAttorneyError) throw brokerAttorneyError
 
-    const retainerSelect = 'id,submission_id,insured_name,client_phone_number,lead_vendor,date,status,assigned_attorney_id,submitted_attorney,created_at,invoice_id'
+        const brokerAttorneyIds = ((brokerAttorneyRows ?? []) as Array<{ id: string | null }>)
+          .map(row => row.id)
+          .filter((id): id is string => Boolean(id))
 
-    let retainerData: RetainerRow[] | null = null
-    let rCount: number | null = 0
+        if (brokerAttorneyIds.length === 0) {
+          retainers.value = []
+          retainerCount.value = 0
+          approvedRetainerCount.value = 0
+        } else {
+          const { count: sentCount } = await supabase
+            .from('leads')
+            .select('id', { count: 'exact', head: true })
+            .eq('is_active', true)
+            .eq('status', 'attorney_review')
+            .in('assigned_broker_attorney_id', brokerAttorneyIds)
 
-    if (role === 'lawyer' && userId) {
-      // First try by assigned_attorney_id
-      const { data: byId, count: byIdCount } = await supabase
-        .from('daily_deal_flow')
-        .select(retainerSelect, { count: 'exact' })
-        .eq('assigned_attorney_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(5)
+          const { count: approvedCount } = await supabase
+            .from('leads')
+            .select('id', { count: 'exact', head: true })
+            .eq('is_active', true)
+            .eq('status', 'attorney_approved')
+            .in('assigned_broker_attorney_id', brokerAttorneyIds)
 
-      retainerData = byId
-      rCount = byIdCount
+          const { data: leadRows } = await supabase
+            .from('leads')
+            .select('id,submission_id,customer_full_name,phone_number,lead_vendor,status,created_at,assigned_broker_attorney_id')
+            .eq('is_active', true)
+            .in('status', ['attorney_review', 'attorney_approved', 'attorney_rejected', 'qualified_payable'])
+            .in('assigned_broker_attorney_id', brokerAttorneyIds)
+            .order('created_at', { ascending: false })
+            .limit(5)
 
-      // Fallback: match by any name keyword in submitted_attorney
-      if ((!retainerData || retainerData.length === 0) && nameKeywords.length > 0) {
-        const orFilter = nameKeywords
-          .map((kw: string) => `submitted_attorney.ilike.%${kw}%`)
-          .join(',')
+          retainers.value = ((leadRows ?? []) as LeadRetainerRow[]).map(row => ({
+            id: row.id,
+            submission_id: row.submission_id,
+            insured_name: row.customer_full_name,
+            client_phone_number: row.phone_number,
+            lead_vendor: row.lead_vendor,
+            date: row.created_at,
+            status: row.status,
+            assigned_attorney_id: null,
+            created_at: row.created_at,
+            invoice_id: null
+          }))
+          retainerCount.value = sentCount ?? 0
+          approvedRetainerCount.value = approvedCount ?? 0
+        }
+      }
+    } else {
+      approvedRetainerCount.value = 0
 
-        const { data: byName, count: byNameCount } = await supabase
+      // For lawyers, build name keywords for fallback matching
+      let nameKeywords: string[] = []
+      if (role === 'lawyer' && userId) {
+        const { data: attorneyProfile } = await supabase
+          .from('attorney_profiles')
+          .select('full_name')
+          .eq('user_id', userId)
+          .maybeSingle()
+
+        const fullName = attorneyProfile?.full_name?.trim() || null
+        const displayName = auth.state.value.profile?.display_name?.trim() || null
+        const email = auth.state.value.profile?.email || null
+        const emailName = email ? email.split('@')[0].replace(/[^a-zA-Z]/g, ' ').trim() : null
+
+        const rawName = fullName || displayName || emailName || ''
+        nameKeywords = rawName
+          .split(/[\s\-_]+/)
+          .map((w: string) => w.trim().toLowerCase())
+          .filter((w: string) => w.length >= 3)
+      }
+
+      const retainerSelect = 'id,submission_id,insured_name,client_phone_number,lead_vendor,date,status,assigned_attorney_id,submitted_attorney,created_at,invoice_id'
+
+      let retainerData: RetainerRow[] | null = null
+      let rCount: number | null = 0
+
+      if (role === 'lawyer' && userId) {
+        const { data: byId, count: byIdCount } = await supabase
           .from('daily_deal_flow')
           .select(retainerSelect, { count: 'exact' })
-          .or(orFilter)
+          .eq('assigned_attorney_id', userId)
           .order('created_at', { ascending: false })
           .limit(5)
 
-        retainerData = byName
-        rCount = byNameCount
+        retainerData = byId
+        rCount = byIdCount
+
+        if ((!retainerData || retainerData.length === 0) && nameKeywords.length > 0) {
+          const orFilter = nameKeywords
+            .map((kw: string) => `submitted_attorney.ilike.%${kw}%`)
+            .join(',')
+
+          const { data: byName, count: byNameCount } = await supabase
+            .from('daily_deal_flow')
+            .select(retainerSelect, { count: 'exact' })
+            .or(orFilter)
+            .order('created_at', { ascending: false })
+            .limit(5)
+
+          retainerData = byName
+          rCount = byNameCount
+        }
+      } else {
+        const { data, count } = await supabase
+          .from('daily_deal_flow')
+          .select(retainerSelect, { count: 'exact' })
+          .order('created_at', { ascending: false })
+          .limit(5)
+
+        retainerData = data
+        rCount = count
       }
-    } else {
-      const { data, count } = await supabase
-        .from('daily_deal_flow')
-        .select(retainerSelect, { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .limit(5)
-
-      retainerData = data
-      rCount = count
+      retainers.value = (retainerData ?? []) as RetainerRow[]
+      retainerCount.value = rCount ?? 0
     }
-    retainers.value = (retainerData ?? []) as RetainerRow[]
-    retainerCount.value = rCount ?? 0
 
-    if (userId) {
+    if (userId && role !== 'broker') {
       const ordersData = await listOrdersForLawyer({ lawyerId: userId })
       orders.value = ordersData.slice(0, 5)
       orderCount.value = ordersData.length
@@ -283,11 +364,14 @@ const load = async () => {
       orderQuotaFilled.value = 0
     }
 
-    const invFilters: { lawyer_id?: string; status?: InvoiceStatus; invoice_type?: 'lawyer' | 'publisher' } = {
-      invoice_type: 'lawyer'
+    const invFilters: { lawyer_id?: string; broker_id?: string; status?: InvoiceStatus; invoice_type?: InvoiceType } = {
+      invoice_type: role === 'broker' ? 'broker' : 'lawyer'
     }
     if (role === 'lawyer' && userId) {
       invFilters.lawyer_id = userId
+    }
+    if (role === 'broker' && userId) {
+      invFilters.broker_id = userId
     }
     const invData = (await listInvoices(invFilters)) as InvoiceRowWithLawyerName[]
 
@@ -444,7 +528,7 @@ const invoiceStatusBreakdown = computed(() => {
   ]
 })
 
-// Fulfillment stats
+// Order progress stats
 const totalQuota = computed(() => orderQuotaTotal.value)
 const filledQuota = computed(() => orderQuotaFilled.value)
 
@@ -514,7 +598,7 @@ const showMonthGrowth = computed(() =>
         <div class="grid grid-cols-2 gap-4 lg:grid-cols-4 kpi-strip">
           <div class="ap-fade-in">
             <DashboardMetricCard
-              title="Retainers"
+              title="Sent Retainers"
               :value="retainerCount"
               icon="i-lucide-briefcase"
               accent="orange-light"
@@ -527,29 +611,52 @@ const showMonthGrowth = computed(() =>
             >
               <div class="mt-3 flex items-center gap-1.5 text-xs text-muted">
                 <UIcon name="i-lucide-arrow-right" class="text-[10px] transition-transform duration-200 group-hover:translate-x-0.5" />
-                <span class="group-hover:text-orange-400 transition-colors">View all retainers</span>
+                <span class="group-hover:text-orange-400 transition-colors">View sent retainers</span>
               </div>
             </DashboardMetricCard>
           </div>
 
           <div class="ap-fade-in ap-delay-1">
             <DashboardMetricCard
-              title="Active Orders"
-              :value="orderCount"
-              icon="i-lucide-shopping-cart"
+              title="Approved Retainers"
+              :value="approvedRetainerCount"
+              icon="i-lucide-badge-check"
               accent="blue"
               :loading="loading"
-              :progress="fulfillmentPercent"
-              progress-label="Fulfillment"
               :hint-title="dashboardHints.activeOrdersCard.title"
               :hint-description="dashboardHints.activeOrdersCard.description"
               :hint-guide-target="dashboardHints.activeOrdersCard.guideTarget"
               clickable
-              @click="router.push('/fulfillment')"
-            />
+              @click="router.push('/retainers')"
+            >
+              <div class="mt-3 flex items-center gap-1.5 text-xs text-muted">
+                <UIcon name="i-lucide-arrow-right" class="text-[10px] transition-transform duration-200 group-hover:translate-x-0.5" />
+                <span class="group-hover:text-blue-400 transition-colors">View approved retainers</span>
+              </div>
+            </DashboardMetricCard>
           </div>
 
           <div class="ap-fade-in ap-delay-2">
+            <DashboardMetricCard
+              title="Pending Payment"
+              :value="formatMoney(pendingInvoiceAmount)"
+              icon="i-lucide-clock"
+              accent="amber"
+              :loading="loading"
+              :hint-title="dashboardHints.pendingInvoicesCard.title"
+              :hint-description="dashboardHints.pendingInvoicesCard.description"
+              :hint-guide-target="dashboardHints.pendingInvoicesCard.guideTarget"
+              clickable
+              @click="router.push('/invoicing')"
+            >
+              <div class="mt-3 flex items-center gap-1.5 text-xs text-muted">
+                <UIcon name="i-lucide-arrow-right" class="text-[10px] transition-transform duration-200 group-hover:translate-x-0.5" />
+                <span class="group-hover:text-amber-400 transition-colors">{{ pendingReviewInvoiceCount }} invoices pending</span>
+              </div>
+            </DashboardMetricCard>
+          </div>
+
+          <div class="ap-fade-in ap-delay-3">
             <DashboardMetricCard
               title="Total Invoiced"
               :value="formatMoney(totalInvoiced)"
@@ -564,28 +671,8 @@ const showMonthGrowth = computed(() =>
             >
               <div class="mt-3 flex items-center gap-3 text-xs">
                 <span class="text-green-500 dark:text-green-400">{{ formatMoney(paidInvoiceAmount) }} paid</span>
-                <span class="text-muted">·</span>
+                <span class="text-muted">-</span>
                 <span class="text-amber-500 dark:text-amber-400">{{ formatMoney(pendingInvoiceAmount) }} pending</span>
-              </div>
-            </DashboardMetricCard>
-          </div>
-
-          <div class="ap-fade-in ap-delay-3">
-            <DashboardMetricCard
-              title="Pending Invoices"
-              :value="pendingReviewInvoiceCount"
-              icon="i-lucide-clock"
-              accent="amber"
-              :loading="loading"
-              :hint-title="dashboardHints.pendingInvoicesCard.title"
-              :hint-description="dashboardHints.pendingInvoicesCard.description"
-              :hint-guide-target="dashboardHints.pendingInvoicesCard.guideTarget"
-              clickable
-              @click="router.push('/invoicing')"
-            >
-              <div class="mt-3 flex items-center gap-1.5 text-xs text-muted">
-                <UIcon name="i-lucide-arrow-right" class="text-[10px] transition-transform duration-200 group-hover:translate-x-0.5" />
-                <span class="group-hover:text-amber-400 transition-colors">Review invoices</span>
               </div>
             </DashboardMetricCard>
           </div>
@@ -817,16 +904,16 @@ const showMonthGrowth = computed(() =>
                 </div>
               </div>
 
-              <!-- Fulfillment summary -->
+              <!-- Order progress summary -->
               <div v-if="orders.length" class="mt-5 pt-4 border-t border-black/[0.06] dark:border-white/[0.06]">
                 <div class="flex items-center justify-between mb-2">
-                  <span class="text-xs text-muted">Order Fulfillment</span>
+                  <span class="text-xs text-muted">Order Progress</span>
                   <span class="text-xs font-semibold text-highlighted">{{ filledQuota }}/{{ totalQuota }}</span>
                 </div>
                 <div class="h-1.5 w-full overflow-hidden rounded-full bg-black/[0.06] dark:bg-white/[0.08]">
                   <div
                     class="h-full rounded-full bg-[var(--ap-accent)] transition-all duration-700 ease-out"
-                    :style="{ width: `${fulfillmentPercent}%` }"
+                    :style="{ width: `${orderProgressPercent}%` }"
                   />
                 </div>
               </div>
@@ -880,7 +967,7 @@ const showMonthGrowth = computed(() =>
               class="inline-flex items-center gap-1.5 rounded-lg border border-black/[0.06] dark:border-white/[0.08] bg-black/[0.02] dark:bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-muted transition-all hover:border-[var(--ap-accent)]/30 hover:bg-[var(--ap-accent)]/10 hover:text-[var(--ap-accent)]"
               @click="router.push(
                 activeWorkbenchTab === 'retainers' ? '/retainers'
-                : activeWorkbenchTab === 'orders' ? '/fulfillment'
+                : activeWorkbenchTab === 'orders' ? '/intake-map'
                   : '/invoicing'
               )"
             >
@@ -945,11 +1032,11 @@ const showMonthGrowth = computed(() =>
                           <div class="mt-0.5 flex flex-col items-start gap-1 text-[11px] text-muted sm:hidden">
                             <span class="tabular-nums">{{ formatPhone(row.client_phone_number) }}</span>
                             <span
-                              v-if="getFulfillmentRetainerStatusLabel(row.status)"
+                              v-if="getRetainerOutcomeStatusLabel(row.status)"
                               class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold"
-                              :class="getRetainerStatusStyle(getFulfillmentRetainerStatusLabel(row.status))"
+                              :class="getRetainerStatusStyle(getRetainerOutcomeStatusLabel(row.status))"
                             >
-                              {{ getFulfillmentRetainerStatusLabel(row.status) }}
+                              {{ getRetainerOutcomeStatusLabel(row.status) }}
                             </span>
                           </div>
                         </div>
@@ -960,11 +1047,11 @@ const showMonthGrowth = computed(() =>
                     </td>
                     <td class="hidden px-5 py-3 sm:table-cell">
                       <span
-                        v-if="getFulfillmentRetainerStatusLabel(row.status)"
+                        v-if="getRetainerOutcomeStatusLabel(row.status)"
                         class="inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-semibold"
-                        :class="getRetainerStatusStyle(getFulfillmentRetainerStatusLabel(row.status))"
+                        :class="getRetainerStatusStyle(getRetainerOutcomeStatusLabel(row.status))"
                       >
-                        {{ getFulfillmentRetainerStatusLabel(row.status) }}
+                        {{ getRetainerOutcomeStatusLabel(row.status) }}
                       </span>
                       <span v-else class="text-xs text-muted/40">—</span>
                     </td>

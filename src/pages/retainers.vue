@@ -6,20 +6,22 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../composables/useAuth'
 import { useDragGhost } from '../composables/useDragGhost'
 
-type LeadStatus = 'attorney_review' | 'attorney_approved' | 'attorney_rejected'
+type LeadStatus = 'attorney_review' | 'attorney_approved' | 'attorney_rejected' | 'qualified_payable'
 
-type StageKey = 'review' | 'approved' | 'rejected'
+type StageKey = 'review' | 'approved' | 'rejected' | 'billable'
 
 const STAGES: { key: StageKey, label: string, status: LeadStatus }[] = [
-  { key: 'review', label: 'My Cases', status: 'attorney_review' },
-  { key: 'approved', label: 'Approved', status: 'attorney_approved' },
-  { key: 'rejected', label: 'Rejected', status: 'attorney_rejected' }
+  { key: 'review', label: 'Sent Retainers', status: 'attorney_review' },
+  { key: 'approved', label: 'Approved by Attorney', status: 'attorney_approved' },
+  { key: 'rejected', label: 'Rejected by Attorney', status: 'attorney_rejected' },
+  { key: 'billable', label: 'Billable', status: 'qualified_payable' }
 ]
 
 const STATUS_TO_STAGE: Record<LeadStatus, StageKey> = {
   attorney_review: 'review',
   attorney_approved: 'approved',
-  attorney_rejected: 'rejected'
+  attorney_rejected: 'rejected',
+  qualified_payable: 'billable'
 }
 
 type LeadCard = {
@@ -47,7 +49,7 @@ type LeadRow = {
   status: string | null
   submission_date: string | null
   created_at: string | null
-  assigned_attorney_id: string | null
+  assigned_broker_attorney_id: string | null
 }
 
 const auth = useAuth()
@@ -122,7 +124,7 @@ const dragLeadId = ref<string | null>(null)
 const dragFromStage = ref<StageKey | null>(null)
 
 const isBrokerStatus = (s: string | null): s is LeadStatus =>
-  s === 'attorney_review' || s === 'attorney_approved' || s === 'attorney_rejected'
+  s === 'attorney_review' || s === 'attorney_approved' || s === 'attorney_rejected' || s === 'qualified_payable'
 
 const formatDate = (value: string | null) => {
   if (!value) return '—'
@@ -181,7 +183,7 @@ const coerceCard = (row: LeadRow, attorneyName: string): LeadCard | null => {
     status: row.status,
     stage: STATUS_TO_STAGE[row.status],
     leadVendor: row.lead_vendor ?? '—',
-    assignedAttorneyId: row.assigned_attorney_id,
+    assignedAttorneyId: row.assigned_broker_attorney_id,
     assignedAttorneyName: attorneyName
   }
 }
@@ -192,44 +194,88 @@ const load = async () => {
   try {
     await auth.init()
     const role = auth.state.value.profile?.role
+    const userId = auth.state.value.profile?.user_id ?? auth.state.value.user?.id ?? null
     if (role !== 'broker' && role !== 'super_admin') {
       leads.value = []
       return
     }
 
-    const { data, error } = await supabase
+    const attorneyNameById = new Map<string, string>()
+    let brokerAttorneyIds: string[] | null = null
+
+    if (role === 'broker') {
+      if (!userId) {
+        leads.value = []
+        return
+      }
+
+      const { data: ownedAttorneys, error: attorneyError } = await supabase
+        .from('broker_attorneys')
+        .select('id,attorney_name,firm_name')
+        .eq('broker_id', userId)
+        .order('attorney_name', { ascending: true })
+
+      if (attorneyError) throw attorneyError
+
+      brokerAttorneyIds = ((ownedAttorneys ?? []) as Array<{ id: string | null, attorney_name: string | null, firm_name: string | null }>)
+        .map((a) => {
+          const id = a.id
+          const name = [a.attorney_name, a.firm_name]
+            .map(value => value?.trim())
+            .filter(Boolean)
+            .join(' - ')
+          if (id && name) attorneyNameById.set(id, name)
+          return id
+        })
+        .filter((id): id is string => Boolean(id))
+
+      if (brokerAttorneyIds.length === 0) {
+        leads.value = []
+        return
+      }
+    }
+
+    let leadQuery = supabase
       .from('leads')
-      .select('id,submission_id,customer_full_name,phone_number,lead_vendor,state,status,submission_date,created_at,assigned_attorney_id')
-      .in('status', ['attorney_review', 'attorney_approved', 'attorney_rejected'])
+      .select('id,submission_id,customer_full_name,phone_number,lead_vendor,state,status,submission_date,created_at,assigned_broker_attorney_id')
+      .in('status', ['attorney_review', 'attorney_approved', 'attorney_rejected', 'qualified_payable'])
       .eq('is_active', true)
       .order('created_at', { ascending: false })
       .limit(2000)
 
+    if (brokerAttorneyIds) {
+      leadQuery = leadQuery.in('assigned_broker_attorney_id', brokerAttorneyIds)
+    }
+
+    const { data, error } = await leadQuery
     if (error) throw error
 
     const rows = (data ?? []) as LeadRow[]
-    const attorneyIds = [...new Set(
-      rows.map(r => r.assigned_attorney_id).filter((id): id is string => Boolean(id))
-    )]
+    if (role === 'super_admin') {
+      const attorneyIds = [...new Set(
+        rows.map(r => r.assigned_broker_attorney_id).filter((id): id is string => Boolean(id))
+      )]
+      if (attorneyIds.length > 0) {
+        const { data: attorneys } = await supabase
+          .from('broker_attorneys')
+          .select('id,attorney_name,firm_name')
+          .in('id', attorneyIds)
 
-    const attorneyNameById = new Map<string, string>()
-    if (attorneyIds.length > 0) {
-      const { data: attorneys } = await supabase
-        .from('attorney_profiles')
-        .select('user_id,full_name')
-        .in('user_id', attorneyIds)
-
-      for (const a of (attorneys ?? []) as Array<{ user_id: string | null, full_name: string | null }>) {
-        const id = a.user_id
-        const name = (a.full_name ?? '').trim()
-        if (id && name) attorneyNameById.set(id, name)
+        for (const a of (attorneys ?? []) as Array<{ id: string | null, attorney_name: string | null, firm_name: string | null }>) {
+          const id = a.id
+          const name = [a.attorney_name, a.firm_name]
+            .map(value => value?.trim())
+            .filter(Boolean)
+            .join(' - ')
+          if (id && name) attorneyNameById.set(id, name)
+        }
       }
     }
 
     const cards: LeadCard[] = []
     for (const row of rows) {
-      const name = row.assigned_attorney_id
-        ? (attorneyNameById.get(row.assigned_attorney_id) ?? 'Unknown attorney')
+      const name = row.assigned_broker_attorney_id
+        ? (attorneyNameById.get(row.assigned_broker_attorney_id) ?? 'Unknown attorney')
         : '—'
       const card = coerceCard(row, name)
       if (card) cards.push(card)
@@ -330,6 +376,7 @@ const stageHeaderBg = (key: StageKey) => {
     case 'review': return 'bg-gradient-to-r from-blue-500/[0.10] via-blue-500/[0.04] to-transparent dark:from-blue-400/[0.14] dark:via-blue-400/[0.06] dark:to-transparent'
     case 'approved': return 'bg-gradient-to-r from-green-500/[0.10] via-green-500/[0.04] to-transparent dark:from-green-400/[0.14] dark:via-green-400/[0.06] dark:to-transparent'
     case 'rejected': return 'bg-gradient-to-r from-red-500/[0.10] via-red-500/[0.04] to-transparent dark:from-red-400/[0.14] dark:via-red-400/[0.06] dark:to-transparent'
+    case 'billable': return 'bg-gradient-to-r from-amber-500/[0.10] via-amber-500/[0.04] to-transparent dark:from-amber-400/[0.14] dark:via-amber-400/[0.06] dark:to-transparent'
   }
 }
 
@@ -338,6 +385,7 @@ const stageBgClass = (key: StageKey) => {
     case 'review': return 'bg-blue-500/10'
     case 'approved': return 'bg-green-500/10'
     case 'rejected': return 'bg-red-500/10'
+    case 'billable': return 'bg-amber-500/10'
   }
 }
 
@@ -346,6 +394,7 @@ const stageIcon = (key: StageKey) => {
     case 'review': return 'i-lucide-user-plus'
     case 'approved': return 'i-lucide-check-circle'
     case 'rejected': return 'i-lucide-x-circle'
+    case 'billable': return 'i-lucide-receipt'
   }
 }
 
@@ -354,6 +403,7 @@ const stageIconClass = (key: StageKey) => {
     case 'review': return 'text-blue-400'
     case 'approved': return 'text-green-400'
     case 'rejected': return 'text-red-400'
+    case 'billable': return 'text-amber-400'
   }
 }
 
@@ -365,6 +415,8 @@ const stageCardAccentStyle = (key: StageKey) => {
       return { '--ap-accent': '#4ade80', '--ap-accent-rgb': '74 222 128' }
     case 'rejected':
       return { '--ap-accent': '#f87171', '--ap-accent-rgb': '248 113 113' }
+    case 'billable':
+      return { '--ap-accent': '#f59e0b', '--ap-accent-rgb': '245 158 11' }
   }
 }
 
@@ -450,6 +502,7 @@ const leadsByStage = computed(() => {
 const reviewCount = computed(() => (leadsByStage.value.get('review') ?? []).length)
 const approvedCount = computed(() => (leadsByStage.value.get('approved') ?? []).length)
 const rejectedCount = computed(() => (leadsByStage.value.get('rejected') ?? []).length)
+const billableCount = computed(() => (leadsByStage.value.get('billable') ?? []).length)
 
 const { startDrag, endDrag } = useDragGhost()
 
@@ -639,7 +692,7 @@ const confirmMove = async () => {
         </UModal>
 
         <!-- Stat Cards -->
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div class="ap-fade-in group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
             <div class="absolute inset-y-0 left-0 w-1 bg-blue-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
@@ -678,10 +731,23 @@ const confirmMove = async () => {
               </div>
             </div>
           </div>
+
+          <div class="ap-fade-in ap-delay-3 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
+            <div class="absolute inset-y-0 left-0 w-1 bg-amber-400" />
+            <div class="flex items-center justify-between px-5 py-4 pl-5">
+              <div>
+                <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">Billable</p>
+                <p class="mt-1 text-2xl font-bold text-amber-500 dark:text-amber-400 tabular-nums">{{ billableCount }}</p>
+              </div>
+              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
+                <UIcon name="i-lucide-receipt" class="text-lg text-amber-400" />
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Filters -->
-        <div class="ap-fade-in ap-delay-3 overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
+        <div class="ap-fade-in ap-delay-4 overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
           <div class="flex flex-wrap items-center gap-3 px-5 py-3">
             <div class="flex flex-wrap items-center gap-3 min-w-0">
               <UInput

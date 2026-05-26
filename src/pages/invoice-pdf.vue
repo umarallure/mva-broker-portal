@@ -36,19 +36,31 @@ const vendorInfo = ref<{
   contact_email: string | null
 } | null>(null)
 
+const brokerInfo = ref<{
+  full_name: string | null
+  company_name: string | null
+  primary_email: string | null
+  direct_phone: string | null
+  office_address: string | null
+} | null>(null)
+
 const isPublisherInvoice = computed(() => invoice.value?.invoice_type === 'publisher')
+const isBrokerInvoice = computed(() => invoice.value?.invoice_type === 'broker')
 
 const billToName = computed(() => {
+  if (isBrokerInvoice.value) return brokerInfo.value?.company_name ?? brokerInfo.value?.full_name ?? '-'
   if (isPublisherInvoice.value) return vendorInfo.value?.center_name ?? vendorInfo.value?.lead_vendor ?? '—'
   return lawyerName.value
 })
 
 const billToSubName = computed(() => {
+  if (isBrokerInvoice.value) return brokerInfo.value?.full_name ?? null
   if (isPublisherInvoice.value) return vendorInfo.value?.lead_vendor ?? null
   return lawyerInfo.value?.firm_name ?? null
 })
 
 const billToEmail = computed(() => {
+  if (isBrokerInvoice.value) return brokerInfo.value?.primary_email ?? '-'
   if (isPublisherInvoice.value) return vendorInfo.value?.contact_email ?? '—'
   return lawyerEmail.value
 })
@@ -175,6 +187,20 @@ onMounted(async () => {
         center_name: center.center_name ?? null,
         lead_vendor: center.lead_vendor ?? null,
         contact_email: center.contact_email ?? null
+      } : null
+    } else if (inv.invoice_type === 'broker' && inv.broker_id) {
+      const { data: broker } = await supabase
+        .from('broker_profiles')
+        .select('full_name,company_name,primary_email,direct_phone,office_address')
+        .eq('user_id', inv.broker_id)
+        .maybeSingle()
+
+      brokerInfo.value = broker ? {
+        full_name: broker.full_name ?? null,
+        company_name: broker.company_name ?? null,
+        primary_email: broker.primary_email ?? null,
+        direct_phone: broker.direct_phone ?? null,
+        office_address: broker.office_address ?? null
       } : null
     } else if (inv.lawyer_id) {
       try {

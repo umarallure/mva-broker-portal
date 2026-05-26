@@ -9,7 +9,7 @@ export type InvoiceItem = {
   amount: number
 }
 
-export type InvoiceType = 'lawyer' | 'publisher'
+export type InvoiceType = 'lawyer' | 'publisher' | 'broker'
 
 export type DealPaymentStatus =
   | 'attorney_payment_in_review'
@@ -23,6 +23,7 @@ export type InvoiceRow = {
   invoice_number: string
   lawyer_id: string | null
   lead_vendor_id: string | null
+  broker_id: string | null
   invoice_type: InvoiceType
   created_by: string
   date_range_start: string
@@ -52,7 +53,7 @@ export type InvoiceWithVendor = InvoiceRow & {
   vendor_contact_email?: string | null
 }
 
-const INVOICE_COLUMNS = 'id,invoice_number,lawyer_id,lead_vendor_id,invoice_type,created_by,date_range_start,date_range_end,deal_ids,items,subtotal,tax_rate,tax_amount,total_amount,status,notes,due_date,created_at,updated_at'
+const INVOICE_COLUMNS = 'id,invoice_number,lawyer_id,lead_vendor_id,broker_id,invoice_type,created_by,date_range_start,date_range_end,deal_ids,items,subtotal,tax_rate,tax_amount,total_amount,status,notes,due_date,created_at,updated_at'
 
 export async function generateInvoiceNumber(): Promise<string> {
   const year = new Date().getFullYear()
@@ -71,6 +72,7 @@ export async function createInvoice(input: {
   invoice_number: string
   lawyer_id?: string | null
   lead_vendor_id?: string | null
+  broker_id?: string | null
   invoice_type?: InvoiceType
   created_by: string
   date_range_start: string
@@ -91,6 +93,7 @@ export async function createInvoice(input: {
       invoice_number: input.invoice_number,
       lawyer_id: input.lawyer_id ?? null,
       lead_vendor_id: input.lead_vendor_id ?? null,
+      broker_id: input.broker_id ?? null,
       invoice_type: input.invoice_type ?? 'lawyer',
       created_by: input.created_by,
       date_range_start: input.date_range_start,
@@ -117,6 +120,7 @@ export async function updateInvoice(
   input: Partial<{
     lawyer_id: string | null
     lead_vendor_id: string | null
+    broker_id: string | null
     invoice_type: InvoiceType
     date_range_start: string
     date_range_end: string
@@ -155,6 +159,7 @@ export async function getInvoice(invoiceId: string): Promise<InvoiceRow | null> 
 
 export async function listInvoices(filters?: {
   lawyer_id?: string
+  broker_id?: string
   status?: InvoiceStatus
   invoice_type?: InvoiceType
 }): Promise<InvoiceRow[]> {
@@ -165,6 +170,10 @@ export async function listInvoices(filters?: {
 
   if (filters?.lawyer_id) {
     qb = qb.eq('lawyer_id', filters.lawyer_id)
+  }
+
+  if (filters?.broker_id) {
+    qb = qb.eq('broker_id', filters.broker_id)
   }
 
   if (filters?.status) {

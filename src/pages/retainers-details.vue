@@ -12,6 +12,7 @@ type DailyDealFlow = Record<string, unknown> & {
   insured_name?: string | null
   client_phone_number?: string | null
   assigned_attorney_id?: string | null
+  assigned_broker_attorney_id?: string | null
   lead_vendor?: string | null
   invoice_id?: string | null
   publisher_invoice_id?: string | null
@@ -100,6 +101,18 @@ const goBack = () => {
   router.push('/retainers')
 }
 
+const toLeadDetailRow = (lead: AnyRow): DailyDealFlow => {
+  const name = lead.customer_full_name ?? lead.insured_name ?? null
+  const phone = lead.phone_number ?? lead.client_phone_number ?? null
+
+  return {
+    ...lead,
+    insured_name: name ? String(name) : null,
+    client_phone_number: phone ? String(phone) : null,
+    submission_id: String(lead.submission_id ?? '')
+  } as DailyDealFlow
+}
+
 const load = async () => {
   loading.value = true
   error.value = null
@@ -109,6 +122,44 @@ const load = async () => {
 
     const userId = auth.state.value.profile?.user_id
     const userRole = auth.state.value.profile?.role
+
+    if (userRole === 'broker' && userId) {
+      const { data: brokerAttorneyRows, error: brokerAttorneyError } = await supabase
+        .from('broker_attorneys')
+        .select('id')
+        .eq('broker_id', userId)
+
+      if (brokerAttorneyError) throw brokerAttorneyError
+
+      const brokerAttorneyIds = ((brokerAttorneyRows ?? []) as Array<{ id: string | null }>)
+        .map(row => row.id)
+        .filter((attorneyId): attorneyId is string => Boolean(attorneyId))
+
+      if (brokerAttorneyIds.length === 0) {
+        error.value = 'Lead not found'
+        row.value = null
+        return
+      }
+
+      const { data: leadRow, error: leadErr } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('id', id.value)
+        .eq('is_active', true)
+        .in('assigned_broker_attorney_id', brokerAttorneyIds)
+        .maybeSingle()
+
+      if (leadErr) throw leadErr
+
+      if (!leadRow) {
+        error.value = 'Lead not found'
+        row.value = null
+        return
+      }
+
+      row.value = toLeadDetailRow((leadRow ?? {}) as AnyRow)
+      return
+    }
 
     // For lawyers, build name keywords for fallback matching
     let nameKeywords: string[] = []
@@ -231,16 +282,7 @@ const load = async () => {
         return
       }
 
-      const lead = (leadRow ?? {}) as AnyRow
-      const name = lead.customer_full_name ?? lead.insured_name ?? null
-      const phone = lead.phone_number ?? lead.client_phone_number ?? null
-
-      row.value = {
-        ...lead,
-        insured_name: name ? String(name) : null,
-        client_phone_number: phone ? String(phone) : null,
-        submission_id: String(lead.submission_id ?? '')
-      } as DailyDealFlow
+      row.value = toLeadDetailRow((leadRow ?? {}) as AnyRow)
     } else {
       row.value = data as DailyDealFlow
     }

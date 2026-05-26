@@ -7,7 +7,7 @@ import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
 import { useAuth } from '../composables/useAuth'
 import { useDragGhost } from '../composables/useDragGhost'
 import { productGuideHints } from '../data/product-guide-hints'
-import { deleteInvoice, listInvoices, markInvoiceAsPaid, requestChargeback, updateInvoice, type InvoiceRow, type InvoiceStatus } from '../lib/invoices'
+import { deleteInvoice, listInvoices, markInvoiceAsPaid, requestChargeback, updateInvoice, type InvoiceRow, type InvoiceStatus, type InvoiceType } from '../lib/invoices'
 import { supabase } from '../lib/supabase'
 
 type ViewMode = 'kanban' | 'list'
@@ -221,9 +221,9 @@ const statusFilterItems = computed(() =>
     : [
         { label: 'All Statuses', value: 'all' },
         { label: 'Billable (Approved)', value: 'pending' },
-        { label: 'Pending', value: 'in_review' },
-        { label: 'Paid (Successful Invoice)', value: 'paid' },
-        { label: 'Chargeback (14 Days Period)', value: 'chargeback' }
+        { label: 'Pending Payment', value: 'in_review' },
+        { label: 'Paid Successfully', value: 'paid' },
+        { label: 'Dropped', value: 'chargeback' }
       ]
 )
 
@@ -414,8 +414,8 @@ const pagedRows = computed(() => {
   return filteredInvoices.value.slice(start, start + PAGE_SIZE)
 })
 
-const PUBLISHER_KANBAN_STATUSES: InvoiceStatus[] = ['pending', 'in_review', 'paid', 'chargeback']
-const LAWYER_KANBAN_STATUSES: InvoiceStatus[] = ['pending', 'in_review', 'paid', 'chargeback']
+const PUBLISHER_KANBAN_STATUSES: InvoiceStatus[] = ['pending', 'chargeback', 'in_review', 'paid']
+const LAWYER_KANBAN_STATUSES: InvoiceStatus[] = ['pending', 'chargeback', 'in_review', 'paid']
 
 const kanbanStatuses = computed(() =>
   isPublisherMode.value ? PUBLISHER_KANBAN_STATUSES : LAWYER_KANBAN_STATUSES
@@ -437,7 +437,6 @@ const invoicesByStatus = computed(() => {
   return grouped
 })
 
-const totalAmount = computed(() => invoices.value.reduce((sum, inv) => sum + Number(inv.total_amount), 0))
 const billableAmount = computed(() => invoices.value
   .filter(inv => getDisplayStatus(inv) === 'pending')
   .reduce((sum, inv) => sum + Number(inv.total_amount), 0))
@@ -467,32 +466,22 @@ const formatDate = (value: string | null) => {
   }
 }
 
-const getInitials = (value: string | null | undefined) => {
-  const parts = String(value ?? '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-
-  if (parts.length === 0) return 'NA'
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-  return `${parts[0][0] ?? ''}${parts[1][0] ?? ''}`.toUpperCase()
-}
-
 const getStatusLabel = (status: InvoiceStatus) => {
   if (status === 'billable') return isPublisherMode.value ? 'Billable' : 'Billable (Approved)'
   if (status === 'pending') return isPublisherMode.value ? 'Billable – Awaiting to be Paid' : 'Billable (Approved)'
-  if (status === 'in_review') return isPublisherMode.value ? 'In Review' : 'Pending'
+  if (status === 'in_review') return isPublisherMode.value ? 'In Review' : 'Pending Payment'
   if (status === 'signed_awaiting') return 'Signed – Awaiting to be Paid'
   if (status === 'in_preview') return 'In Preview'
-  if (status === 'paid') return isPublisherMode.value ? 'Paid' : 'Paid (Successful Invoice)'
-  return isPublisherMode.value ? 'Chargeback' : 'Chargeback (14 Days Period)'
+  if (status === 'paid') return isPublisherMode.value ? 'Paid' : 'Paid Successfully'
+  return isPublisherMode.value ? 'Chargeback' : 'Dropped'
 }
 
 const getSummaryCardLabel = (status: InvoiceStatus) => {
   if (!isPublisherMode.value) {
     if (status === 'pending') return 'Billable'
-    if (status === 'paid') return 'Paid'
-    if (status === 'chargeback') return 'Chargeback'
+    if (status === 'in_review') return 'Pending Payment'
+    if (status === 'paid') return 'Paid Successfully'
+    if (status === 'chargeback') return 'Dropped'
   }
 
   return getStatusLabel(status)
@@ -666,9 +655,12 @@ const load = async () => {
     const userId = auth.state.value.user?.id ?? null
     const role = auth.state.value.profile?.role ?? null
 
-    const filters: { lawyer_id?: string; status?: InvoiceStatus; invoice_type?: 'lawyer' | 'publisher' } = {}
+    const filters: { lawyer_id?: string; broker_id?: string; status?: InvoiceStatus; invoice_type?: InvoiceType } = {}
 
-    if (isPublisherMode.value) {
+    if (role === 'broker' && userId) {
+      filters.invoice_type = 'broker'
+      filters.broker_id = userId
+    } else if (isPublisherMode.value) {
       filters.invoice_type = 'publisher'
     } else {
       filters.invoice_type = 'lawyer'
@@ -686,6 +678,16 @@ const load = async () => {
     }
 
     const data = (await listInvoices(filters)) as InvoiceListRow[]
+
+    if (role === 'broker') {
+      qualifiedDeals.value = []
+      qualifiedDealCenterIdMap.value = new Map()
+      qualifiedDealVendorNameMap.value = new Map()
+      qualifiedDealLawyerNameMap.value = new Map()
+      dealStateMap.value = new Map()
+      invoices.value = data
+      return
+    }
 
     // Load Qualified/Payable leads for the Billable (pending) column
     let dealsQb = supabase
@@ -1098,28 +1100,8 @@ watch(pageCount, () => {
     <template #body>
       <div class="flex h-full min-h-0 flex-col gap-5">
         <!-- Stats Cards -->
-        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <div class="ap-fade-in group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
-            <div class="absolute inset-y-0 left-0 w-1 bg-orange-500 dark:bg-orange-600" />
-            <div class="flex items-center justify-between px-5 py-4 pl-5">
-              <div>
-                <div class="flex items-start gap-1.5">
-                  <p class="text-[10px] font-medium uppercase tracking-wider text-orange-500 dark:text-orange-600">Total Invoiced</p>
-                  <ProductGuideHint
-                    :title="invoicingHints.totalInvoicedCard.title"
-                    :description="invoicingHints.totalInvoicedCard.description"
-                    :guide-target="invoicingHints.totalInvoicedCard.guideTarget"
-                  />
-                </div>
-                <p class="mt-1 text-2xl font-bold text-highlighted tabular-nums">{{ formatMoney(totalAmount) }}</p>
-              </div>
-              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/10 dark:bg-orange-600/15">
-                <UIcon name="i-lucide-receipt" class="text-lg text-orange-500 dark:text-orange-600" />
-              </div>
-            </div>
-          </div>
-
-          <div class="ap-fade-in ap-delay-1 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
             <div class="absolute inset-y-0 left-0 w-1 bg-blue-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
@@ -1135,6 +1117,26 @@ watch(pageCount, () => {
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
                 <UIcon name="i-lucide-file-check" class="text-lg text-blue-400" />
+              </div>
+            </div>
+          </div>
+
+          <div class="ap-fade-in ap-delay-1 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
+            <div class="absolute inset-y-0 left-0 w-1 bg-red-400" />
+            <div class="flex items-center justify-between px-5 py-4 pl-5">
+              <div>
+                <div class="flex items-start gap-1.5">
+                  <p class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">{{ getSummaryCardLabel('chargeback') }}</p>
+                  <ProductGuideHint
+                    :title="invoicingHints.chargebackCard.title"
+                    :description="invoicingHints.chargebackCard.description"
+                    :guide-target="invoicingHints.chargebackCard.guideTarget"
+                  />
+                </div>
+                <p class="mt-1 text-2xl font-bold text-red-500 dark:text-red-400 tabular-nums">{{ formatMoney(chargebackAmount) }}</p>
+              </div>
+              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10">
+                <UIcon name="i-lucide-alert-circle" class="text-lg text-red-400" />
               </div>
             </div>
           </div>
@@ -1175,26 +1177,6 @@ watch(pageCount, () => {
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10">
                 <UIcon name="i-lucide-check-circle" class="text-lg text-green-400" />
-              </div>
-            </div>
-          </div>
-
-          <div class="ap-fade-in ap-delay-4 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
-            <div class="absolute inset-y-0 left-0 w-1 bg-red-400" />
-            <div class="flex items-center justify-between px-5 py-4 pl-5">
-              <div>
-                <div class="flex items-start gap-1.5">
-                  <p class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">{{ getSummaryCardLabel('chargeback') }}</p>
-                  <ProductGuideHint
-                    :title="invoicingHints.chargebackCard.title"
-                    :description="invoicingHints.chargebackCard.description"
-                    :guide-target="invoicingHints.chargebackCard.guideTarget"
-                  />
-                </div>
-                <p class="mt-1 text-2xl font-bold text-red-500 dark:text-red-400 tabular-nums">{{ formatMoney(chargebackAmount) }}</p>
-              </div>
-              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10">
-                <UIcon name="i-lucide-alert-circle" class="text-lg text-red-400" />
               </div>
             </div>
           </div>

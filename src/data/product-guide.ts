@@ -38,7 +38,7 @@ export const productGuideSections: GuideSection[] = [
         summary: 'Four KPI cards surface the most important operating numbers as soon as the page loads.',
         bullets: [
           'Retainers routes into My Cases from the dashboard.',
-          'Active Orders shows the current campaign count plus overall fulfillment progress.',
+          'Active Orders shows the current campaign count plus overall order progress.',
           'Total Invoiced splits paid dollars from pending dollars inside the card.',
           'Pending Invoices gives a fast count of invoice work that still needs review.'
         ],
@@ -51,7 +51,7 @@ export const productGuideSections: GuideSection[] = [
           {
             label: 'Active Orders card',
             icon: 'i-lucide-shopping-cart',
-            description: 'Summarizes open campaigns and displays fulfillment progress.'
+            description: 'Summarizes open campaigns and displays quota progress.'
           },
           {
             label: 'Total Invoiced card',
@@ -106,7 +106,7 @@ export const productGuideSections: GuideSection[] = [
           'Place New Order is always available and opens the Order Map create-order flow.',
           'Create Invoice appears only for admin and super-admin roles.',
           'Invoice Breakdown shows billable, pending, paid, and chargeback status totals.',
-          'Order Fulfillment summarizes filled quota across the current order set.'
+          'Order Progress summarizes filled quota across the current order set.'
         ],
         components: [
           {
@@ -130,7 +130,7 @@ export const productGuideSections: GuideSection[] = [
             description: 'Visualizes invoice volume across billable, pending, paid, and chargeback states.'
           },
           {
-            label: 'Order Fulfillment bar',
+            label: 'Order Progress bar',
             icon: 'i-lucide-chart-bar',
             description: 'Shows filled quota against total quota for active orders.'
           }
@@ -165,7 +165,7 @@ export const productGuideSections: GuideSection[] = [
           {
             label: 'See All action',
             icon: 'i-lucide-arrow-right',
-            description: 'Routes to My Cases, Fulfillment, or Invoicing based on the active tab.'
+            description: 'Routes to My Cases, Order Map, or Invoicing based on the active tab.'
           }
         ]
       }
@@ -185,7 +185,7 @@ export const productGuideSections: GuideSection[] = [
         summary: 'The map card pairs order totals with color-coded territory feedback so lawyers can judge coverage at a glance.',
         bullets: [
           'The stats overlay reports Total, Open, Pending, and Completed orders.',
-          'States turn green for open orders with no fills yet, yellow once fills begin, and red after fulfillment or expiry.',
+          'States turn green for open orders with no fills yet, yellow once fills begin, and red after completion or expiry.',
           'Legend states also cover unavailable territories and manually blocked states.',
           'Hover tooltips show open-order counts, your quota, expiry, and warnings about capacity or state limits.'
         ],
@@ -423,148 +423,8 @@ export const productGuideSections: GuideSection[] = [
     ]
   },
   {
-    id: 'fulfillment',
-    number: '04',
-    title: 'Fulfillment',
-    icon: 'i-lucide-package',
-    overview: 'Fulfillment tracks what happens after a retainer is signed. It helps firms watch return exposure, dropped matters, and successful outcomes across the orders they bought.',
-    highlights: ['Performance header', 'State/order/stage filters', 'Drag-and-drop outcome board'],
-    subsections: [
-      {
-        id: 'fulfillment-performance',
-        title: 'Fulfillment Performance Header',
-        summary: 'Five top cards summarize outcome quality across the order portfolio before the board is opened.',
-        bullets: [
-          'Total Orders counts the active campaigns currently feeding fulfillment.',
-          'Signed Retainers shows how many retained leads are in scope.',
-          'Returned Back highlights cases moved back during the 14-day window.',
-          'Dropped and Successful keep unsuccessful and durable outcomes visible side by side.'
-        ],
-        components: [
-          {
-            label: 'Total Orders',
-            icon: 'i-lucide-package',
-            description: 'Counts the campaigns represented in the fulfillment board.'
-          },
-          {
-            label: 'Signed Retainers',
-            icon: 'i-lucide-check-circle',
-            description: 'Shows how many retained leads are currently in scope.'
-          },
-          {
-            label: 'Returned Back',
-            icon: 'i-lucide-arrow-left-circle',
-            description: 'Tracks cases sent back during the 14-day return period.'
-          },
-          {
-            label: 'Dropped Retainers',
-            icon: 'i-lucide-x-circle',
-            description: 'Counts matters that did not progress successfully.'
-          },
-          {
-            label: 'Successful Cases',
-            icon: 'i-lucide-trophy',
-            description: 'Shows cases that cleared the return window and stayed valid.'
-          }
-        ]
-      },
-      {
-        id: 'fulfillment-filters',
-        title: 'Fulfillment Filters',
-        summary: 'The toolbar narrows the board by person, geography, order type, and outcome stage.',
-        bullets: [
-          'Search matches client name, phone number, ID, status, state, and case type.',
-          'State filtering supports a multi-select All States pattern.',
-          'Orders currently switches between All Orders, Consumer Cases, and Commercial Cases.',
-          'Stages filters the board to a specific fulfillment outcome when needed.'
-        ],
-        components: [
-          {
-            label: 'Search Leads',
-            icon: 'i-lucide-search',
-            description: 'Finds a lead quickly by name, phone, or related metadata.'
-          },
-          {
-            label: 'State filter',
-            icon: 'i-lucide-map-pinned',
-            description: 'Narrows the board to one or more geographies.'
-          },
-          {
-            label: 'Orders filter',
-            icon: 'i-lucide-clipboard-list',
-            description: 'Switches the board between all, consumer, and commercial order groups.'
-          },
-          {
-            label: 'Stages filter',
-            icon: 'i-lucide-columns-4',
-            description: 'Limits the visible cards to one fulfillment stage at a time.'
-          },
-          {
-            label: 'Reset all',
-            icon: 'i-lucide-rotate-ccw',
-            description: 'Clears every active fulfillment filter in one click.'
-          }
-        ]
-      },
-      {
-        id: 'fulfillment-pipeline',
-        title: 'Fulfillment Pipeline',
-        summary: 'The board shows how durable signed cases are by moving them through four fulfillment outcomes.',
-        bullets: [
-          'Columns are Signed Retainers, Returned Back, Dropped Retainers, and Successful Cases.',
-          'Cards show client name, phone, state, date, optional reason text, and signed date when present.',
-          'Drag and drop updates the case outcome directly from the board.',
-          'Empty columns show a No Retainers state so gaps are obvious immediately.'
-        ],
-        components: [
-          {
-            label: 'Signed Retainers lane',
-            icon: 'i-lucide-check-check',
-            description: 'The entry lane for retained leads still being monitored.'
-          },
-          {
-            label: 'Returned Back lane',
-            icon: 'i-lucide-undo-2',
-            description: 'Captures cases sent back during the refund or replacement window.'
-          },
-          {
-            label: 'Dropped Retainers lane',
-            icon: 'i-lucide-circle-off',
-            description: 'Separates signed but unsuccessful matters from successful ones.'
-          },
-          {
-            label: 'Successful Cases lane',
-            icon: 'i-lucide-award',
-            description: 'Highlights cases that held quality after review.'
-          },
-          {
-            label: 'Fulfillment card',
-            icon: 'i-lucide-contact',
-            description: 'Packages the client, state, date, and outcome context into one draggable record.'
-          }
-        ]
-      },
-      {
-        id: 'fulfillment-refresh',
-        title: 'Global Navigation and Refresh',
-        summary: 'Because fulfillment statuses can move quickly, refresh is the fastest way to trust the board again after new processing.',
-        bullets: [
-          'Refresh reloads counts and cards without leaving the page.',
-          'The header keeps the action available even while the rest of the board is in view.'
-        ],
-        components: [
-          {
-            label: 'Refresh button',
-            icon: 'i-lucide-refresh-cw',
-            description: 'Reloads the fulfillment metrics and board in place.'
-          }
-        ]
-      }
-    ]
-  },
-  {
     id: 'invoicing',
-    number: '05',
+    number: '04',
     title: 'Invoicing',
     icon: 'i-lucide-receipt',
     overview: 'Invoicing is the portal\'s financial ledger. It tracks what is ready to bill, what is pending payment, what has been paid, and what has moved into chargeback handling.',
@@ -720,7 +580,7 @@ export const productGuideSections: GuideSection[] = [
   },
   {
     id: 'product-offering',
-    number: '06',
+    number: '05',
     title: 'Product Offering',
     icon: 'i-lucide-tag',
     overview: 'Product Offering explains how the portal packages case inventory into pricing tiers. It helps firms compare lead quality signals before handing off into the ordering workflow.',

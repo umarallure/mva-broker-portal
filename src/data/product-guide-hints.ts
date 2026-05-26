@@ -15,7 +15,7 @@ export const productGuideHints = {
     },
     activeOrdersCard: {
       title: 'Active Orders',
-      description: 'Counts the firm\'s live orders and shows fulfillment progress against the total quota you purchased.',
+      description: 'Counts the firm\'s live orders and shows quota progress against the total quota you purchased.',
       guideTarget: { sectionId: 'dashboard', subsectionId: 'dashboard-kpi-header' }
     },
     totalInvoicedCard: {
@@ -40,7 +40,7 @@ export const productGuideHints = {
     },
     invoiceBreakdown: {
       title: 'Invoice Breakdown',
-      description: 'Summarizes invoice volume by stage and pairs it with overall order fulfillment so finance and operations stay aligned.',
+      description: 'Summarizes invoice volume by stage and pairs it with overall order progress so finance and operations stay aligned.',
       guideTarget: { sectionId: 'dashboard', subsectionId: 'dashboard-actions-breakdown' }
     },
     workbench: {
@@ -116,58 +116,6 @@ export const productGuideHints = {
       title: 'Customer Rejected',
       description: 'Contains retained cases that were declined so follow-up stays separate from approved work.',
       guideTarget: { sectionId: 'my-cases', subsectionId: 'my-cases-pipeline' }
-    }
-  },
-  fulfillment: {
-    totalOrdersCard: {
-      title: 'Total Orders',
-      description: 'Counts the campaigns represented in the fulfillment workspace.',
-      guideTarget: { sectionId: 'fulfillment', subsectionId: 'fulfillment-performance' }
-    },
-    signedRetainersCard: {
-      title: 'Signed Retainers',
-      description: 'Shows retained leads that are still being monitored inside the post-signing workflow.',
-      guideTarget: { sectionId: 'fulfillment', subsectionId: 'fulfillment-performance' }
-    },
-    returnedBackCard: {
-      title: 'Returned Back',
-      description: 'Tracks cases that were sent back during the return window.',
-      guideTarget: { sectionId: 'fulfillment', subsectionId: 'fulfillment-performance' }
-    },
-    droppedRetainersCard: {
-      title: 'Dropped Retainers',
-      description: 'Shows retained matters that did not progress successfully.',
-      guideTarget: { sectionId: 'fulfillment', subsectionId: 'fulfillment-performance' }
-    },
-    successfulCasesCard: {
-      title: 'Successful Cases',
-      description: 'Highlights retained cases that stayed valid after review and the return window.',
-      guideTarget: { sectionId: 'fulfillment', subsectionId: 'fulfillment-performance' }
-    },
-    filters: {
-      title: 'Fulfillment Filters',
-      description: 'Lets the team narrow the board by search terms, geography, order type, and fulfillment stage.',
-      guideTarget: { sectionId: 'fulfillment', subsectionId: 'fulfillment-filters' }
-    },
-    signedColumn: {
-      title: 'Signed Retainers',
-      description: 'The entry lane for retained leads that are still under fulfillment review.',
-      guideTarget: { sectionId: 'fulfillment', subsectionId: 'fulfillment-pipeline' }
-    },
-    returnedColumn: {
-      title: 'Returned Back',
-      description: 'Captures cases that moved back during the refund or replacement period.',
-      guideTarget: { sectionId: 'fulfillment', subsectionId: 'fulfillment-pipeline' }
-    },
-    droppedColumn: {
-      title: 'Dropped Retainers',
-      description: 'Separates unsuccessful retained matters from the successful pipeline.',
-      guideTarget: { sectionId: 'fulfillment', subsectionId: 'fulfillment-pipeline' }
-    },
-    successfulColumn: {
-      title: 'Successful Cases',
-      description: 'Shows retained cases that held quality and stayed successful.',
-      guideTarget: { sectionId: 'fulfillment', subsectionId: 'fulfillment-pipeline' }
     }
   },
   invoicing: {

@@ -102,21 +102,15 @@ const links = computed(() => [
       onSelect: () => { open.value = false }
     },
     {
-      label: 'Task Assignment',
-      icon: 'i-lucide-list-checks',
-      to: '/task-management',
-      onSelect: () => { open.value = false }
-    },
-    {
-      label: 'Fulfillment',
-      icon: 'i-lucide-package',
-      to: '/fulfillment',
-      onSelect: () => { open.value = false }
-    },
-    {
       label: 'Invoicing',
       icon: 'i-lucide-receipt',
       to: '/invoicing/lawyer',
+      onSelect: () => { open.value = false }
+    },
+    {
+      label: 'My Attorneys',
+      icon: 'i-lucide-scale',
+      to: '/attorneys',
       onSelect: () => { open.value = false }
     },
 
@@ -130,7 +124,14 @@ const links = computed(() => [
       icon: 'i-lucide-building-2',
       to: '/centers',
       onSelect: () => { open.value = false }
-    }] : [])
+    }] : []),
+
+    {
+      label: 'Task Assignment',
+      icon: 'i-lucide-list-checks',
+      to: '/task-management',
+      onSelect: () => { open.value = false }
+    }
   ],
   [
     {
