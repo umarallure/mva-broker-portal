@@ -396,6 +396,17 @@ export async function requestChargeback(invoiceId: string): Promise<InvoiceRow> 
   return data as InvoiceRow
 }
 
+export async function brokerDropInvoiceWithNote(invoiceId: string, note: string): Promise<InvoiceRow> {
+  const { data, error } = await supabase
+    .rpc('broker_drop_invoice_with_note', {
+      p_invoice_id: invoiceId,
+      p_note: note,
+    })
+
+  if (error) throw new Error(error.message)
+  return data as InvoiceRow
+}
+
 export async function linkDealsToInvoice(dealIds: string[], invoiceId: string): Promise<void> {
   if (!dealIds.length) return
   const { data, error } = await supabase

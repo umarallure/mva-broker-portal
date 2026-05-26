@@ -6,7 +6,6 @@ import type { DropdownMenuItem } from '@nuxt/ui'
 import { useAuth } from '../composables/useAuth'
 import { supabase } from '../lib/supabase'
 import { listInvoices, type InvoiceRow, type InvoiceStatus, type InvoiceType } from '../lib/invoices'
-import { listOrdersForLawyer, type OrderRow } from '../lib/orders'
 import DashboardMetricCard from '../components/dashboard/DashboardMetricCard.vue'
 import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
 import { productGuideHints } from '../data/product-guide-hints'
@@ -52,11 +51,6 @@ const retainers = ref<RetainerRow[]>([])
 const retainerCount = ref(0)
 const approvedRetainerCount = ref(0)
 
-const orders = ref<OrderRow[]>([])
-const orderCount = ref(0)
-const orderQuotaTotal = ref(0)
-const orderQuotaFilled = ref(0)
-
 const invoices = ref<InvoiceRowWithLawyerName[]>([])
 
 type DashboardInvoiceStage = 'billable' | 'pending' | 'paid' | 'chargeback'
@@ -89,11 +83,6 @@ const totalInvoiced = computed(() => invoices.value.reduce((s, i) => s + Number(
 const pendingInvoiceAmount = computed(() => dashboardInvoiceStageSummary.value.pending.amount)
 const paidInvoiceAmount = computed(() => dashboardInvoiceStageSummary.value.paid.amount)
 const pendingReviewInvoiceCount = computed(() => dashboardInvoiceStageSummary.value.pending.count)
-
-const orderProgressPercent = computed(() => {
-  if (!orderQuotaTotal.value) return 0
-  return Math.round((orderQuotaFilled.value / orderQuotaTotal.value) * 100)
-})
 
 const formatMoney = (n: number) => {
   try {
@@ -181,26 +170,6 @@ const getRetainerOutcomeStatusLabel = (status: string | null) => {
   if (s.includes('drop') || s.includes('dropped') || s.includes('cancel')) return 'Dropped Retainers'
   if (s.includes('return') || s.includes('back')) return 'Returned Back'
   return null
-}
-
-const getOrderDisplayStatus = (order: OrderRow) => {
-  if (order.status === 'OPEN') {
-    return order.quota_filled > 0 ? 'In Progress' : 'Pending'
-  }
-  return order.status
-}
-
-const getOrderStatusColor = (status: string) => {
-  if (status === 'Pending') return 'text-green-400 bg-green-500/10'
-  if (status === 'In Progress') return 'text-amber-400 bg-amber-500/10'
-  if (status === 'OPEN') return 'text-[var(--ap-accent)] bg-[var(--ap-accent)]/10'
-  if (status === 'FULFILLED') return 'text-green-400 bg-green-500/10'
-  return 'text-muted bg-[var(--ap-card-divide)]'
-}
-
-const orderFillPercent = (o: OrderRow) => {
-  if (!o.quota_total) return 0
-  return Math.round((o.quota_filled / o.quota_total) * 100)
 }
 
 const load = async () => {
@@ -351,19 +320,6 @@ const load = async () => {
       retainerCount.value = rCount ?? 0
     }
 
-    if (userId && role !== 'broker') {
-      const ordersData = await listOrdersForLawyer({ lawyerId: userId })
-      orders.value = ordersData.slice(0, 5)
-      orderCount.value = ordersData.length
-      orderQuotaTotal.value = ordersData.reduce((sum, order) => sum + order.quota_total, 0)
-      orderQuotaFilled.value = ordersData.reduce((sum, order) => sum + order.quota_filled, 0)
-    } else {
-      orders.value = []
-      orderCount.value = 0
-      orderQuotaTotal.value = 0
-      orderQuotaFilled.value = 0
-    }
-
     const invFilters: { lawyer_id?: string; broker_id?: string; status?: InvoiceStatus; invoice_type?: InvoiceType } = {
       invoice_type: role === 'broker' ? 'broker' : 'lawyer'
     }
@@ -414,7 +370,6 @@ const openRetainerInvoice = (row: RetainerRow) => {
   const url = router.resolve(`/invoicing/${row.invoice_id}/pdf`).href
   window.open(url, '_blank')
 }
-const openOrder = (order: OrderRow) => router.push(`/orders/${order.id}`)
 const openInvoicePdf = (invoice: InvoiceRow) => {
   const url = router.resolve(`/invoicing/${invoice.id}/pdf`).href
   window.open(url, '_blank')
@@ -431,7 +386,6 @@ onMounted(() => {
 const activeWorkbenchTab = ref('retainers')
 const workbenchTabs = computed(() => [
   { key: 'retainers', label: 'Retainers', icon: 'i-lucide-briefcase', count: retainerCount.value },
-  { key: 'orders', label: 'Orders', icon: 'i-lucide-shopping-cart', count: orderCount.value },
   { key: 'invoices', label: 'Invoices', icon: 'i-lucide-receipt', count: invoices.value.length }
 ])
 
@@ -528,10 +482,6 @@ const invoiceStatusBreakdown = computed(() => {
   ]
 })
 
-// Order progress stats
-const totalQuota = computed(() => orderQuotaTotal.value)
-const filledQuota = computed(() => orderQuotaFilled.value)
-
 const trendChartMax = computed(() => {
   return Math.max(...invoiceTrendData.value.map(point => point.amount), 1)
 })
@@ -623,9 +573,9 @@ const showMonthGrowth = computed(() =>
               icon="i-lucide-badge-check"
               accent="blue"
               :loading="loading"
-              :hint-title="dashboardHints.activeOrdersCard.title"
-              :hint-description="dashboardHints.activeOrdersCard.description"
-              :hint-guide-target="dashboardHints.activeOrdersCard.guideTarget"
+              :hint-title="dashboardHints.approvedRetainersCard.title"
+              :hint-description="dashboardHints.approvedRetainersCard.description"
+              :hint-guide-target="dashboardHints.approvedRetainersCard.guideTarget"
               clickable
               @click="router.push('/retainers')"
             >
@@ -689,14 +639,18 @@ const showMonthGrowth = computed(() =>
                 </div>
                 <div>
                   <div class="flex items-center gap-1.5">
-                    <h3 class="text-sm font-semibold text-highlighted">Invoice Trend</h3>
+                    <h3 class="text-sm font-semibold text-highlighted">
+                      Invoice Trend
+                    </h3>
                     <ProductGuideHint
                       :title="dashboardHints.invoiceTrend.title"
                       :description="dashboardHints.invoiceTrend.description"
                       :guide-target="dashboardHints.invoiceTrend.guideTarget"
                     />
                   </div>
-                  <p class="text-[11px] text-muted">Last 6 months</p>
+                  <p class="text-[11px] text-muted">
+                    Last 6 months
+                  </p>
                 </div>
               </div>
 
@@ -803,7 +757,9 @@ const showMonthGrowth = computed(() =>
             <!-- Quick Actions -->
             <div class="overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm p-5">
               <div class="mb-4 flex items-center gap-1.5">
-                <h3 class="text-sm font-semibold text-highlighted">Quick Actions</h3>
+                <h3 class="text-sm font-semibold text-highlighted">
+                  Quick Actions
+                </h3>
                 <ProductGuideHint
                   :title="dashboardHints.quickActions.title"
                   :description="dashboardHints.quickActions.description"
@@ -813,15 +769,15 @@ const showMonthGrowth = computed(() =>
               <div class="space-y-2.5">
                 <button
                   class="flex w-full items-center gap-3 rounded-lg border border-[var(--ap-accent)]/15 px-3.5 py-3 text-sm text-left transition-all duration-200 hover:bg-[var(--ap-accent)]/[0.06] hover:border-[var(--ap-accent)]/30 group"
-                  @click="router.push('/intake-map?action=create-order')"
+                  @click="router.push('/attorneys')"
                 >
                   <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10 transition-colors group-hover:bg-[var(--ap-accent)]/20">
-                    <UIcon name="i-lucide-plus" class="text-sm text-[var(--ap-accent)]" />
+                    <UIcon name="i-lucide-scale" class="text-sm text-[var(--ap-accent)]" />
                   </div>
                   <div class="min-w-0 flex-1">
-                    <span class="font-medium text-highlighted text-[13px]">Place New Order</span>
+                    <span class="font-medium text-highlighted text-[13px]">My Attorneys</span>
                     <p class="text-[11px] text-muted mt-0.5">
-                      Create a new case order
+                      Manage broker attorney profiles
                     </p>
                   </div>
                   <UIcon name="i-lucide-chevron-right" class="text-xs text-muted/50 transition-all duration-200 group-hover:text-[var(--ap-accent)] group-hover:translate-x-0.5" />
@@ -864,7 +820,9 @@ const showMonthGrowth = computed(() =>
             <div class="overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm p-5">
               <div class="mb-4 flex items-center justify-between gap-3">
                 <div class="flex items-center gap-1.5">
-                  <h3 class="text-sm font-semibold text-highlighted">Invoice Breakdown</h3>
+                  <h3 class="text-sm font-semibold text-highlighted">
+                    Invoice Breakdown
+                  </h3>
                   <ProductGuideHint
                     :title="dashboardHints.invoiceBreakdown.title"
                     :description="dashboardHints.invoiceBreakdown.description"
@@ -903,20 +861,6 @@ const showMonthGrowth = computed(() =>
                   </div>
                 </div>
               </div>
-
-              <!-- Order progress summary -->
-              <div v-if="orders.length" class="mt-5 pt-4 border-t border-black/[0.06] dark:border-white/[0.06]">
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-xs text-muted">Order Progress</span>
-                  <span class="text-xs font-semibold text-highlighted">{{ filledQuota }}/{{ totalQuota }}</span>
-                </div>
-                <div class="h-1.5 w-full overflow-hidden rounded-full bg-black/[0.06] dark:bg-white/[0.08]">
-                  <div
-                    class="h-full rounded-full bg-[var(--ap-accent)] transition-all duration-700 ease-out"
-                    :style="{ width: `${orderProgressPercent}%` }"
-                  />
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -935,31 +879,31 @@ const showMonthGrowth = computed(() =>
                 />
               </div>
               <div class="flex items-center gap-1 -mb-px">
-              <button
-                v-for="tab in workbenchTabs"
-                :key="tab.key"
-                class="relative flex items-center gap-2 px-4 py-3.5 text-sm font-medium transition-colors duration-200"
-                :class="activeWorkbenchTab === tab.key
-                  ? 'text-[var(--ap-accent)]'
-                  : 'text-muted hover:text-highlighted'"
-                @click="activeWorkbenchTab = tab.key"
-              >
-                <UIcon :name="tab.icon" class="text-sm" />
-                <span>{{ tab.label }}</span>
-                <span
-                  class="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-md px-1.5 text-[10px] font-semibold"
+                <button
+                  v-for="tab in workbenchTabs"
+                  :key="tab.key"
+                  class="relative flex items-center gap-2 px-4 py-3.5 text-sm font-medium transition-colors duration-200"
                   :class="activeWorkbenchTab === tab.key
-                    ? 'bg-[var(--ap-accent)]/10 text-[var(--ap-accent)]'
-                    : 'bg-black/[0.04] dark:bg-white/[0.04] text-muted'"
+                    ? 'text-[var(--ap-accent)]'
+                    : 'text-muted hover:text-highlighted'"
+                  @click="activeWorkbenchTab = tab.key"
                 >
-                  {{ tab.count }}
-                </span>
-                <!-- Active indicator -->
-                <div
-                  v-if="activeWorkbenchTab === tab.key"
-                  class="absolute bottom-0 left-2 right-2 h-0.5 rounded-t-full bg-[var(--ap-accent)]"
-                />
-              </button>
+                  <UIcon :name="tab.icon" class="text-sm" />
+                  <span>{{ tab.label }}</span>
+                  <span
+                    class="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-md px-1.5 text-[10px] font-semibold"
+                    :class="activeWorkbenchTab === tab.key
+                      ? 'bg-[var(--ap-accent)]/10 text-[var(--ap-accent)]'
+                      : 'bg-black/[0.04] dark:bg-white/[0.04] text-muted'"
+                  >
+                    {{ tab.count }}
+                  </span>
+                  <!-- Active indicator -->
+                  <div
+                    v-if="activeWorkbenchTab === tab.key"
+                    class="absolute bottom-0 left-2 right-2 h-0.5 rounded-t-full bg-[var(--ap-accent)]"
+                  />
+                </button>
               </div>
             </div>
 
@@ -967,8 +911,7 @@ const showMonthGrowth = computed(() =>
               class="inline-flex items-center gap-1.5 rounded-lg border border-black/[0.06] dark:border-white/[0.08] bg-black/[0.02] dark:bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-muted transition-all hover:border-[var(--ap-accent)]/30 hover:bg-[var(--ap-accent)]/10 hover:text-[var(--ap-accent)]"
               @click="router.push(
                 activeWorkbenchTab === 'retainers' ? '/retainers'
-                : activeWorkbenchTab === 'orders' ? '/intake-map'
-                  : '/invoicing'
+                : '/invoicing'
               )"
             >
               See All
@@ -1072,67 +1015,6 @@ const showMonthGrowth = computed(() =>
                   </tr>
                 </tbody>
               </table>
-            </div>
-          </template>
-
-          <!-- ── Orders Tab ── -->
-          <template v-else-if="activeWorkbenchTab === 'orders'">
-            <div v-if="!orders.length" class="flex items-center justify-center p-16">
-              <div class="text-center">
-                <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--ap-accent)]/10 mb-3">
-                  <UIcon name="i-lucide-shopping-cart" class="text-xl text-[var(--ap-accent)]/50" />
-                </div>
-                <p class="text-sm text-muted">
-                  No orders placed yet
-                </p>
-              </div>
-            </div>
-            <div v-else class="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-              <div
-                v-for="(order, idx) in orders"
-                :key="order.id"
-                class="ap-fade-in group cursor-pointer rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/80 dark:bg-[#1a1a1a]/40 p-4 transition-all duration-200 hover:border-[var(--ap-accent)]/20 hover:bg-white dark:hover:bg-[#1f1f1f] hover:shadow-md"
-                :style="{ animationDelay: `${idx * 80}ms` }"
-                @click="openOrder(order)"
-              >
-                <div class="flex items-start justify-between gap-2">
-                  <div class="min-w-0 flex-1">
-                    <p class="text-sm font-semibold text-highlighted truncate group-hover:text-[var(--ap-accent)] transition-colors">
-                      {{ order.case_type }}
-                    </p>
-                    <p class="mt-0.5 text-[11px] text-muted">
-                      {{ (order.target_states || []).map(s => s.toUpperCase()).join(', ') || '—' }}
-                    </p>
-                  </div>
-                  <span
-                    class="inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold"
-                    :class="getOrderStatusColor(getOrderDisplayStatus(order))"
-                  >
-                    {{ getOrderDisplayStatus(order) }}
-                  </span>
-                </div>
-
-                <div class="mt-3">
-                  <div class="flex items-center justify-between text-[11px] mb-1">
-                    <span class="text-muted">{{ order.quota_filled }}/{{ order.quota_total }} filled</span>
-                    <span class="font-semibold" :class="orderFillPercent(order) >= 100 ? 'text-green-400' : 'text-[var(--ap-accent)]'">
-                      {{ orderFillPercent(order) }}%
-                    </span>
-                  </div>
-                  <div class="h-1.5 w-full overflow-hidden rounded-full bg-black/[0.06] dark:bg-white/[0.08]">
-                    <div
-                      class="h-full rounded-full transition-all duration-500"
-                      :class="orderFillPercent(order) >= 100 ? 'bg-green-400' : 'bg-[var(--ap-accent)]'"
-                      :style="{ width: `${Math.min(orderFillPercent(order), 100)}%` }"
-                    />
-                  </div>
-                </div>
-
-                <div class="mt-2.5 flex items-center justify-between text-[11px] text-muted">
-                  <span>Created {{ formatDate(order.created_at) }}</span>
-                  <span>Exp. {{ formatDate(order.expires_at) }}</span>
-                </div>
-              </div>
             </div>
           </template>
 

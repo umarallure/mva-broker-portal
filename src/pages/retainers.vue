@@ -523,6 +523,7 @@ const moveConfirmBusy = ref(false)
 const pendingMoveLeadId = ref<string | null>(null)
 const pendingMoveFromStage = ref<StageKey | null>(null)
 const pendingMoveToStage = ref<StageKey | null>(null)
+const brokerRejectionNote = ref('')
 
 const pendingMoveLeadName = computed(() => {
   if (!pendingMoveLeadId.value) return ''
@@ -539,6 +540,9 @@ const pendingMoveToLabel = computed(() => {
   return STAGES.find(s => s.key === pendingMoveToStage.value)?.label ?? ''
 })
 
+const pendingMoveRequiresRejectionNote = computed(() => pendingMoveToStage.value === 'rejected')
+const trimmedBrokerRejectionNote = computed(() => brokerRejectionNote.value.trim())
+
 const onDropToStage = (targetStage: StageKey) => {
   const leadId = dragLeadId.value
   const fromStage = dragFromStage.value
@@ -553,6 +557,7 @@ const onDropToStage = (targetStage: StageKey) => {
   pendingMoveLeadId.value = leadId
   pendingMoveFromStage.value = fromStage
   pendingMoveToStage.value = targetStage
+  brokerRejectionNote.value = ''
   moveConfirmOpen.value = true
 }
 
@@ -562,6 +567,7 @@ const handleMoveConfirmUpdate = (v: boolean) => {
     pendingMoveLeadId.value = null
     pendingMoveFromStage.value = null
     pendingMoveToStage.value = null
+    brokerRejectionNote.value = ''
     moveConfirmBusy.value = false
   }
 }
@@ -578,15 +584,30 @@ const confirmMove = async () => {
   const targetStatus = STAGES.find(s => s.key === targetStage)?.status
   if (!targetStatus) return
 
+  if (targetStatus === 'attorney_rejected' && !trimmedBrokerRejectionNote.value) {
+    toast.add({
+      title: 'Reason required',
+      description: 'Add a note explaining why this lead was rejected.',
+      icon: 'i-lucide-alert-circle',
+      color: 'warning'
+    })
+    return
+  }
+
   moveConfirmBusy.value = true
   const prev = leads.value[idx]
 
   leads.value[idx] = { ...prev, stage: targetStage, status: targetStatus }
 
   try {
+    const updatePayload: { status: LeadStatus, broker_rejection_note?: string } = { status: targetStatus }
+    if (targetStatus === 'attorney_rejected') {
+      updatePayload.broker_rejection_note = trimmedBrokerRejectionNote.value
+    }
+
     const { error } = await supabase
       .from('leads')
-      .update({ status: targetStatus })
+      .update(updatePayload)
       .eq('id', leadId)
 
     if (error) throw error
@@ -603,6 +624,7 @@ const confirmMove = async () => {
     pendingMoveLeadId.value = null
     pendingMoveFromStage.value = null
     pendingMoveToStage.value = null
+    brokerRejectionNote.value = ''
   } catch (err) {
     leads.value[idx] = prev
     const msg = err instanceof Error ? err.message : 'Unable to update stage'
@@ -646,26 +668,106 @@ const confirmMove = async () => {
           :open="moveConfirmOpen"
           title="Move Case"
           :dismissible="false"
+          :ui="{ content: 'sm:max-w-lg' }"
           @update:open="handleMoveConfirmUpdate"
         >
           <template #body="{ close }">
             <div class="space-y-5">
-              <div class="flex items-start gap-3">
-                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--ap-accent)]/10">
-                  <UIcon name="i-lucide-arrow-right-left" class="text-lg text-[var(--ap-accent)]" />
+              <!-- Lead identity card -->
+              <div class="flex items-center gap-3 rounded-xl border border-[var(--ap-card-border)] bg-black/[0.02] dark:bg-white/[0.02] px-4 py-3">
+                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--ap-accent)]/20 to-[var(--ap-accent)]/5 border-[0.5px] border-[var(--ap-accent)]/30 text-[var(--ap-accent)] font-bold text-sm uppercase tabular-nums">
+                  {{ (pendingMoveLeadName || '?').charAt(0) }}
                 </div>
-                <div>
-                  <p class="text-sm font-medium text-highlighted">
-                    Are you sure?
-                  </p>
-                  <p class="mt-0.5 text-sm text-muted">
-                    You are moving <span class="font-semibold text-highlighted">{{ pendingMoveLeadName }}</span> from
-                    <span class="font-semibold text-highlighted">{{ pendingMoveFromLabel }}</span> to
-                    <span class="font-semibold text-highlighted">{{ pendingMoveToLabel }}</span>.
+                <div class="min-w-0 flex-1">
+                  <p class="text-[10px] uppercase tracking-wider text-muted font-medium">Case</p>
+                  <p class="text-sm font-semibold text-highlighted truncate">
+                    {{ pendingMoveLeadName || 'Unknown case' }}
                   </p>
                 </div>
               </div>
 
+              <!-- Stage transition flow -->
+              <div>
+                <p class="text-[10px] uppercase tracking-wider text-muted font-medium mb-2 pl-1">
+                  Stage Transition
+                </p>
+                <div class="flex items-stretch gap-2">
+                  <div class="flex-1 min-w-0 rounded-xl border border-[var(--ap-card-border)] bg-black/[0.02] dark:bg-white/[0.02] px-3 py-2.5">
+                    <p class="text-[10px] uppercase tracking-wider text-muted font-medium">From</p>
+                    <p class="text-sm font-semibold text-highlighted mt-0.5 truncate">
+                      {{ pendingMoveFromLabel || '—' }}
+                    </p>
+                  </div>
+
+                  <div class="flex items-center px-0.5">
+                    <div
+                      class="flex h-7 w-7 items-center justify-center rounded-full transition-colors"
+                      :class="pendingMoveRequiresRejectionNote ? 'bg-red-500/15' : 'bg-[var(--ap-accent)]/15'"
+                    >
+                      <UIcon
+                        name="i-lucide-arrow-right"
+                        class="size-3.5 transition-colors"
+                        :class="pendingMoveRequiresRejectionNote ? 'text-red-500' : 'text-[var(--ap-accent)]'"
+                      />
+                    </div>
+                  </div>
+
+                  <div
+                    class="flex-1 min-w-0 rounded-xl border px-3 py-2.5 transition-colors"
+                    :class="pendingMoveRequiresRejectionNote
+                      ? 'border-red-500/30 bg-red-500/[0.06]'
+                      : 'border-[var(--ap-accent)]/30 bg-[var(--ap-accent)]/[0.06]'"
+                  >
+                    <p
+                      class="text-[10px] uppercase tracking-wider font-medium"
+                      :class="pendingMoveRequiresRejectionNote ? 'text-red-500/90 dark:text-red-400/90' : 'text-[var(--ap-accent)]/90'"
+                    >
+                      To
+                    </p>
+                    <p
+                      class="text-sm font-semibold mt-0.5 truncate"
+                      :class="pendingMoveRequiresRejectionNote ? 'text-red-600 dark:text-red-400' : 'text-[var(--ap-accent)] dark:text-[var(--ap-accent)]'"
+                    >
+                      {{ pendingMoveToLabel || '—' }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Rejection note (conditional) -->
+              <div
+                v-if="pendingMoveRequiresRejectionNote"
+                class="overflow-hidden rounded-xl border border-red-500/25 bg-red-500/[0.03]"
+              >
+                <div class="flex items-start gap-2.5 border-b border-red-500/15 px-4 py-2.5">
+                  <div class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-red-500/10">
+                    <UIcon name="i-lucide-alert-triangle" class="size-3.5 text-red-500" />
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-xs font-semibold text-highlighted">Rejection reason required</p>
+                    <p class="text-[11px] text-muted mt-0.5">
+                      Visible to closers in the lead's Notes tab.
+                    </p>
+                  </div>
+                  <span
+                    v-if="brokerRejectionNote.length"
+                    class="shrink-0 rounded-md bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-500 tabular-nums"
+                  >
+                    {{ brokerRejectionNote.length }}
+                  </span>
+                </div>
+                <div class="p-3">
+                  <UTextarea
+                    v-model="brokerRejectionNote"
+                    :rows="4"
+                    placeholder="Explain why this lead was rejected (e.g. wrong jurisdiction, missing docs, client unresponsive)..."
+                    :disabled="moveConfirmBusy"
+                    class="w-full"
+                  />
+                </div>
+              </div>
+
+              <!-- Footer actions -->
               <div class="flex items-center justify-end gap-2 pt-1">
                 <UButton
                   color="neutral"
@@ -680,11 +782,12 @@ const confirmMove = async () => {
                   color="primary"
                   variant="solid"
                   :loading="moveConfirmBusy"
+                  :disabled="pendingMoveRequiresRejectionNote && !trimmedBrokerRejectionNote"
                   icon="i-lucide-check"
                   class="rounded-lg"
                   @click="confirmMove"
                 >
-                  Confirm
+                  Confirm Move
                 </UButton>
               </div>
             </div>

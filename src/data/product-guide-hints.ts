@@ -13,9 +13,9 @@ export const productGuideHints = {
       description: 'Shows how many retained cases are currently assigned and links into the My Cases review board.',
       guideTarget: { sectionId: 'dashboard', subsectionId: 'dashboard-kpi-header' }
     },
-    activeOrdersCard: {
-      title: 'Active Orders',
-      description: 'Counts the firm\'s live orders and shows quota progress against the total quota you purchased.',
+    approvedRetainersCard: {
+      title: 'Approved Retainers',
+      description: 'Counts retained cases that have been approved by attorney review.',
       guideTarget: { sectionId: 'dashboard', subsectionId: 'dashboard-kpi-header' }
     },
     totalInvoicedCard: {
@@ -35,17 +35,17 @@ export const productGuideHints = {
     },
     quickActions: {
       title: 'Quick Actions',
-      description: 'Provides direct shortcuts into the most common workflows: placing orders, creating invoices, and reviewing retainers.',
+      description: 'Provides direct shortcuts into the most common workflows: managing attorneys, creating invoices, and reviewing retainers.',
       guideTarget: { sectionId: 'dashboard', subsectionId: 'dashboard-actions-breakdown' }
     },
     invoiceBreakdown: {
       title: 'Invoice Breakdown',
-      description: 'Summarizes invoice volume by stage and pairs it with overall order progress so finance and operations stay aligned.',
+      description: 'Summarizes invoice volume by stage so finance follow-up stays easy to scan.',
       guideTarget: { sectionId: 'dashboard', subsectionId: 'dashboard-actions-breakdown' }
     },
     workbench: {
       title: 'Workbench',
-      description: 'Rotates between recent retainers, orders, and invoices so you can jump from summary metrics into live records quickly.',
+      description: 'Rotates between recent retainers and invoices so you can jump from summary metrics into live records quickly.',
       guideTarget: { sectionId: 'dashboard', subsectionId: 'dashboard-workbench' }
     }
   },

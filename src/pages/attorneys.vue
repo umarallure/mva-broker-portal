@@ -57,15 +57,18 @@ const getCoveragePreview = (states: string[]) => states.slice(0, 4)
 
 const getRemainingCoverageCount = (states: string[]) => Math.max(states.length - 4, 0)
 
-const getCoverageSolLabel = (value: BrokerAttorneyRow['coverage_sol_criteria']) => {
-  const labels: Record<BrokerAttorneyRow['coverage_sol_criteria'], string> = {
-    no_criteria: 'No SOL criteria',
+const getTransferSolLabel = (attorney: BrokerAttorneyRow) => {
+  if (!attorney.transfer_standard_types.includes('sol') && !attorney.transfer_sol_option) {
+    return 'Not set'
+  }
+
+  const labels: Record<NonNullable<BrokerAttorneyRow['transfer_sol_option']>, string> = {
     '3_months': '3 months',
     '6_months': '6 months',
     '12_months': '12 months'
   }
 
-  return labels[value] ?? 'No SOL criteria'
+  return attorney.transfer_sol_option ? labels[attorney.transfer_sol_option] : 'Not set'
 }
 
 const resetCreateForm = () => {
@@ -300,10 +303,10 @@ onMounted(loadAttorneys)
                 <div class="rounded-lg border border-black/[0.06] bg-black/[0.02] px-3 py-2 dark:border-white/[0.06] dark:bg-white/[0.03]">
                   <span class="flex items-center gap-1.5 text-[11px] font-medium text-muted">
                     <UIcon name="i-lucide-timer" class="size-3.5 text-[var(--ap-accent)]" />
-                    SOL
+                    Transfer SOL
                   </span>
                   <p class="mt-1 truncate text-xs font-semibold text-highlighted">
-                    {{ getCoverageSolLabel(attorney.coverage_sol_criteria) }}
+                    {{ getTransferSolLabel(attorney) }}
                   </p>
                 </div>
                 <div class="rounded-lg border border-black/[0.06] bg-black/[0.02] px-3 py-2 dark:border-white/[0.06] dark:bg-white/[0.03]">

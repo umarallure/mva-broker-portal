@@ -7,7 +7,7 @@ import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
 import { useAuth } from '../composables/useAuth'
 import { useDragGhost } from '../composables/useDragGhost'
 import { productGuideHints } from '../data/product-guide-hints'
-import { deleteInvoice, listInvoices, markInvoiceAsPaid, requestChargeback, updateInvoice, type InvoiceRow, type InvoiceStatus, type InvoiceType } from '../lib/invoices'
+import { brokerDropInvoiceWithNote, deleteInvoice, listInvoices, markInvoiceAsPaid, requestChargeback, updateInvoice, type InvoiceRow, type InvoiceStatus, type InvoiceType } from '../lib/invoices'
 import { supabase } from '../lib/supabase'
 
 type ViewMode = 'kanban' | 'list'
@@ -78,6 +78,12 @@ const dragInvoiceId = ref<string | null>(null)
 const deleteConfirmOpen = ref(false)
 const deleteTarget = ref<InvoiceRow | null>(null)
 const deletingInvoice = ref(false)
+
+const brokerDropConfirmOpen = ref(false)
+const brokerDropTarget = ref<InvoiceListRow | null>(null)
+const brokerDropBusy = ref(false)
+const brokerDropNote = ref('')
+const brokerDropNoteTrimmed = computed(() => brokerDropNote.value.trim())
 
 const loadSeq = ref(0)
 
@@ -585,6 +591,51 @@ const handleDragOver = (e: DragEvent) => {
   e.preventDefault()
 }
 
+const openBrokerDropConfirm = (invoice: InvoiceListRow) => {
+  brokerDropTarget.value = invoice
+  brokerDropNote.value = ''
+  brokerDropConfirmOpen.value = true
+}
+
+const closeBrokerDropConfirm = () => {
+  if (brokerDropBusy.value) return
+  brokerDropConfirmOpen.value = false
+  brokerDropTarget.value = null
+  brokerDropNote.value = ''
+}
+
+const confirmBrokerDrop = async () => {
+  const invoice = brokerDropTarget.value
+  if (!invoice || !brokerDropNoteTrimmed.value) return
+
+  const idx = invoices.value.findIndex(i => i.id === invoice.id)
+  const prev = idx === -1 ? null : invoices.value[idx]
+
+  brokerDropBusy.value = true
+  error.value = null
+
+  if (idx !== -1) {
+    invoices.value[idx] = { ...invoices.value[idx], status: 'chargeback' }
+  }
+
+  try {
+    const updated = await brokerDropInvoiceWithNote(invoice.id, brokerDropNoteTrimmed.value)
+    if (idx !== -1) {
+      invoices.value[idx] = { ...invoices.value[idx], ...updated }
+    }
+    brokerDropConfirmOpen.value = false
+    brokerDropTarget.value = null
+    brokerDropNote.value = ''
+  } catch (err) {
+    if (idx !== -1 && prev) {
+      invoices.value[idx] = prev
+    }
+    error.value = err instanceof Error ? err.message : 'Failed to drop broker invoice'
+  } finally {
+    brokerDropBusy.value = false
+  }
+}
+
 const handleDrop = async (e: DragEvent, targetStatus: InvoiceStatus) => {
   e.preventDefault()
   if (!dragInvoiceId.value) return
@@ -597,6 +648,11 @@ const handleDrop = async (e: DragEvent, targetStatus: InvoiceStatus) => {
   const invoice = invoices.value[idx]
   const prev = invoice.status
   if (prev === targetStatus) return
+
+  if (targetStatus === 'chargeback' && invoice.invoice_type === 'broker') {
+    openBrokerDropConfirm(invoice)
+    return
+  }
 
   // Optimistic update
   invoices.value[idx] = { ...invoices.value[idx], status: targetStatus }
@@ -1011,6 +1067,11 @@ const handleMarkAsPaid = async (invoice: InvoiceRow & { lawyer_name?: string | n
 }
 
 const handleRequestChargeback = async (invoice: InvoiceRow & { lawyer_name?: string | null }) => {
+  if (invoice.invoice_type === 'broker') {
+    openBrokerDropConfirm(invoice as InvoiceListRow)
+    return
+  }
+
   try {
     const updated = await requestChargeback(invoice.id)
     const idx = invoices.value.findIndex(i => i.id === invoice.id)
@@ -1431,6 +1492,62 @@ watch(pageCount, () => {
                   @click="confirmDeleteInvoice"
                 >
                   Delete invoice
+                </UButton>
+              </div>
+            </div>
+          </template>
+        </UModal>
+
+        <UModal
+          :open="brokerDropConfirmOpen"
+          title="Drop Broker Invoice"
+          :dismissible="false"
+          @update:open="(open) => { if (!open) closeBrokerDropConfirm() }"
+        >
+          <template #body>
+            <div class="space-y-5">
+              <div class="flex items-start gap-3">
+                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-500/10">
+                  <UIcon name="i-lucide-alert-triangle" class="text-lg text-red-400" />
+                </div>
+                <div>
+                  <p class="text-sm font-medium text-highlighted">
+                    Add a dropped reason
+                  </p>
+                  <p class="mt-0.5 text-sm text-muted">
+                    This note will be saved to every broker-owned lead linked to
+                    <span class="font-semibold text-highlighted">{{ brokerDropTarget?.invoice_number }}</span>
+                    and shown in the closer portal.
+                  </p>
+                </div>
+              </div>
+
+              <UFormField label="Dropped note" required>
+                <UTextarea
+                  v-model="brokerDropNote"
+                  :rows="4"
+                  placeholder="Explain why this invoice or its linked lead was dropped..."
+                  :disabled="brokerDropBusy"
+                />
+              </UFormField>
+
+              <div class="flex justify-end gap-2">
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  :disabled="brokerDropBusy"
+                  @click="closeBrokerDropConfirm"
+                >
+                  Cancel
+                </UButton>
+                <UButton
+                  color="error"
+                  :loading="brokerDropBusy"
+                  :disabled="!brokerDropNoteTrimmed"
+                  icon="i-lucide-check"
+                  @click="confirmBrokerDrop"
+                >
+                  Drop invoice
                 </UButton>
               </div>
             </div>

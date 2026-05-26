@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { useAuth } from '../composables/useAuth'
-import { getInvoice, getLawyerProfile, markInvoiceAsPaid, requestChargeback, type InvoiceItem, type InvoiceRow } from '../lib/invoices'
+import { brokerDropInvoiceWithNote, getInvoice, getLawyerProfile, markInvoiceAsPaid, requestChargeback, type InvoiceItem, type InvoiceRow } from '../lib/invoices'
 import { supabase } from '../lib/supabase'
 
 const route = useRoute()
@@ -125,6 +125,9 @@ const markingPaid = ref(false)
 const markPaidError = ref<string | null>(null)
 const requestingChargeback = ref(false)
 const chargebackError = ref<string | null>(null)
+const brokerDropConfirmOpen = ref(false)
+const brokerDropNote = ref('')
+const brokerDropNoteTrimmed = computed(() => brokerDropNote.value.trim())
 
 const handlePrint = () => {
   window.print()
@@ -146,6 +149,14 @@ const handleMarkAsPaid = async () => {
 
 const handleRequestChargeback = async () => {
   if (!invoice.value || invoice.value.status !== 'paid') return
+
+  if (isBrokerInvoice.value) {
+    brokerDropConfirmOpen.value = true
+    brokerDropNote.value = ''
+    chargebackError.value = null
+    return
+  }
+
   requestingChargeback.value = true
   chargebackError.value = null
   try {
@@ -153,6 +164,30 @@ const handleRequestChargeback = async () => {
     invoice.value = updated
   } catch (e) {
     chargebackError.value = e instanceof Error ? e.message : 'Failed to request chargeback'
+  } finally {
+    requestingChargeback.value = false
+  }
+}
+
+const closeBrokerDropConfirm = () => {
+  if (requestingChargeback.value) return
+  brokerDropConfirmOpen.value = false
+  brokerDropNote.value = ''
+}
+
+const confirmBrokerDrop = async () => {
+  if (!invoice.value || !brokerDropNoteTrimmed.value) return
+
+  requestingChargeback.value = true
+  chargebackError.value = null
+
+  try {
+    const updated = await brokerDropInvoiceWithNote(invoice.value.id, brokerDropNoteTrimmed.value)
+    invoice.value = updated
+    brokerDropConfirmOpen.value = false
+    brokerDropNote.value = ''
+  } catch (e) {
+    chargebackError.value = e instanceof Error ? e.message : 'Failed to drop invoice'
   } finally {
     requestingChargeback.value = false
   }
@@ -260,7 +295,7 @@ onMounted(async () => {
           :disabled="requestingChargeback"
           @click="handleRequestChargeback"
         >
-          {{ requestingChargeback ? 'Requesting...' : 'Request Chargeback' }}
+          {{ requestingChargeback ? 'Requesting...' : (isBrokerInvoice ? 'Drop Invoice' : 'Request Chargeback') }}
         </button>
         <button class="print-btn" @click="handlePrint">
           Print / Save as PDF
@@ -271,6 +306,36 @@ onMounted(async () => {
       </div>
       <div v-if="chargebackError" class="mark-paid-error no-print">
         {{ chargebackError }}
+      </div>
+
+      <div v-if="brokerDropConfirmOpen" class="broker-drop-modal no-print">
+        <div class="broker-drop-dialog">
+          <div>
+            <h2>Drop Broker Invoice</h2>
+            <p>
+              Add the dropped reason. This note will be saved to the linked lead rows and shown in the closer portal.
+            </p>
+          </div>
+          <textarea
+            v-model="brokerDropNote"
+            rows="5"
+            placeholder="Explain why this invoice or its linked lead was dropped..."
+            :disabled="requestingChargeback"
+          />
+          <div class="broker-drop-actions">
+            <button type="button" class="broker-drop-cancel" :disabled="requestingChargeback" @click="closeBrokerDropConfirm">
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="broker-drop-confirm"
+              :disabled="requestingChargeback || !brokerDropNoteTrimmed"
+              @click="confirmBrokerDrop"
+            >
+              {{ requestingChargeback ? 'Dropping...' : 'Drop invoice' }}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="invoice-paper">
@@ -825,6 +890,93 @@ onMounted(async () => {
   color: #7c6a5a;
   line-height: 1.6;
   white-space: pre-wrap;
+}
+
+.broker-drop-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(20, 16, 16, 0.55);
+  backdrop-filter: blur(8px);
+}
+
+.broker-drop-dialog {
+  width: min(520px, 100%);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 14px;
+  background: #fffaf7;
+  box-shadow: 0 24px 80px rgba(20, 16, 16, 0.28);
+  padding: 22px;
+}
+
+.broker-drop-dialog h2 {
+  margin: 0;
+  color: #141010;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.broker-drop-dialog p {
+  margin: 8px 0 16px;
+  color: #7c6a5a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.broker-drop-dialog textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #eaded4;
+  border-radius: 10px;
+  background: white;
+  color: #141010;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 12px;
+  outline: none;
+}
+
+.broker-drop-dialog textarea:focus {
+  border-color: #d65f1f;
+  box-shadow: 0 0 0 3px rgba(214, 95, 31, 0.14);
+}
+
+.broker-drop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.broker-drop-cancel,
+.broker-drop-confirm {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.broker-drop-cancel {
+  background: #f4ece4;
+  color: #5d4c3f;
+}
+
+.broker-drop-confirm {
+  background: #dc2626;
+  color: white;
+}
+
+.broker-drop-cancel:disabled,
+.broker-drop-confirm:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 /* Footer */
