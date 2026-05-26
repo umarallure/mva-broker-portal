@@ -49,7 +49,6 @@ type AttorneyForm = {
   assistant_email: string
   transfer_standard_types: TransferStandardType[]
   transfer_sol_option: TransferSolOption
-  transfer_sol_other: string
   transfer_injury_types: string[]
   transfer_injury_other: string
 }
@@ -134,7 +133,6 @@ const form = ref<AttorneyForm>({
   assistant_email: '',
   transfer_standard_types: [],
   transfer_sol_option: '3_months',
-  transfer_sol_other: '',
   transfer_injury_types: [],
   transfer_injury_other: ''
 })
@@ -163,7 +161,6 @@ watch([usesSol, usesInjuryTypes], () => {
 watch(usesSol, (enabled) => {
   if (!enabled) {
     form.value.transfer_sol_option = '3_months'
-    form.value.transfer_sol_other = ''
   } else if (!form.value.transfer_sol_option) {
     form.value.transfer_sol_option = '3_months'
   }
@@ -206,7 +203,6 @@ const hydrateForm = (row: BrokerAttorneyRow) => {
     assistant_email: row.assistant_email || '',
     transfer_standard_types: row.transfer_standard_types || [],
     transfer_sol_option: row.transfer_sol_option ?? '3_months',
-    transfer_sol_other: row.transfer_sol_other || '',
     transfer_injury_types: row.transfer_injury_types || [],
     transfer_injury_other: row.transfer_injury_other || ''
   }
@@ -253,9 +249,6 @@ const buildPayload = (): BrokerAttorneyInput => ({
   assistant_email: form.value.assistant_email.trim() || null,
   transfer_standard_types: form.value.transfer_standard_types,
   transfer_sol_option: usesSol.value ? form.value.transfer_sol_option : null,
-  transfer_sol_other: usesSol.value && form.value.transfer_sol_option === 'other'
-    ? form.value.transfer_sol_other.trim() || null
-    : null,
   transfer_injury_types: usesInjuryTypes.value ? form.value.transfer_injury_types : [],
   transfer_injury_other: usesInjuryTypes.value && hasOtherInjuryType.value
     ? form.value.transfer_injury_other.trim() || null
@@ -436,7 +429,6 @@ onMounted(load)
       <div v-else class="space-y-6">
         <!-- Row 1: Core Identity + Contact Details -->
         <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
-
           <!-- ── Core Identity ── -->
           <div class="ap-fade-in ap-delay-1 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
             <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
@@ -448,7 +440,9 @@ onMounted(load)
                 <div class="flex h-7 w-7 items-center justify-center rounded-lg border-[0.5px] border-[var(--ap-accent)]/45 bg-[var(--ap-accent)]/10 dark:border-[var(--ap-accent)]/40">
                   <UIcon name="i-lucide-fingerprint" class="text-xs text-[var(--ap-accent)]" />
                 </div>
-                <h3 class="text-[13px] font-semibold text-highlighted">Core Identity</h3>
+                <h3 class="text-[13px] font-semibold text-highlighted">
+                  Core Identity
+                </h3>
               </div>
             </div>
 
@@ -549,7 +543,9 @@ onMounted(load)
                 <div class="flex h-7 w-7 items-center justify-center rounded-lg border-[0.5px] border-[var(--ap-accent)]/45 bg-[var(--ap-accent)]/10 dark:border-[var(--ap-accent)]/40">
                   <UIcon name="i-lucide-phone" class="text-xs text-[var(--ap-accent)]" />
                 </div>
-                <h3 class="text-[13px] font-semibold text-highlighted">Contact Details</h3>
+                <h3 class="text-[13px] font-semibold text-highlighted">
+                  Contact Details
+                </h3>
               </div>
             </div>
 
@@ -711,150 +707,157 @@ onMounted(load)
 
         <!-- Row 2: Transfer Standards + Retainer Documents (side-by-side) -->
         <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <div class="ap-fade-in ap-delay-3 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
+            <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
 
-        <div class="ap-fade-in ap-delay-3 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
-          <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
-
-          <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
-            <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
-            <div class="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-[var(--ap-accent)] via-[var(--ap-accent)]/60 to-transparent" />
-            <div class="relative flex items-center justify-between gap-3 px-5 py-3.5">
-              <div class="flex items-center gap-3">
-                <div class="flex h-7 w-7 items-center justify-center rounded-lg border-[0.5px] border-[var(--ap-accent)]/45 bg-[var(--ap-accent)]/10 dark:border-[var(--ap-accent)]/40">
-                  <UIcon name="i-lucide-shield-check" class="text-xs text-[var(--ap-accent)]" />
+            <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
+              <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
+              <div class="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-[var(--ap-accent)] via-[var(--ap-accent)]/60 to-transparent" />
+              <div class="relative flex items-center justify-between gap-3 px-5 py-3.5">
+                <div class="flex items-center gap-3">
+                  <div class="flex h-7 w-7 items-center justify-center rounded-lg border-[0.5px] border-[var(--ap-accent)]/45 bg-[var(--ap-accent)]/10 dark:border-[var(--ap-accent)]/40">
+                    <UIcon name="i-lucide-shield-check" class="text-xs text-[var(--ap-accent)]" />
+                  </div>
+                  <h3 class="text-[13px] font-semibold text-highlighted">
+                    Transfer Standards
+                  </h3>
                 </div>
-                <h3 class="text-[13px] font-semibold text-highlighted">Transfer Standards</h3>
+                <p class="hidden sm:block text-[11px] text-muted">
+                  Define when this attorney accepts cases.
+                </p>
               </div>
-              <p class="hidden sm:block text-[11px] text-muted">
-                Define when this attorney accepts cases.
-              </p>
+            </div>
+
+            <div class="relative p-5 space-y-5">
+              <div class="grid gap-4">
+                <!-- SOL standard -->
+                <div
+                  class="relative overflow-hidden rounded-xl border transition-colors"
+                  :class="usesSol ? 'border-[var(--ap-accent)]/35 bg-[var(--ap-accent)]/[0.03]' : 'border-black/[0.06] dark:border-white/[0.08]'"
+                >
+                  <div
+                    class="relative flex items-center justify-between gap-3 border-b px-4 py-3"
+                    :class="usesSol ? 'border-[var(--ap-accent)]/15' : 'border-black/[0.06] dark:border-white/[0.06]'"
+                  >
+                    <div class="flex items-center gap-2.5">
+                      <div class="flex h-6 w-6 items-center justify-center rounded-md border-[0.5px] border-[var(--ap-accent)]/35 bg-[var(--ap-accent)]/10">
+                        <UIcon name="i-lucide-clock-3" class="text-[10px] text-[var(--ap-accent)]" />
+                      </div>
+                      <div>
+                        <p class="text-xs font-semibold text-highlighted">
+                          Statute of Limitations
+                        </p>
+                        <p class="mt-0.5 text-[11px] text-muted">
+                          Accept cases within an SOL window.
+                        </p>
+                      </div>
+                    </div>
+                    <UCheckbox v-model="usesSol" />
+                  </div>
+
+                  <div v-if="usesSol" class="space-y-4 p-4">
+                    <div class="space-y-1.5">
+                      <label class="text-xs font-medium text-highlighted">SOL Standard</label>
+                      <USelect
+                        v-model="form.transfer_sol_option"
+                        :items="TRANSFER_SOL_OPTIONS"
+                        value-key="value"
+                        label-key="label"
+                        class="w-full"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Injury types -->
+                <div
+                  class="relative overflow-hidden rounded-xl border transition-colors"
+                  :class="usesInjuryTypes ? 'border-[var(--ap-accent)]/35 bg-[var(--ap-accent)]/[0.03]' : 'border-black/[0.06] dark:border-white/[0.08]'"
+                >
+                  <div
+                    class="relative flex items-center justify-between gap-3 border-b px-4 py-3"
+                    :class="usesInjuryTypes ? 'border-[var(--ap-accent)]/15' : 'border-black/[0.06] dark:border-white/[0.06]'"
+                  >
+                    <div class="flex items-center gap-2.5">
+                      <div class="flex h-6 w-6 items-center justify-center rounded-md border-[0.5px] border-[var(--ap-accent)]/35 bg-[var(--ap-accent)]/10">
+                        <UIcon name="i-lucide-stethoscope" class="text-[10px] text-[var(--ap-accent)]" />
+                      </div>
+                      <div>
+                        <p class="text-xs font-semibold text-highlighted">
+                          Types of Injury
+                        </p>
+                        <p class="mt-0.5 text-[11px] text-muted">
+                          Restrict to specific injury categories.
+                        </p>
+                      </div>
+                    </div>
+                    <UCheckbox v-model="usesInjuryTypes" />
+                  </div>
+
+                  <div v-if="usesInjuryTypes" class="space-y-4 p-4">
+                    <div class="space-y-1.5">
+                      <label class="text-xs font-medium text-highlighted">Accepted Injury Types</label>
+                      <UInputMenu
+                        v-model="form.transfer_injury_types"
+                        :items="INJURY_TYPE_OPTIONS"
+                        multiple
+                        searchable
+                        placeholder="Select injury types"
+                        class="w-full"
+                        :ui="{ tagsItem: 'hidden' }"
+                      />
+                      <div v-if="form.transfer_injury_types.length" class="flex flex-wrap gap-1.5 pt-0.5">
+                        <span
+                          v-for="type in form.transfer_injury_types"
+                          :key="type"
+                          class="rounded-md border-[0.5px] border-[var(--ap-accent)]/55 bg-[var(--ap-accent)]/20 px-2 py-0.5 text-[11px] font-medium text-white/90"
+                        >
+                          {{ type }}
+                        </span>
+                      </div>
+                    </div>
+                    <div v-if="hasOtherInjuryType" class="space-y-1.5">
+                      <label class="text-xs font-medium text-highlighted">Other Injury Type</label>
+                      <UInput
+                        v-model="form.transfer_injury_other"
+                        placeholder="Custom injury type"
+                        autocomplete="off"
+                        size="md"
+                        class="w-full"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div class="relative p-5 space-y-5">
-            <div class="grid gap-4">
-              <!-- SOL standard -->
-              <div
-                class="relative overflow-hidden rounded-xl border transition-colors"
-                :class="usesSol ? 'border-[var(--ap-accent)]/35 bg-[var(--ap-accent)]/[0.03]' : 'border-black/[0.06] dark:border-white/[0.08]'"
-              >
-                <div class="relative flex items-center justify-between gap-3 border-b px-4 py-3"
-                  :class="usesSol ? 'border-[var(--ap-accent)]/15' : 'border-black/[0.06] dark:border-white/[0.06]'">
-                  <div class="flex items-center gap-2.5">
-                    <div class="flex h-6 w-6 items-center justify-center rounded-md border-[0.5px] border-[var(--ap-accent)]/35 bg-[var(--ap-accent)]/10">
-                      <UIcon name="i-lucide-clock-3" class="text-[10px] text-[var(--ap-accent)]" />
-                    </div>
-                    <div>
-                      <p class="text-xs font-semibold text-highlighted">Statute of Limitations</p>
-                      <p class="mt-0.5 text-[11px] text-muted">Accept cases within an SOL window.</p>
-                    </div>
-                  </div>
-                  <UCheckbox v-model="usesSol" />
-                </div>
+          <!-- Row 3: Retainer Contract Documents (kept) -->
+          <div class="ap-fade-in ap-delay-4 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
+            <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
 
-                <div v-if="usesSol" class="space-y-4 p-4">
-                  <div class="space-y-1.5">
-                    <label class="text-xs font-medium text-highlighted">SOL Standard</label>
-                    <USelect
-                      v-model="form.transfer_sol_option"
-                      :items="TRANSFER_SOL_OPTIONS"
-                      value-key="value"
-                      label-key="label"
-                      class="w-full"
-                    />
+            <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
+              <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
+              <div class="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-[var(--ap-accent)] via-[var(--ap-accent)]/60 to-transparent" />
+              <div class="relative flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="flex h-7 w-7 items-center justify-center rounded-lg border-[0.5px] border-[var(--ap-accent)]/45 bg-[var(--ap-accent)]/10 dark:border-[var(--ap-accent)]/40">
+                    <UIcon name="i-lucide-file-text" class="text-xs text-[var(--ap-accent)]" />
                   </div>
-                  <div v-if="form.transfer_sol_option === 'other'" class="space-y-1.5">
-                    <label class="text-xs font-medium text-highlighted">Other SOL</label>
-                    <UInput
-                      v-model="form.transfer_sol_other"
-                      placeholder="Custom SOL"
-                      autocomplete="off"
-                      size="md"
-                      class="w-full"
-                    />
+                  <div>
+                    <h3 class="text-[13px] font-semibold text-highlighted">
+                      Retainer Contract Documents
+                    </h3>
+                    <p class="mt-0.5 text-[11px] text-muted">
+                      Documents are scoped by broker and attorney profile.
+                    </p>
                   </div>
                 </div>
-              </div>
-
-              <!-- Injury types -->
-              <div
-                class="relative overflow-hidden rounded-xl border transition-colors"
-                :class="usesInjuryTypes ? 'border-[var(--ap-accent)]/35 bg-[var(--ap-accent)]/[0.03]' : 'border-black/[0.06] dark:border-white/[0.08]'"
-              >
-                <div class="relative flex items-center justify-between gap-3 border-b px-4 py-3"
-                  :class="usesInjuryTypes ? 'border-[var(--ap-accent)]/15' : 'border-black/[0.06] dark:border-white/[0.06]'">
-                  <div class="flex items-center gap-2.5">
-                    <div class="flex h-6 w-6 items-center justify-center rounded-md border-[0.5px] border-[var(--ap-accent)]/35 bg-[var(--ap-accent)]/10">
-                      <UIcon name="i-lucide-stethoscope" class="text-[10px] text-[var(--ap-accent)]" />
-                    </div>
-                    <div>
-                      <p class="text-xs font-semibold text-highlighted">Types of Injury</p>
-                      <p class="mt-0.5 text-[11px] text-muted">Restrict to specific injury categories.</p>
-                    </div>
-                  </div>
-                  <UCheckbox v-model="usesInjuryTypes" />
-                </div>
-
-                <div v-if="usesInjuryTypes" class="space-y-4 p-4">
-                  <div class="space-y-1.5">
-                    <label class="text-xs font-medium text-highlighted">Accepted Injury Types</label>
-                    <UInputMenu
-                      v-model="form.transfer_injury_types"
-                      :items="INJURY_TYPE_OPTIONS"
-                      multiple
-                      searchable
-                      placeholder="Select injury types"
-                      class="w-full"
-                      :ui="{ tagsItem: 'hidden' }"
-                    />
-                    <div v-if="form.transfer_injury_types.length" class="flex flex-wrap gap-1.5 pt-0.5">
-                      <span
-                        v-for="type in form.transfer_injury_types"
-                        :key="type"
-                        class="rounded-md border-[0.5px] border-[var(--ap-accent)]/55 bg-[var(--ap-accent)]/20 px-2 py-0.5 text-[11px] font-medium text-white/90"
-                      >
-                        {{ type }}
-                      </span>
-                    </div>
-                  </div>
-                  <div v-if="hasOtherInjuryType" class="space-y-1.5">
-                    <label class="text-xs font-medium text-highlighted">Other Injury Type</label>
-                    <UInput
-                      v-model="form.transfer_injury_other"
-                      placeholder="Custom injury type"
-                      autocomplete="off"
-                      size="md"
-                      class="w-full"
-                    />
-                  </div>
-                </div>
+                <span class="text-xs text-muted">{{ documents.length }} {{ documents.length === 1 ? 'document' : 'documents' }}</span>
               </div>
             </div>
-          </div>
-        </div>
 
-        <!-- Row 3: Retainer Contract Documents (kept) -->
-        <div class="ap-fade-in ap-delay-4 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
-          <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
-
-          <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
-            <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
-            <div class="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-[var(--ap-accent)] via-[var(--ap-accent)]/60 to-transparent" />
-            <div class="relative flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
-              <div class="flex items-center gap-3">
-                <div class="flex h-7 w-7 items-center justify-center rounded-lg border-[0.5px] border-[var(--ap-accent)]/45 bg-[var(--ap-accent)]/10 dark:border-[var(--ap-accent)]/40">
-                  <UIcon name="i-lucide-file-text" class="text-xs text-[var(--ap-accent)]" />
-                </div>
-                <div>
-                  <h3 class="text-[13px] font-semibold text-highlighted">Retainer Contract Documents</h3>
-                  <p class="mt-0.5 text-[11px] text-muted">Documents are scoped by broker and attorney profile.</p>
-                </div>
-              </div>
-              <span class="text-xs text-muted">{{ documents.length }} {{ documents.length === 1 ? 'document' : 'documents' }}</span>
-            </div>
-          </div>
-
-          <div class="relative p-5">
+            <div class="relative p-5">
               <div class="space-y-4">
                 <div
                   v-if="canAddDocument"
@@ -925,7 +928,9 @@ onMounted(load)
 
                 <div v-if="!documents.length" class="rounded-lg border border-dashed border-black/[0.08] p-8 text-center dark:border-white/[0.08]">
                   <UIcon name="i-lucide-file-plus-2" class="mx-auto size-7 text-muted" />
-                  <p class="mt-2 text-sm font-medium text-highlighted">No documents uploaded</p>
+                  <p class="mt-2 text-sm font-medium text-highlighted">
+                    No documents uploaded
+                  </p>
                 </div>
 
                 <div v-else class="divide-y divide-black/[0.06] rounded-xl border border-black/[0.06] px-4 dark:divide-white/[0.06] dark:border-white/[0.08]">
@@ -940,7 +945,9 @@ onMounted(load)
                       </div>
                       <div class="min-w-0">
                         <div class="flex flex-wrap items-center gap-2">
-                          <p class="truncate text-sm font-medium text-highlighted">{{ doc.document_name }}</p>
+                          <p class="truncate text-sm font-medium text-highlighted">
+                            {{ doc.document_name }}
+                          </p>
                           <span class="rounded-md bg-[var(--ap-accent)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--ap-accent)]">
                             {{ getBrokerRetainerDocumentKind(doc.document_mime_type, doc.document_name).toUpperCase() }}
                           </span>
@@ -1009,7 +1016,6 @@ onMounted(load)
               </div>
             </div>
           </div>
-
         </div>
       </div>
     </template>

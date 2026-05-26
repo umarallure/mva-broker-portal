@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 
 export type TransferStandardType = 'sol' | 'injury_type'
-export type TransferSolOption = '3_months' | '6_months' | '12_months' | 'other'
+export type TransferSolOption = '3_months' | '6_months' | '12_months'
 export type CoverageSolCriteria = 'no_criteria' | '3_months' | '6_months' | '12_months'
 export type CoverageCaseCategory = 'Consumer Cases' | 'Consumer and Commercial Cases'
 export type CoverageLiabilityStatus = 'clear_only' | 'disputed_ok'
@@ -27,7 +27,6 @@ export type BrokerAttorneyRow = {
   assistant_email: string | null
   transfer_standard_types: TransferStandardType[]
   transfer_sol_option: TransferSolOption | null
-  transfer_sol_other: string | null
   transfer_injury_types: string[]
   transfer_injury_other: string | null
   coverage_states: string[]
@@ -68,7 +67,6 @@ export const BROKER_ATTORNEY_COLUMNS = [
   'assistant_email',
   'transfer_standard_types',
   'transfer_sol_option',
-  'transfer_sol_other',
   'transfer_injury_types',
   'transfer_injury_other',
   'coverage_states',
@@ -100,8 +98,7 @@ export const TRANSFER_STANDARD_OPTIONS = [
 export const TRANSFER_SOL_OPTIONS = [
   { label: '3 months', value: '3_months' },
   { label: '6 months', value: '6_months' },
-  { label: '12 months', value: '12_months' },
-  { label: 'Other', value: 'other' }
+  { label: '12 months', value: '12_months' }
 ]
 
 export const INJURY_TYPE_OPTIONS = [
