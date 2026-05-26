@@ -856,56 +856,71 @@ onMounted(load)
 
           <div class="relative p-5">
               <div class="space-y-4">
-                <div v-if="canAddDocument" class="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)_auto] lg:items-start">
-                  <UFormField label="State">
-                    <USelect
-                      v-model="newDocument.state"
-                      :items="availableDocumentStates"
-                      placeholder="Select state"
-                    />
-                  </UFormField>
-
-                  <UFormField label="Document">
-                    <input
-                      ref="fileInput"
-                      type="file"
-                      class="hidden"
-                      :accept="BROKER_RETAINER_DOCUMENT_ACCEPT"
-                      @change="handleFileSelected"
-                    >
-                    <div class="flex gap-2">
-                      <button
-                        type="button"
-                        class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--ap-accent)]/30 px-3 py-2 text-xs font-medium text-muted transition hover:border-[var(--ap-accent)]/60 hover:text-[var(--ap-accent)]"
-                        @click="openFilePicker"
-                      >
-                        <UIcon name="i-lucide-upload" class="size-4 text-[var(--ap-accent)]" />
-                        <span class="truncate">{{ newDocument.file?.name || `Upload PDF, DOC, or DOCX (${maxFileSizeLabel} max)` }}</span>
-                      </button>
-                      <UButton
-                        v-if="newDocument.file"
-                        icon="i-lucide-x"
-                        color="neutral"
-                        variant="ghost"
-                        size="sm"
-                        @click="newDocument.file = null"
+                <div
+                  v-if="canAddDocument"
+                  class="rounded-xl border border-dashed border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/[0.02] p-4 space-y-3"
+                >
+                  <div class="grid gap-3 sm:grid-cols-2">
+                    <div class="space-y-1.5">
+                      <label class="text-xs font-medium text-highlighted">State</label>
+                      <USelect
+                        v-model="newDocument.state"
+                        :items="availableDocumentStates"
+                        placeholder="Select state"
+                        class="w-full"
                       />
                     </div>
-                  </UFormField>
+                    <div class="space-y-1.5">
+                      <label class="text-xs font-medium text-highlighted">Document</label>
+                      <input
+                        ref="fileInput"
+                        type="file"
+                        class="hidden"
+                        :accept="BROKER_RETAINER_DOCUMENT_ACCEPT"
+                        @change="handleFileSelected"
+                      >
+                      <div class="flex gap-2">
+                        <button
+                          type="button"
+                          class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--ap-accent)]/30 px-3 py-2 text-xs font-medium text-muted transition hover:border-[var(--ap-accent)]/60 hover:text-[var(--ap-accent)]"
+                          @click="openFilePicker"
+                        >
+                          <UIcon name="i-lucide-upload" class="size-4 text-[var(--ap-accent)]" />
+                          <span class="truncate">{{ newDocument.file?.name || `Upload (${maxFileSizeLabel} max)` }}</span>
+                        </button>
+                        <UButton
+                          v-if="newDocument.file"
+                          icon="i-lucide-x"
+                          color="neutral"
+                          variant="ghost"
+                          size="sm"
+                          @click="newDocument.file = null"
+                        />
+                      </div>
+                    </div>
+                  </div>
 
-                  <UButton
-                    icon="i-lucide-check"
-                    :loading="uploadingDocument"
-                    :disabled="!newDocument.state || !newDocument.file"
-                    class="mt-6 rounded-lg"
-                    @click="uploadDocument"
-                  >
-                    Upload
-                  </UButton>
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-medium text-highlighted">Notes</label>
+                    <UTextarea
+                      v-model="newDocument.notes"
+                      :rows="2"
+                      placeholder="Optional document notes"
+                      class="w-full"
+                    />
+                  </div>
 
-                  <UFormField class="lg:col-span-3" label="Notes">
-                    <UTextarea v-model="newDocument.notes" :rows="2" placeholder="Optional document notes" />
-                  </UFormField>
+                  <div class="flex justify-end">
+                    <UButton
+                      icon="i-lucide-upload-cloud"
+                      :loading="uploadingDocument"
+                      :disabled="!newDocument.state || !newDocument.file"
+                      class="rounded-lg"
+                      @click="uploadDocument"
+                    >
+                      Upload Document
+                    </UButton>
+                  </div>
                 </div>
 
                 <div v-if="!documents.length" class="rounded-lg border border-dashed border-black/[0.08] p-8 text-center dark:border-white/[0.08]">
