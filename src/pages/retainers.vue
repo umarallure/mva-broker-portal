@@ -12,8 +12,8 @@ type StageKey = 'review' | 'approved' | 'rejected' | 'billable'
 
 const STAGES: { key: StageKey, label: string, status: LeadStatus }[] = [
   { key: 'review', label: 'Sent Retainers', status: 'attorney_review' },
-  { key: 'approved', label: 'Approved by Attorney', status: 'attorney_approved' },
   { key: 'rejected', label: 'Rejected by Attorney', status: 'attorney_rejected' },
+  { key: 'approved', label: 'Approved by Attorney', status: 'attorney_approved' },
   { key: 'billable', label: 'Billable', status: 'qualified_payable' }
 ]
 
@@ -810,19 +810,6 @@ const confirmMove = async () => {
           </div>
 
           <div class="ap-fade-in ap-delay-1 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
-            <div class="absolute inset-y-0 left-0 w-1 bg-green-400" />
-            <div class="flex items-center justify-between px-5 py-4 pl-5">
-              <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-green-500 dark:text-green-400">Approved</p>
-                <p class="mt-1 text-2xl font-bold text-green-500 dark:text-green-400 tabular-nums">{{ approvedCount }}</p>
-              </div>
-              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10">
-                <UIcon name="i-lucide-check-circle" class="text-lg text-green-400" />
-              </div>
-            </div>
-          </div>
-
-          <div class="ap-fade-in ap-delay-2 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
             <div class="absolute inset-y-0 left-0 w-1 bg-red-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
@@ -831,6 +818,19 @@ const confirmMove = async () => {
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10">
                 <UIcon name="i-lucide-x-circle" class="text-lg text-red-400" />
+              </div>
+            </div>
+          </div>
+
+          <div class="ap-fade-in ap-delay-2 group relative overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:shadow-xl">
+            <div class="absolute inset-y-0 left-0 w-1 bg-green-400" />
+            <div class="flex items-center justify-between px-5 py-4 pl-5">
+              <div>
+                <p class="text-[10px] font-medium uppercase tracking-wider text-green-500 dark:text-green-400">Approved</p>
+                <p class="mt-1 text-2xl font-bold text-green-500 dark:text-green-400 tabular-nums">{{ approvedCount }}</p>
+              </div>
+              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10">
+                <UIcon name="i-lucide-check-circle" class="text-lg text-green-400" />
               </div>
             </div>
           </div>
