@@ -101,10 +101,19 @@ export const US_STATES = [
 export type USStateCode = typeof US_STATES[number]['code']
 export type USStateName = typeof US_STATES[number]['name']
 
-export const US_STATES_OPTIONS = US_STATES.map(state => ({
-  label: `${state.name} (${state.code})`,
-  value: state.code
-}))
+export const RETAINER_CONTRACT_DOCUMENT_ALL_STATES_VALUE = 'ALL'
+export const RETAINER_CONTRACT_DOCUMENT_ALL_STATES_OPTION = {
+  label: 'All States',
+  value: RETAINER_CONTRACT_DOCUMENT_ALL_STATES_VALUE
+}
+
+export const US_STATES_OPTIONS = [
+  RETAINER_CONTRACT_DOCUMENT_ALL_STATES_OPTION,
+  ...US_STATES.map(state => ({
+    label: `${state.name} (${state.code})`,
+    value: state.code
+  }))
+]
 
 export const RETAINER_CONTRACT_DOCUMENT_BUCKET = 'retainer-contract-documents'
 export const RETAINER_CONTRACT_DOCUMENT_MAX_SIZE_BYTES = 10 * 1024 * 1024
@@ -592,6 +601,10 @@ export async function getMultiStateDocumentSignedUrl(path: string, expiresInSeco
 }
 
 export function getStateName(stateCode: string): string {
+  if (stateCode === RETAINER_CONTRACT_DOCUMENT_ALL_STATES_VALUE) {
+    return RETAINER_CONTRACT_DOCUMENT_ALL_STATES_OPTION.label
+  }
+
   const state = US_STATES.find(s => s.code === stateCode)
   return state?.name || stateCode
 }

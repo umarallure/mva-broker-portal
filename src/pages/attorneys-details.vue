@@ -19,6 +19,7 @@ import {
 import { US_STATES } from '../lib/us-states'
 import {
   BROKER_RETAINER_DOCUMENT_ACCEPT,
+  BROKER_RETAINER_DOCUMENT_ALL_STATES_VALUE,
   BROKER_RETAINER_DOCUMENT_MAX_SIZE_BYTES,
   BROKER_RETAINER_DOCUMENT_STATE_OPTIONS,
   deleteBrokerRetainerDocument,
@@ -132,16 +133,18 @@ const form = ref<AttorneyForm>({
   assistant_name: '',
   assistant_email: '',
   transfer_standard_types: [],
-  transfer_sol_option: '3_months',
+  transfer_sol_option: '6_12_months',
   transfer_injury_types: [],
   transfer_injury_other: ''
 })
 
-const newDocument = ref({
-  state: '',
+const createNewDocumentDraft = (state = BROKER_RETAINER_DOCUMENT_ALL_STATES_VALUE) => ({
+  state,
   file: null as File | null,
   notes: ''
 })
+
+const newDocument = ref(createNewDocumentDraft())
 
 const usedDocumentStates = computed(() => new Set(documents.value.map(doc => doc.state)))
 const availableDocumentStates = computed(() =>
@@ -149,7 +152,46 @@ const availableDocumentStates = computed(() =>
 )
 const canAddDocument = computed(() => availableDocumentStates.value.length > 0)
 const maxFileSizeLabel = `${Math.round(BROKER_RETAINER_DOCUMENT_MAX_SIZE_BYTES / (1024 * 1024))}MB`
-const hasOtherInjuryType = computed(() => form.value.transfer_injury_types.includes('Other'))
+
+const normalizeTransferInjuryTypes = (types: string[]) => {
+  const allowedTypes = new Set(INJURY_TYPE_OPTIONS)
+
+  if (types.includes('Consumer and Commercial Cases')) return ['Consumer and Commercial Cases']
+  if (types.includes('Consumer Cases')) return ['Consumer Cases']
+
+  const validType = types.find(type => allowedTypes.has(type))
+  return validType ? [validType] : types.length ? [INJURY_TYPE_OPTIONS[0]] : []
+}
+
+const selectedTransferInjuryType = computed({
+  get: () => normalizeTransferInjuryTypes(form.value.transfer_injury_types)[0] ?? '',
+  set: (value: string) => {
+    form.value.transfer_injury_types = value ? [value] : []
+  }
+})
+
+const normalizeTransferSolOption = (value?: string | null): TransferSolOption => {
+  if (value === '12_plus_months') return '12_plus_months'
+  return '6_12_months'
+}
+
+const getDefaultDocumentState = () => {
+  if (availableDocumentStates.value.some(option => option.value === BROKER_RETAINER_DOCUMENT_ALL_STATES_VALUE)) {
+    return BROKER_RETAINER_DOCUMENT_ALL_STATES_VALUE
+  }
+
+  return availableDocumentStates.value[0]?.value ?? ''
+}
+
+watch(
+  availableDocumentStates,
+  () => {
+    if (!availableDocumentStates.value.some(option => option.value === newDocument.value.state)) {
+      newDocument.value.state = getDefaultDocumentState()
+    }
+  },
+  { immediate: true }
+)
 
 watch([usesSol, usesInjuryTypes], () => {
   const selected: TransferStandardType[] = []
@@ -160,9 +202,9 @@ watch([usesSol, usesInjuryTypes], () => {
 
 watch(usesSol, (enabled) => {
   if (!enabled) {
-    form.value.transfer_sol_option = '3_months'
+    form.value.transfer_sol_option = '6_12_months'
   } else if (!form.value.transfer_sol_option) {
-    form.value.transfer_sol_option = '3_months'
+    form.value.transfer_sol_option = '6_12_months'
   }
 })
 
@@ -172,15 +214,6 @@ watch(usesInjuryTypes, (enabled) => {
     form.value.transfer_injury_other = ''
   }
 })
-
-watch(
-  () => form.value.transfer_injury_types.slice(),
-  (types) => {
-    if (!types.includes('Other')) {
-      form.value.transfer_injury_other = ''
-    }
-  }
-)
 
 watch([addressStreet, addressSuite, addressCity, addressState, addressZip], () => {
   form.value.office_address = buildAddress()
@@ -202,9 +235,9 @@ const hydrateForm = (row: BrokerAttorneyRow) => {
     assistant_name: row.assistant_name || '',
     assistant_email: row.assistant_email || '',
     transfer_standard_types: row.transfer_standard_types || [],
-    transfer_sol_option: row.transfer_sol_option ?? '3_months',
-    transfer_injury_types: row.transfer_injury_types || [],
-    transfer_injury_other: row.transfer_injury_other || ''
+    transfer_sol_option: normalizeTransferSolOption(row.transfer_sol_option),
+    transfer_injury_types: normalizeTransferInjuryTypes(row.transfer_injury_types || []),
+    transfer_injury_other: ''
   }
   usesSol.value = form.value.transfer_standard_types.includes('sol')
   usesInjuryTypes.value = form.value.transfer_standard_types.includes('injury_type')
@@ -248,11 +281,9 @@ const buildPayload = (): BrokerAttorneyInput => ({
   assistant_name: form.value.assistant_name.trim() || null,
   assistant_email: form.value.assistant_email.trim() || null,
   transfer_standard_types: form.value.transfer_standard_types,
-  transfer_sol_option: usesSol.value ? form.value.transfer_sol_option : null,
-  transfer_injury_types: usesInjuryTypes.value ? form.value.transfer_injury_types : [],
-  transfer_injury_other: usesInjuryTypes.value && hasOtherInjuryType.value
-    ? form.value.transfer_injury_other.trim() || null
-    : null
+  transfer_sol_option: usesSol.value ? normalizeTransferSolOption(form.value.transfer_sol_option) : null,
+  transfer_injury_types: usesInjuryTypes.value ? normalizeTransferInjuryTypes(form.value.transfer_injury_types) : [],
+  transfer_injury_other: null
 })
 
 const saveAttorney = async () => {
@@ -278,7 +309,7 @@ const saveAttorney = async () => {
 }
 
 const resetNewDocument = () => {
-  newDocument.value = { state: '', file: null, notes: '' }
+  newDocument.value = createNewDocumentDraft(getDefaultDocumentState())
   if (fileInput.value) fileInput.value.value = ''
 }
 
@@ -798,31 +829,9 @@ onMounted(load)
                     <div class="space-y-1.5">
                       <label class="text-xs font-medium text-highlighted">Accepted Injury Types</label>
                       <UInputMenu
-                        v-model="form.transfer_injury_types"
+                        v-model="selectedTransferInjuryType"
                         :items="INJURY_TYPE_OPTIONS"
-                        multiple
-                        searchable
-                        placeholder="Select injury types"
-                        class="w-full"
-                        :ui="{ tagsItem: 'hidden' }"
-                      />
-                      <div v-if="form.transfer_injury_types.length" class="flex flex-wrap gap-1.5 pt-0.5">
-                        <span
-                          v-for="type in form.transfer_injury_types"
-                          :key="type"
-                          class="rounded-md border-[0.5px] border-[var(--ap-accent)]/55 bg-[var(--ap-accent)]/20 px-2 py-0.5 text-[11px] font-medium text-white/90"
-                        >
-                          {{ type }}
-                        </span>
-                      </div>
-                    </div>
-                    <div v-if="hasOtherInjuryType" class="space-y-1.5">
-                      <label class="text-xs font-medium text-highlighted">Other Injury Type</label>
-                      <UInput
-                        v-model="form.transfer_injury_other"
-                        placeholder="Custom injury type"
-                        autocomplete="off"
-                        size="md"
+                        placeholder="Select injury type"
                         class="w-full"
                       />
                     </div>

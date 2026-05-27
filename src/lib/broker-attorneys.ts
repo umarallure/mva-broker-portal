@@ -1,8 +1,8 @@
 import { supabase } from './supabase'
 
 export type TransferStandardType = 'sol' | 'injury_type'
-export type TransferSolOption = '3_months' | '6_months' | '12_months'
-export type CoverageSolCriteria = 'no_criteria' | '3_months' | '6_months' | '12_months'
+export type TransferSolOption = '6_12_months' | '12_plus_months'
+export type CoverageSolCriteria = '6_12_months' | '12_plus_months'
 export type CoverageCaseCategory = 'Consumer Cases' | 'Consumer and Commercial Cases'
 export type CoverageLiabilityStatus = 'clear_only' | 'disputed_ok'
 export type CoverageInsuranceStatus = 'insured_only' | 'uninsured_ok'
@@ -96,37 +96,18 @@ export const TRANSFER_STANDARD_OPTIONS = [
 ]
 
 export const TRANSFER_SOL_OPTIONS = [
-  { label: '3 months', value: '3_months' },
-  { label: '6 months', value: '6_months' },
-  { label: '12 months', value: '12_months' }
+  { label: '6-12 months', value: '6_12_months' },
+  { label: '12+ months', value: '12_plus_months' }
 ]
 
 export const INJURY_TYPE_OPTIONS = [
-  'Auto Accidents',
-  'Truck Accidents',
-  'Motorcycle Accidents',
-  'Pedestrian Accidents',
-  'Slip and Fall',
-  'Medical Malpractice',
-  'Nursing Home Abuse',
-  'Birth Injuries',
-  'Workplace Injuries',
-  'Construction Accidents',
-  'Dog Bites',
-  'Defective Products',
-  'Toxic Exposure',
-  'Brain Injuries',
-  'Spinal Cord Injuries',
-  'Burn Injuries',
-  'Wrongful Death',
-  'Other'
+  'Consumer Cases',
+  'Consumer and Commercial Cases'
 ]
 
 export const COVERAGE_SOL_OPTIONS = [
-  { label: 'No SOL Criteria', value: 'no_criteria' },
-  { label: '3 months', value: '3_months' },
-  { label: '6 months', value: '6_months' },
-  { label: '12 months', value: '12_months' }
+  { label: '6-12 months', value: '6_12_months' },
+  { label: '12+ months', value: '12_plus_months' }
 ]
 
 export const COVERAGE_CASE_CATEGORY_OPTIONS = [
@@ -169,7 +150,7 @@ export const defaultBrokerAttorneyInput = (): Required<Pick<
   transfer_injury_types: [],
   coverage_states: [],
   coverage_case_category: 'Consumer Cases',
-  coverage_sol_criteria: 'no_criteria',
+  coverage_sol_criteria: '6_12_months',
   coverage_liability_status: 'clear_only',
   coverage_insurance_status: 'insured_only',
   coverage_medical_treatment: 'ongoing',

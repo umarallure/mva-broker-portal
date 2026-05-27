@@ -62,13 +62,15 @@ const getTransferSolLabel = (attorney: BrokerAttorneyRow) => {
     return 'Not set'
   }
 
-  const labels: Record<NonNullable<BrokerAttorneyRow['transfer_sol_option']>, string> = {
-    '3_months': '3 months',
-    '6_months': '6 months',
-    '12_months': '12 months'
+  const labels: Record<string, string> = {
+    '3_months': '6-12 months',
+    '6_months': '6-12 months',
+    '12_months': '6-12 months',
+    '6_12_months': '6-12 months',
+    '12_plus_months': '12+ months'
   }
 
-  return attorney.transfer_sol_option ? labels[attorney.transfer_sol_option] : 'Not set'
+  return attorney.transfer_sol_option ? labels[attorney.transfer_sol_option] ?? 'Not set' : 'Not set'
 }
 
 const resetCreateForm = () => {

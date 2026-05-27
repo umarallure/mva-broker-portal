@@ -24,6 +24,35 @@ COMMENT ON COLUMN public.leads.broker_rejection_note IS
 COMMENT ON COLUMN public.leads.broker_dropped_note IS
   'Broker-provided reason when a broker invoice is moved to Dropped/chargeback.';
 
+CREATE OR REPLACE FUNCTION public.invoices_broker_chargeback_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF public.current_user_is_broker()
+    AND OLD.invoice_type = 'broker'
+    AND NEW.invoice_type = 'broker'
+    AND NEW.status = 'chargeback'
+    AND OLD.status IS DISTINCT FROM NEW.status
+    AND coalesce(current_setting('app.broker_drop_invoice_with_note', true), '') <> 'on'
+  THEN
+    RAISE EXCEPTION 'Broker invoice drops require a dropped note'
+      USING errcode = '22023';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_invoices_broker_chargeback_guard ON public.invoices;
+
+CREATE TRIGGER trg_invoices_broker_chargeback_guard
+  BEFORE UPDATE ON public.invoices
+  FOR EACH ROW
+  EXECUTE FUNCTION public.invoices_broker_chargeback_guard();
+
 CREATE OR REPLACE FUNCTION public.leads_broker_column_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -60,6 +89,7 @@ BEGIN
   END IF;
 
   IF NEW.status = 'attorney_rejected'
+    AND OLD.status IS DISTINCT FROM 'attorney_rejected'
     AND (NEW.broker_rejection_note IS NULL OR length(btrim(NEW.broker_rejection_note)) = 0)
   THEN
     RAISE EXCEPTION 'Broker rejection note is required when rejecting a lead';
@@ -182,6 +212,8 @@ BEGIN
     RAISE EXCEPTION 'No broker-owned leads were linked to this invoice'
       USING errcode = 'P0002';
   END IF;
+
+  PERFORM set_config('app.broker_drop_invoice_with_note', 'on', true);
 
   UPDATE public.invoices i
   SET status = 'chargeback'

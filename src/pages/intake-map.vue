@@ -59,7 +59,7 @@ const coverageForm = ref<CoverageForm>({
   broker_attorney_id: '',
   coverage_states: [],
   coverage_case_category: 'Consumer Cases',
-  coverage_sol_criteria: 'no_criteria',
+  coverage_sol_criteria: '6_12_months',
   coverage_liability_status: 'clear_only',
   coverage_insurance_status: 'insured_only',
   coverage_medical_treatment: 'ongoing',
@@ -80,9 +80,14 @@ const selectedAttorney = computed(() =>
   attorneys.value.find(attorney => attorney.id === selectedAttorneyId.value) ?? null
 )
 
-const coveredStateSet = computed(() => new Set(selectedAttorney.value?.coverage_states ?? []))
 const coveredStateRows = computed(() =>
   (selectedAttorney.value?.coverage_states ?? [])
+    .map(code => ({ code, name: US_STATES.find(state => state.code === code)?.name ?? code }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+)
+
+const coverageFormStateRows = computed(() =>
+  coverageForm.value.coverage_states
     .map(code => ({ code, name: US_STATES.find(state => state.code === code)?.name ?? code }))
     .sort((a, b) => a.name.localeCompare(b.name))
 )
@@ -114,12 +119,17 @@ const noCoverageCount = computed(() => US_STATES.length - networkCoverageCounts.
 
 const normalizeStateCode = (value: unknown) => String(value || '').trim().toUpperCase()
 
+const normalizeCoverageSolCriteria = (value?: string | null): CoverageSolCriteria => {
+  if (value === '12_plus_months') return '12_plus_months'
+  return '6_12_months'
+}
+
 const hydrateCoverageForm = (attorney: BrokerAttorneyRow) => {
   coverageForm.value = {
     broker_attorney_id: attorney.id,
     coverage_states: [...(attorney.coverage_states ?? [])],
     coverage_case_category: attorney.coverage_case_category ?? 'Consumer Cases',
-    coverage_sol_criteria: attorney.coverage_sol_criteria ?? 'no_criteria',
+    coverage_sol_criteria: normalizeCoverageSolCriteria(attorney.coverage_sol_criteria),
     coverage_liability_status: attorney.coverage_liability_status ?? 'clear_only',
     coverage_insurance_status: attorney.coverage_insurance_status ?? 'insured_only',
     coverage_medical_treatment: attorney.coverage_medical_treatment ?? 'ongoing',
@@ -296,7 +306,7 @@ const saveCoverage = async () => {
     const updated = await updateBrokerAttorney(attorneyId, {
       coverage_states: coverageForm.value.coverage_states,
       coverage_case_category: coverageForm.value.coverage_case_category,
-      coverage_sol_criteria: coverageForm.value.coverage_sol_criteria,
+      coverage_sol_criteria: normalizeCoverageSolCriteria(coverageForm.value.coverage_sol_criteria),
       coverage_liability_status: coverageForm.value.coverage_liability_status,
       coverage_insurance_status: coverageForm.value.coverage_insurance_status,
       coverage_medical_treatment: coverageForm.value.coverage_medical_treatment,
@@ -562,104 +572,177 @@ onMounted(loadAttorneys)
         title="General Coverage"
         description="Save coverage criteria to the selected broker attorney profile."
         :dismissible="!saving"
+        :ui="{ content: 'sm:max-w-3xl' }"
       >
         <template #body>
-          <div class="space-y-4">
-            <UFormField label="Attorney">
-              <USelect
-                v-model="coverageForm.broker_attorney_id"
-                :items="attorneyOptions"
-                value-key="value"
-                label-key="label"
-                placeholder="Select attorney"
-              />
-            </UFormField>
+          <div class="space-y-5">
+            <section class="rounded-xl border border-[var(--ap-card-border)] bg-white/70 p-4 dark:bg-white/[0.03]">
+              <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_11rem] lg:items-end">
+                <UFormField label="Attorney">
+                  <USelect
+                    v-model="coverageForm.broker_attorney_id"
+                    :items="attorneyOptions"
+                    value-key="value"
+                    label-key="label"
+                    placeholder="Select attorney"
+                    icon="i-lucide-scale"
+                    class="w-full"
+                  />
+                </UFormField>
 
-            <UFormField label="States">
-              <USelect
-                v-model="coverageForm.coverage_states"
-                :items="stateOptions"
-                value-key="value"
-                label-key="label"
-                multiple
-                placeholder="Select states"
-                :ui="multiSelectUi"
-              />
-            </UFormField>
+                <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-hover)] px-3 py-2">
+                  <div class="flex items-center gap-2">
+                    <UIcon name="i-lucide-map-pinned" class="size-4 text-[var(--ap-accent)]" />
+                    <span class="text-[11px] font-medium text-muted">Selected States</span>
+                  </div>
+                  <div class="mt-1 text-2xl font-semibold tabular-nums text-highlighted">
+                    {{ coverageForm.coverage_states.length }}
+                  </div>
+                </div>
+              </div>
+            </section>
 
-            <div class="grid gap-4 sm:grid-cols-2">
-              <UFormField label="Case Category">
-                <USelect
-                  v-model="coverageForm.coverage_case_category"
-                  :items="COVERAGE_CASE_CATEGORY_OPTIONS"
-                  value-key="value"
-                  label-key="label"
-                />
-              </UFormField>
-              <UFormField label="SOL">
-                <USelect
-                  v-model="coverageForm.coverage_sol_criteria"
-                  :items="COVERAGE_SOL_OPTIONS"
-                  value-key="value"
-                  label-key="label"
-                />
-              </UFormField>
-            </div>
+            <section class="space-y-3">
+              <div class="flex items-center gap-2">
+                <UIcon name="i-lucide-map" class="size-4 text-[var(--ap-accent)]" />
+                <h3 class="text-sm font-semibold text-highlighted">
+                  Territory
+                </h3>
+              </div>
 
-            <div class="grid gap-4 sm:grid-cols-2">
-              <UFormField label="Liability">
+              <UFormField label="States">
                 <USelect
-                  v-model="coverageForm.coverage_liability_status"
-                  :items="LIABILITY_OPTIONS"
+                  v-model="coverageForm.coverage_states"
+                  :items="stateOptions"
                   value-key="value"
                   label-key="label"
-                />
-              </UFormField>
-              <UFormField label="Insurance">
-                <USelect
-                  v-model="coverageForm.coverage_insurance_status"
-                  :items="INSURANCE_OPTIONS"
-                  value-key="value"
-                  label-key="label"
-                />
-              </UFormField>
-            </div>
-
-            <div class="grid gap-4 sm:grid-cols-2">
-              <UFormField label="Medical Treatment">
-                <USelect
-                  v-model="coverageForm.coverage_medical_treatment"
-                  :items="MEDICAL_TREATMENT_OPTIONS"
-                  value-key="value"
-                  label-key="label"
-                />
-              </UFormField>
-              <UFormField label="Languages">
-                <USelect
-                  v-model="coverageForm.coverage_languages"
-                  :items="LANGUAGE_OPTIONS"
                   multiple
-                  placeholder="Select languages"
+                  placeholder="Select states"
+                  class="w-full"
                   :ui="multiSelectUi"
                 />
               </UFormField>
-            </div>
 
-            <UCheckbox v-model="coverageForm.coverage_no_prior_attorney" label="No prior attorney" />
+              <div class="min-h-12 rounded-lg border border-dashed border-[var(--ap-card-border)] bg-[var(--ap-card-hover)] p-3">
+                <div v-if="coverageFormStateRows.length" class="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto pr-1">
+                  <span
+                    v-for="state in coverageFormStateRows"
+                    :key="state.code"
+                    class="inline-flex items-center gap-1 rounded-md border border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/10 px-2 py-1 text-[11px] font-medium text-highlighted"
+                  >
+                    <span class="font-semibold text-[var(--ap-accent)]">{{ state.code }}</span>
+                    <span class="text-muted">{{ state.name }}</span>
+                  </span>
+                </div>
+                <div v-else class="flex items-center gap-2 text-xs text-muted">
+                  <UIcon name="i-lucide-info" class="size-4" />
+                  No states selected
+                </div>
+              </div>
+            </section>
 
-            <UFormField label="Notes">
-              <UTextarea
-                v-model="coverageForm.coverage_notes"
-                :rows="4"
-                placeholder="Notes for this attorney coverage..."
-              />
-            </UFormField>
+            <section class="space-y-3">
+              <div class="flex items-center gap-2">
+                <UIcon name="i-lucide-list-checks" class="size-4 text-[var(--ap-accent)]" />
+                <h3 class="text-sm font-semibold text-highlighted">
+                  Case Criteria
+                </h3>
+              </div>
 
-            <div class="flex justify-end gap-2 border-t border-black/[0.06] pt-4 dark:border-white/[0.06]">
+              <div class="grid gap-4 sm:grid-cols-2">
+                <UFormField label="Case Category">
+                  <USelect
+                    v-model="coverageForm.coverage_case_category"
+                    :items="COVERAGE_CASE_CATEGORY_OPTIONS"
+                    value-key="value"
+                    label-key="label"
+                    class="w-full"
+                  />
+                </UFormField>
+
+                <UFormField label="SOL">
+                  <USelect
+                    v-model="coverageForm.coverage_sol_criteria"
+                    :items="COVERAGE_SOL_OPTIONS"
+                    value-key="value"
+                    label-key="label"
+                    class="w-full"
+                  />
+                </UFormField>
+
+                <UFormField label="Liability">
+                  <USelect
+                    v-model="coverageForm.coverage_liability_status"
+                    :items="LIABILITY_OPTIONS"
+                    value-key="value"
+                    label-key="label"
+                    class="w-full"
+                  />
+                </UFormField>
+
+                <UFormField label="Insurance">
+                  <USelect
+                    v-model="coverageForm.coverage_insurance_status"
+                    :items="INSURANCE_OPTIONS"
+                    value-key="value"
+                    label-key="label"
+                    class="w-full"
+                  />
+                </UFormField>
+
+                <UFormField label="Medical Treatment" class="sm:col-span-2">
+                  <USelect
+                    v-model="coverageForm.coverage_medical_treatment"
+                    :items="MEDICAL_TREATMENT_OPTIONS"
+                    value-key="value"
+                    label-key="label"
+                    class="w-full"
+                  />
+                </UFormField>
+              </div>
+
+              <div class="flex items-center gap-3 rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-hover)] p-3">
+                <UCheckbox v-model="coverageForm.coverage_no_prior_attorney" label="No prior attorney" />
+              </div>
+            </section>
+
+            <section class="space-y-3">
+              <div class="flex items-center gap-2">
+                <UIcon name="i-lucide-message-square-text" class="size-4 text-[var(--ap-accent)]" />
+                <h3 class="text-sm font-semibold text-highlighted">
+                  Communication
+                </h3>
+              </div>
+
+              <div class="grid gap-4 sm:grid-cols-2">
+                <UFormField label="Languages">
+                  <USelect
+                    v-model="coverageForm.coverage_languages"
+                    :items="LANGUAGE_OPTIONS"
+                    multiple
+                    placeholder="Select languages"
+                    class="w-full"
+                    :ui="multiSelectUi"
+                  />
+                </UFormField>
+
+                <UFormField label="Notes" class="sm:col-span-2">
+                  <UTextarea
+                    v-model="coverageForm.coverage_notes"
+                    :rows="4"
+                    placeholder="Notes for this attorney coverage..."
+                    class="w-full"
+                  />
+                </UFormField>
+              </div>
+            </section>
+
+            <div class="flex flex-col-reverse gap-2 border-t border-black/[0.06] pt-4 dark:border-white/[0.06] sm:flex-row sm:justify-end">
               <UButton
                 color="neutral"
                 variant="ghost"
                 :disabled="saving"
+                class="justify-center rounded-lg"
                 @click="coverageOpen = false"
               >
                 Cancel
@@ -668,6 +751,7 @@ onMounted(loadAttorneys)
                 icon="i-lucide-check"
                 :loading="saving"
                 :disabled="!coverageForm.broker_attorney_id"
+                class="justify-center rounded-lg"
                 @click="saveCoverage"
               >
                 Save Coverage

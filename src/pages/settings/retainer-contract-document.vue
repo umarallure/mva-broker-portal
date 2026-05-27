@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 
 import { useAuth } from '../../composables/useAuth'
@@ -15,6 +15,7 @@ import {
   getUserDocuments,
   deleteMultiStateDocument,
   updateDocumentNotes,
+  RETAINER_CONTRACT_DOCUMENT_ALL_STATES_VALUE,
   US_STATES_OPTIONS,
   getStateName,
   type RetainerContractDocument
@@ -32,23 +33,43 @@ const saving = ref(false)
 const openingDocument = ref(false)
 
 const showAddForm = ref(false)
-const newDocument = ref({
-  state: '',
+const createNewDocumentDraft = (state = RETAINER_CONTRACT_DOCUMENT_ALL_STATES_VALUE) => ({
+  state,
   file: null as File | null,
   notes: ''
 })
+
+const newDocument = ref(createNewDocumentDraft())
 const fileInput = ref<HTMLInputElement | null>(null)
 
 const editingNotesId = ref<string | null>(null)
 const editingNotesValue = ref('')
 
 const usedStates = computed(() => new Set(documents.value.map(d => d.state)))
-const availableStates = computed(() => 
+const availableStates = computed(() =>
   US_STATES_OPTIONS.filter(opt => !usedStates.value.has(opt.value))
 )
 const canAddMore = computed(() => availableStates.value.length > 0)
 
 const maxFileSizeLabel = `${Math.round(RETAINER_CONTRACT_DOCUMENT_MAX_SIZE_BYTES / (1024 * 1024))}MB`
+
+const getDefaultDocumentState = () => {
+  if (availableStates.value.some(option => option.value === RETAINER_CONTRACT_DOCUMENT_ALL_STATES_VALUE)) {
+    return RETAINER_CONTRACT_DOCUMENT_ALL_STATES_VALUE
+  }
+
+  return availableStates.value[0]?.value ?? ''
+}
+
+watch(
+  availableStates,
+  () => {
+    if (!availableStates.value.some(option => option.value === newDocument.value.state)) {
+      newDocument.value.state = getDefaultDocumentState()
+    }
+  },
+  { immediate: true }
+)
 
 const formatUploadedAt = (value?: string) => {
   if (!value) return ''
@@ -62,7 +83,7 @@ const formatUploadedAt = (value?: string) => {
 }
 
 const resetNewDocument = () => {
-  newDocument.value = { state: '', file: null, notes: '' }
+  newDocument.value = createNewDocumentDraft(getDefaultDocumentState())
   if (fileInput.value) {
     fileInput.value.value = ''
   }
@@ -495,7 +516,9 @@ onBeforeRouteLeave((_to, _from, next) => {
       <!-- Loading State -->
       <div v-if="loading" class="relative px-5 py-16 text-center">
         <UIcon name="i-lucide-loader-2" class="mx-auto mb-2 text-2xl text-[var(--ap-accent)] animate-spin" />
-        <p class="text-sm text-muted">Loading documents...</p>
+        <p class="text-sm text-muted">
+          Loading documents...
+        </p>
       </div>
 
       <!-- Empty State -->
@@ -503,8 +526,12 @@ onBeforeRouteLeave((_to, _from, next) => {
         <div class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--ap-accent)]/10 ring-1 ring-[var(--ap-accent)]/20">
           <UIcon name="i-lucide-file-plus-2" class="text-2xl text-[var(--ap-accent)]" />
         </div>
-        <p class="text-sm font-medium text-highlighted">No documents uploaded</p>
-        <p class="mt-1 text-xs text-muted">Add your firm's retainer agreement documents for different states.</p>
+        <p class="text-sm font-medium text-highlighted">
+          No documents uploaded
+        </p>
+        <p class="mt-1 text-xs text-muted">
+          Add your firm's retainer agreement documents for different states.
+        </p>
         <UButton
           v-if="canAddMore"
           label="Add Document"

@@ -18,6 +18,11 @@ export type BrokerAttorneyRetainerDocument = {
 export const BROKER_RETAINER_DOCUMENT_BUCKET = 'retainer-contract-documents'
 export const BROKER_RETAINER_DOCUMENT_MAX_SIZE_BYTES = 10 * 1024 * 1024
 export const BROKER_RETAINER_DOCUMENT_ACCEPT = '.pdf,.doc,.docx'
+export const BROKER_RETAINER_DOCUMENT_ALL_STATES_VALUE = 'ALL'
+export const BROKER_RETAINER_DOCUMENT_ALL_STATES_OPTION = {
+  label: 'All States',
+  value: BROKER_RETAINER_DOCUMENT_ALL_STATES_VALUE
+}
 
 export const BROKER_RETAINER_DOCUMENT_ALLOWED_MIME_TYPES = [
   'application/pdf',
@@ -31,12 +36,16 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx'
 }
 
-export const BROKER_RETAINER_DOCUMENT_STATE_OPTIONS = US_STATES.map(state => ({
-  label: `${state.name} (${state.code})`,
-  value: state.code
-}))
+export const BROKER_RETAINER_DOCUMENT_STATE_OPTIONS = [
+  BROKER_RETAINER_DOCUMENT_ALL_STATES_OPTION,
+  ...US_STATES.map(state => ({
+    label: `${state.name} (${state.code})`,
+    value: state.code
+  }))
+]
 
 export function getBrokerRetainerDocumentStateName(stateCode: string) {
+  if (stateCode === BROKER_RETAINER_DOCUMENT_ALL_STATES_VALUE) return BROKER_RETAINER_DOCUMENT_ALL_STATES_OPTION.label
   return US_STATES.find(state => state.code === stateCode)?.name ?? stateCode
 }
 
