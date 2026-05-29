@@ -8,6 +8,7 @@ import { useAuth } from '../composables/useAuth'
 
 type DailyDealFlow = Record<string, unknown> & {
   id: string
+  daily_deal_flow_id?: string | null
   submission_id: string
   insured_name?: string | null
   client_phone_number?: string | null
@@ -71,7 +72,7 @@ const payToPublisher = async () => {
     }
     const params = new URLSearchParams({ mode: 'publisher', quick: '1' })
     if (centerId) params.set('center_id', centerId)
-    params.set('deal_id', row.value.id)
+    params.set('deal_id', getCurrentDealId())
     router.push(`/invoicing/create?${params.toString()}`)
   } finally {
     actionLoading.value = false
@@ -82,7 +83,7 @@ const getPaidByLawyer = () => {
   if (!row.value) return
   const params = new URLSearchParams({ mode: 'lawyer', quick: '1' })
   if (row.value.assigned_attorney_id) params.set('lawyer_id', row.value.assigned_attorney_id)
-  params.set('deal_id', row.value.id)
+  params.set('deal_id', getCurrentDealId())
   router.push(`/invoicing/create?${params.toString()}`)
 }
 
@@ -101,16 +102,54 @@ const goBack = () => {
   router.push('/retainers')
 }
 
-const toLeadDetailRow = (lead: AnyRow): DailyDealFlow => {
-  const name = lead.customer_full_name ?? lead.insured_name ?? null
-  const phone = lead.phone_number ?? lead.client_phone_number ?? null
+const stringOrNull = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return null
+  return String(value)
+}
+
+const mapLeadToDetailRow = (leadRow: AnyRow, dealFlowRow?: AnyRow | null): DailyDealFlow => {
+  const name = leadRow.customer_full_name ?? leadRow.insured_name ?? null
+  const phone = leadRow.phone_number ?? leadRow.client_phone_number ?? null
+  const submissionId = stringOrNull(leadRow.submission_id ?? dealFlowRow?.submission_id) ?? ''
+  const leadVendor = stringOrNull(leadRow.lead_vendor ?? dealFlowRow?.lead_vendor)
+  const createdAt = stringOrNull(leadRow.created_at ?? dealFlowRow?.created_at)
+  const updatedAt = stringOrNull(leadRow.updated_at ?? dealFlowRow?.updated_at)
 
   return {
-    ...lead,
+    ...(dealFlowRow ?? {}),
+    ...leadRow,
+    id: String(leadRow.id ?? ''),
+    daily_deal_flow_id: stringOrNull(dealFlowRow?.id),
+    submission_id: submissionId,
     insured_name: name ? String(name) : null,
     client_phone_number: phone ? String(phone) : null,
-    submission_id: String(lead.submission_id ?? '')
-  } as DailyDealFlow
+    assigned_attorney_id: stringOrNull(leadRow.assigned_attorney_id ?? dealFlowRow?.assigned_attorney_id),
+    assigned_broker_attorney_id: stringOrNull(leadRow.assigned_broker_attorney_id ?? dealFlowRow?.assigned_broker_attorney_id),
+    lead_vendor: leadVendor,
+    invoice_id: stringOrNull(dealFlowRow?.invoice_id),
+    publisher_invoice_id: stringOrNull(dealFlowRow?.publisher_invoice_id),
+    created_at: createdAt,
+    updated_at: updatedAt
+  }
+}
+
+const getCurrentDealId = () => {
+  if (!row.value) return ''
+  return String(row.value.daily_deal_flow_id ?? row.value.id ?? '')
+}
+
+const loadDealFlowBySubmission = async (submissionId: string | null) => {
+  if (!submissionId) return null
+
+  const { data, error: dealFlowError } = await supabase
+    .from('daily_deal_flow')
+    .select('*')
+    .eq('submission_id', submissionId)
+    .maybeSingle()
+
+  if (dealFlowError) throw dealFlowError
+
+  return (data ?? null) as AnyRow | null
 }
 
 const load = async () => {
@@ -122,6 +161,12 @@ const load = async () => {
 
     const userId = auth.state.value.profile?.user_id
     const userRole = auth.state.value.profile?.role
+
+    if (userRole === 'broker' && !userId) {
+      error.value = 'Lead not found'
+      row.value = null
+      return
+    }
 
     if (userRole === 'broker' && userId) {
       const { data: brokerAttorneyRows, error: brokerAttorneyError } = await supabase
@@ -157,7 +202,9 @@ const load = async () => {
         return
       }
 
-      row.value = toLeadDetailRow((leadRow ?? {}) as AnyRow)
+      const lead = (leadRow ?? {}) as AnyRow
+      const dealFlowRow = await loadDealFlowBySubmission(stringOrNull(lead.submission_id))
+      row.value = mapLeadToDetailRow(lead, dealFlowRow)
       return
     }
 
@@ -180,6 +227,23 @@ const load = async () => {
         .split(/[\s\-_]+/)
         .map((w: string) => w.trim().toLowerCase())
         .filter((w: string) => w.length >= 3)
+    }
+
+    if (userRole && userRole !== 'lawyer') {
+      const { data: leadById, error: leadByIdErr } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('id', id.value)
+        .maybeSingle()
+
+      if (leadByIdErr) throw leadByIdErr
+
+      if (leadById) {
+        const lead = (leadById ?? {}) as AnyRow
+        const dealFlowRow = await loadDealFlowBySubmission(stringOrNull(lead.submission_id))
+        row.value = mapLeadToDetailRow(lead, dealFlowRow)
+        return
+      }
     }
 
     let data = null
@@ -282,9 +346,37 @@ const load = async () => {
         return
       }
 
-      row.value = toLeadDetailRow((leadRow ?? {}) as AnyRow)
+      const lead = (leadRow ?? {}) as AnyRow
+      const dealFlowRow = await loadDealFlowBySubmission(stringOrNull(lead.submission_id))
+      row.value = mapLeadToDetailRow(lead, dealFlowRow)
     } else {
-      row.value = data as DailyDealFlow
+      const flow = (data ?? {}) as AnyRow
+      const submissionId = stringOrNull(flow.submission_id)
+
+      if (submissionId) {
+        let leadBySubmissionQb = supabase
+          .from('leads')
+          .select('*')
+          .eq('submission_id', submissionId)
+
+        if (userRole === 'lawyer' && userId) {
+          leadBySubmissionQb = leadBySubmissionQb.eq('assigned_attorney_id', userId)
+        }
+
+        const { data: leadBySubmission, error: leadBySubmissionErr } = await leadBySubmissionQb.maybeSingle()
+        if (leadBySubmissionErr) throw leadBySubmissionErr
+
+        if (leadBySubmission) {
+          row.value = mapLeadToDetailRow((leadBySubmission ?? {}) as AnyRow, flow)
+          return
+        }
+      }
+
+      row.value = {
+        ...flow,
+        id: String(flow.id ?? ''),
+        submission_id: submissionId ?? ''
+      } as DailyDealFlow
     }
 
   } catch (e) {
@@ -298,7 +390,7 @@ const load = async () => {
 onMounted(load)
 
 function formatValue(value: unknown) {
-  if (value === null || value === undefined || value === '') return '—'
+  if (value === null || value === undefined || value === '') return '-'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
   if (typeof value === 'number') return String(value)
   if (typeof value === 'string') return value
@@ -306,7 +398,7 @@ function formatValue(value: unknown) {
 }
 
 function formatDateTime(value: string | null | undefined) {
-  if (!value) return '—'
+  if (!value) return '-'
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return value
   return d.toLocaleString('en-US', {
@@ -319,7 +411,7 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 function formatDateOnly(value: string | null | undefined) {
-  if (!value) return '—'
+  if (!value) return '-'
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return value
   return d.toLocaleDateString('en-US', {
@@ -341,36 +433,89 @@ function formatFieldValue(key: string, value: unknown) {
   return formatValue(value)
 }
 
+const formatPhoneNumber = (value: string | null | undefined) => {
+  if (!value) return '-'
+  const digits = value.replace(/\D/g, '')
+  if (digits.length === 10) return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+  if (digits.length === 11 && digits[0] === '1') return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
+  return value
+}
+
+const getInitials = (name: string | null | undefined) => {
+  if (!name) return '?'
+  return name
+    .split(' ')
+    .map(part => part[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+}
+
+const formatStatusLabel = (value: unknown) => {
+  const status = String(value ?? '').trim()
+  if (!status) return '-'
+  return status
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, letter => letter.toUpperCase())
+}
+
+const statusPillClass = computed(() => {
+  const status = String(row.value?.status ?? '').toLowerCase()
+  if (status.includes('approved') || status.includes('payable') || status.includes('qualified')) {
+    return 'border-green-500/25 bg-green-500/10 text-green-600 dark:text-green-400'
+  }
+  if (status.includes('rejected') || status.includes('declined')) {
+    return 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-400'
+  }
+  if (status.includes('review')) {
+    return 'border-blue-500/25 bg-blue-500/10 text-blue-600 dark:text-blue-400'
+  }
+  return 'border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] text-muted'
+})
+
+const leadName = computed(() => row.value?.insured_name || 'Unknown Client')
+const createdDateLabel = computed(() => formatDateTime(row.value?.created_at))
+
+const leadContactSummary = computed(() => {
+  if (!row.value) return []
+  return [
+    { icon: 'i-lucide-phone', label: formatPhoneNumber(row.value.client_phone_number) },
+    { icon: 'i-lucide-mail', label: formatValue(row.value.email) },
+    { icon: 'i-lucide-map-pin', label: formatValue(row.value.state) }
+  ].filter(item => item.label !== '-')
+})
+
 const basicInfoFields = computed(() => {
   if (!row.value) return []
   return [
-    ['insured_name', 'Client Name'],
-    ['client_phone_number', 'Phone Number'],
-    ['email', 'Email'],
-    ['street_address', 'Address'],
-    ['city', 'City'],
-    ['state', 'State'],
-    ['zip_code', 'Zip Code']
-  ].map(([key, label]) => {
-    return { key, label, value: (row.value as Record<string, unknown>)[key] }
+    ['insured_name', 'Client Name', 'i-lucide-user'],
+    ['client_phone_number', 'Phone Number', 'i-lucide-phone'],
+    ['email', 'Email', 'i-lucide-mail'],
+    ['street_address', 'Address', 'i-lucide-map'],
+    ['city', 'City', 'i-lucide-building'],
+    ['state', 'State', 'i-lucide-map-pin'],
+    ['zip_code', 'Zip Code', 'i-lucide-mailbox']
+  ].map(([key, label, icon]) => {
+    return { key, label, icon, value: (row.value as Record<string, unknown>)[key] }
   })
 })
 
 const accidentDetailsFields = computed(() => {
   if (!row.value) return []
   return [
-    ['accident_date', 'Accident Date'],
-    ['accident_location', 'Accident Location'],
-    ['accident_scenario', 'Accident Scenario'],
-    ['was_client_driver', 'Was This Client the Driver?'],
-    ['prior_attorney_involved', 'Prior Attorney Involved'],
-    ['prior_attorney_details', 'Prior Attorney Details'],
-    ['medical_attention', 'Medical Attention'],
-    ['police_attended', 'Police Attended'],
-    ['injuries', 'Injuries'],
-    ['other_party_admit_fault', 'Other Party Admit Fault'],
-    ['passengers_count', 'Passengers Count ("Excluding the Driver")']
-  ].map(([key, label]) => ({ key, label, value: (row.value as Record<string, unknown>)[key] }))
+    ['accident_date', 'Accident Date', 'i-lucide-calendar-days'],
+    ['accident_location', 'Accident Location', 'i-lucide-map-pinned'],
+    ['accident_scenario', 'Accident Scenario', 'i-lucide-file-text'],
+    ['was_client_driver', 'Was This Client the Driver?', 'i-lucide-car'],
+    ['prior_attorney_involved', 'Prior Attorney Involved', 'i-lucide-scale'],
+    ['prior_attorney_details', 'Prior Attorney Details', 'i-lucide-file-user'],
+    ['medical_attention', 'Medical Attention', 'i-lucide-heart-pulse'],
+    ['police_attended', 'Police Attended', 'i-lucide-shield-check'],
+    ['injuries', 'Injuries', 'i-lucide-bandage'],
+    ['other_party_admit_fault', 'Other Party Admit Fault', 'i-lucide-message-square-warning'],
+    ['passengers_count', 'Passengers Count ("Excluding the Driver")', 'i-lucide-users']
+  ].map(([key, label, icon]) => ({ key, label, icon, value: (row.value as Record<string, unknown>)[key] }))
 })
 </script>
 
@@ -442,17 +587,75 @@ const accidentDetailsFields = computed(() => {
         <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-dimmed" />
       </div>
 
-      <div v-else-if="row" class="space-y-4">
+      <div v-else-if="row" class="space-y-5">
+        <section class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60">
+          <div class="relative border-b border-[var(--ap-card-border)] px-5 py-5">
+            <div class="absolute inset-y-0 left-0 w-1 bg-[var(--ap-accent)]" />
+            <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div class="flex min-w-0 items-start gap-4">
+                <div class="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/10 text-lg font-bold text-[var(--ap-accent)]">
+                  {{ getInitials(leadName) }}
+                </div>
+                <div class="min-w-0">
+                  <p class="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                    Lead Information
+                  </p>
+                  <h2 class="mt-1 truncate text-2xl font-semibold text-highlighted">
+                    {{ leadName }}
+                  </h2>
+                  <div class="mt-3 flex flex-wrap gap-2">
+                    <span
+                      v-for="item in leadContactSummary"
+                      :key="item.icon"
+                      class="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] px-2.5 py-1 text-xs font-medium text-muted"
+                    >
+                      <UIcon :name="item.icon" class="size-3.5 shrink-0" />
+                      <span class="truncate">{{ item.label }}</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="flex shrink-0 flex-col items-start gap-2 lg:items-end">
+                <span
+                  class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
+                  :class="statusPillClass"
+                >
+                  <UIcon name="i-lucide-activity" class="size-3.5" />
+                  {{ formatStatusLabel(row.status) }}
+                </span>
+                <div
+                  v-if="createdDateLabel !== '-'"
+                  class="mt-10 flex items-center gap-1.5 text-xs font-medium text-muted"
+                >
+                  <UIcon name="i-lucide-calendar-clock" class="size-3.5" />
+                  <span>Created {{ createdDateLabel }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <UTabs v-model="activeTab" :items="tabs">
           <template #content="{ item }">
-            <UCard v-if="item.value === 'basic'">
-              <div class="grid gap-4 md:grid-cols-2">
+            <section
+              v-if="item.value === 'basic'"
+              class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60"
+            >
+              <div class="flex items-center gap-2 border-b border-[var(--ap-card-border)] px-5 py-3">
+                <UIcon name="i-lucide-user" class="size-4 text-[var(--ap-accent)]" />
+                <h3 class="text-sm font-semibold text-highlighted">
+                  Personal Information
+                </h3>
+              </div>
+              <div class="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
                 <div
                   v-for="field in basicInfoFields"
                   :key="field.key"
-                  class="rounded-lg border border-default bg-elevated/20 p-3"
+                  class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3"
                 >
-                  <div class="text-xs uppercase tracking-wide text-muted">
+                  <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                    <UIcon :name="field.icon" class="size-3.5 shrink-0" />
                     {{ field.label }}
                   </div>
                   <div class="mt-1 text-sm text-highlighted wrap-break-word">
@@ -460,16 +663,26 @@ const accidentDetailsFields = computed(() => {
                   </div>
                 </div>
               </div>
-            </UCard>
+            </section>
 
-            <UCard v-else-if="item.value === 'accident'">
-              <div class="grid gap-4 md:grid-cols-2">
+            <section
+              v-else-if="item.value === 'accident'"
+              class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60"
+            >
+              <div class="flex items-center gap-2 border-b border-[var(--ap-card-border)] px-5 py-3">
+                <UIcon name="i-lucide-car" class="size-4 text-[var(--ap-accent)]" />
+                <h3 class="text-sm font-semibold text-highlighted">
+                  Accident Details
+                </h3>
+              </div>
+              <div class="grid gap-3 p-4 md:grid-cols-2">
                 <div
                   v-for="field in accidentDetailsFields"
                   :key="field.key"
-                  class="rounded-lg border border-default bg-elevated/20 p-3"
+                  class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3"
                 >
-                  <div class="text-xs uppercase tracking-wide text-muted">
+                  <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                    <UIcon :name="field.icon" class="size-3.5 shrink-0" />
                     {{ field.label }}
                   </div>
                   <div class="mt-1 text-sm text-highlighted wrap-break-word">
@@ -477,21 +690,32 @@ const accidentDetailsFields = computed(() => {
                   </div>
                 </div>
               </div>
-            </UCard>
+            </section>
 
-            <UCard v-else-if="item.value === 'documents'">
-              <LeadDocumentsTab
-                v-if="row.submission_id"
-                :submission-id="String(row.submission_id || '')"
-              />
-              <UAlert
-                v-else
-                color="neutral"
-                variant="subtle"
-                title="No submission ID"
-                description="No submission ID available to load documents."
-              />
-            </UCard>
+            <section
+              v-else-if="item.value === 'documents'"
+              class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60"
+            >
+              <div class="flex items-center gap-2 border-b border-[var(--ap-card-border)] px-5 py-3">
+                <UIcon name="i-lucide-folder-open" class="size-4 text-[var(--ap-accent)]" />
+                <h3 class="text-sm font-semibold text-highlighted">
+                  Documents
+                </h3>
+              </div>
+              <div class="p-4">
+                <LeadDocumentsTab
+                  v-if="row.submission_id"
+                  :submission-id="String(row.submission_id || '')"
+                />
+                <UAlert
+                  v-else
+                  color="neutral"
+                  variant="subtle"
+                  title="No submission ID"
+                  description="No submission ID available to load documents."
+                />
+              </div>
+            </section>
           </template>
         </UTabs>
       </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { DateFormatter, getLocalTimeZone, CalendarDate, today } from '@internationalized/date'
+import { useRoute, useRouter } from 'vue-router'
 
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../composables/useAuth'
@@ -54,6 +55,8 @@ type LeadRow = {
 
 const auth = useAuth()
 const toast = useToast()
+const route = useRoute()
+const router = useRouter()
 
 const loading = ref(false)
 const query = ref('')
@@ -122,6 +125,7 @@ const DATE_RANGE_OPTIONS = [
 const leads = ref<LeadCard[]>([])
 const dragLeadId = ref<string | null>(null)
 const dragFromStage = ref<StageKey | null>(null)
+const suppressNextCardClick = ref(false)
 
 const isBrokerStatus = (s: string | null): s is LeadStatus =>
   s === 'attorney_review' || s === 'attorney_approved' || s === 'attorney_rejected' || s === 'qualified_payable'
@@ -508,6 +512,7 @@ const { startDrag, endDrag } = useDragGhost()
 
 const onDragStartLead = (e: DragEvent, lead: LeadCard) => {
   startDrag(e)
+  suppressNextCardClick.value = true
   dragLeadId.value = lead.id
   dragFromStage.value = lead.stage
 }
@@ -516,6 +521,18 @@ const onDragEndLead = () => {
   endDrag()
   dragLeadId.value = null
   dragFromStage.value = null
+  window.setTimeout(() => {
+    suppressNextCardClick.value = false
+  }, 0)
+}
+
+const openLeadDetails = (lead: LeadCard) => {
+  if (suppressNextCardClick.value) return
+
+  router.push({
+    path: `/retainers/${lead.id}`,
+    query: { from: route.fullPath }
+  })
 }
 
 const moveConfirmOpen = ref(false)
@@ -1052,9 +1069,15 @@ const confirmMove = async () => {
                 <div
                   v-for="lead in (leadsByStage.get(stage.key) ?? [])"
                   :key="lead.id"
-                  class="case-card group cursor-grab rounded-lg border border-black/[0.05] dark:border-white/[0.06] bg-white/60 dark:bg-white/[0.03] p-3 transition-all duration-200 active:cursor-grabbing"
+                  class="case-card group rounded-lg border border-black/[0.05] dark:border-white/[0.06] bg-white/60 dark:bg-white/[0.03] p-3 transition-all duration-200 cursor-pointer active:cursor-grabbing"
                   :style="stageCardAccentStyle(stage.key)"
                   draggable="true"
+                  role="button"
+                  tabindex="0"
+                  :aria-label="`View details for ${lead.clientName}`"
+                  @click="openLeadDetails(lead)"
+                  @keydown.enter.prevent="openLeadDetails(lead)"
+                  @keydown.space.prevent="openLeadDetails(lead)"
                   @dragstart="onDragStartLead($event, lead)"
                   @dragend="onDragEndLead"
                 >
@@ -1062,10 +1085,27 @@ const confirmMove = async () => {
                     <div class="case-card__initials flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold transition-all duration-200">
                       {{ getInitials(lead.clientName) }}
                     </div>
-                    <div class="min-w-0">
-                      <div class="truncate text-sm font-semibold text-highlighted group-hover:text-[var(--ap-accent)] transition-colors">{{ lead.clientName }}</div>
-                      <div class="mt-0.5 text-[11px] text-muted">{{ formatPhone(lead.phone) }}</div>
+                    <div class="min-w-0 flex-1 pr-1">
+                      <div class="truncate text-sm font-semibold text-highlighted group-hover:text-[var(--ap-accent)] transition-colors">
+                        {{ lead.clientName }}
+                      </div>
+                      <div class="mt-0.5 text-[11px] text-muted">
+                        {{ formatPhone(lead.phone) }}
+                      </div>
                     </div>
+                    <UTooltip text="View lead details">
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-eye"
+                        size="xs"
+                        class="case-card__view shrink-0 rounded-lg opacity-70 transition-all duration-200 group-hover:opacity-100"
+                        :aria-label="`View details for ${lead.clientName}`"
+                        draggable="false"
+                        @mousedown.stop
+                        @click.stop="openLeadDetails(lead)"
+                      />
+                    </UTooltip>
                   </div>
 
                   <div
