@@ -28,9 +28,10 @@ const generalInfoSchema = z.object({
   directPhone: z.string().min(10, 'Phone number is required'),
   officeAddress: z.string().min(5, 'Office address is required'),
   websiteUrl: z.string().url().optional().or(z.literal('')),
+  linkedInUsername: z.string().optional(),
+  instagramUsername: z.string().optional(),
+  facebookUsername: z.string().optional(),
   preferredContact: z.enum(['email', 'phone', 'text']).optional(),
-  assistantName: z.string().optional(),
-  assistantEmail: z.string().email().optional().or(z.literal(''))
 }).passthrough()
 
 const auth = useAuth()
@@ -143,9 +144,10 @@ async function submitProfile() {
       'directPhone',
       'officeAddress',
       'websiteUrl',
-      'preferredContact',
-      'assistantName',
-      'assistantEmail'
+      'linkedInUsername',
+      'instagramUsername',
+      'facebookUsername',
+      'preferredContact'
     ])
 
     toast.add({
@@ -527,43 +529,46 @@ onBeforeRouteLeave((to) => {
             />
           </div>
 
-          <!-- Support Staff -->
-          <div class="relative mt-1 rounded-xl border border-[var(--ap-accent)]/20 overflow-hidden">
-            <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
-            <div class="relative flex items-center gap-2 border-b border-[var(--ap-accent)]/10 px-4 py-2.5">
-              <UIcon name="i-lucide-users" class="text-xs text-[var(--ap-accent)]" />
-              <span class="text-xs font-semibold text-highlighted">Support Staff</span>
-              <span class="text-[11px] text-muted">(optional)</span>
-            </div>
-            <div class="p-4">
-              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div class="space-y-1.5">
-                  <label class="text-xs font-medium text-highlighted">
-                    Assistant Name
-                  </label>
-                  <UInput
-                    v-model="profile.assistantName"
-                    placeholder="Jane Smith"
-                    autocomplete="off"
-                    :disabled="disabled"
-                    size="md"
-                    class="w-full"
-                  />
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-medium text-highlighted">
-                    Assistant Email
-                  </label>
-                  <UInput
-                    v-model="profile.assistantEmail"
-                    type="email"
-                    placeholder="assistant@yourbrokerage.com"
-                    autocomplete="off"
-                    :disabled="disabled"
-                    size="md"
-                    class="w-full"
-                  />
-                </div>
+          <div class="space-y-3 border-t border-[var(--ap-accent)]/10 pt-4">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div class="space-y-1.5">
+                <label class="text-xs font-medium text-highlighted">
+                  LinkedIn
+                </label>
+                <UInput
+                  v-model="profile.linkedInUsername"
+                  placeholder="your-brokerage"
+                  autocomplete="off"
+                  :disabled="disabled"
+                  size="md"
+                  class="w-full"
+                />
+              </div>
+              <div class="space-y-1.5">
+                <label class="text-xs font-medium text-highlighted">
+                  Instagram
+                </label>
+                <UInput
+                  v-model="profile.instagramUsername"
+                  placeholder="@yourbrokerage"
+                  autocomplete="off"
+                  :disabled="disabled"
+                  size="md"
+                  class="w-full"
+                />
+              </div>
+              <div class="space-y-1.5">
+                <label class="text-xs font-medium text-highlighted">
+                  Facebook
+                </label>
+                <UInput
+                  v-model="profile.facebookUsername"
+                  placeholder="yourbrokerage"
+                  autocomplete="off"
+                  :disabled="disabled"
+                  size="md"
+                  class="w-full"
+                />
               </div>
             </div>
           </div>

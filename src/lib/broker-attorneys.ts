@@ -9,6 +9,13 @@ export type CoverageInsuranceStatus = 'insured_only' | 'uninsured_ok'
 export type CoverageMedicalTreatment = 'no_medical' | 'ongoing' | 'proof_of_medical_treatment'
 export type PreferredContact = 'email' | 'phone' | 'text'
 
+export type BrokerAttorneyIntakeDid = {
+  state: string
+  did_number: string
+  contact_name: string
+  availability_notes: string
+}
+
 export type BrokerAttorneyRow = {
   id: string
   broker_id: string
@@ -25,6 +32,7 @@ export type BrokerAttorneyRow = {
   preferred_contact: PreferredContact | null
   assistant_name: string | null
   assistant_email: string | null
+  intake_dids: BrokerAttorneyIntakeDid[]
   transfer_standard_types: TransferStandardType[]
   transfer_sol_option: TransferSolOption | null
   transfer_injury_types: string[]
@@ -65,6 +73,7 @@ export const BROKER_ATTORNEY_COLUMNS = [
   'preferred_contact',
   'assistant_name',
   'assistant_email',
+  'intake_dids',
   'transfer_standard_types',
   'transfer_sol_option',
   'transfer_injury_types',
@@ -184,6 +193,10 @@ const buildPayload = (input: BrokerAttorneyInput) => {
   ].forEach((key) => {
     if (payload[key] !== undefined) payload[key] = normalizeStringArray(payload[key])
   })
+
+  if (payload.intake_dids !== undefined) {
+    payload.intake_dids = Array.isArray(payload.intake_dids) ? payload.intake_dids : []
+  }
 
   return payload
 }

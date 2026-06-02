@@ -12,6 +12,9 @@ export interface BrokerProfileData {
   direct_phone?: string | null
   office_address?: string | null
   website_url?: string | null
+  linkedin_username?: string | null
+  instagram_username?: string | null
+  facebook_username?: string | null
   preferred_contact?: 'email' | 'phone' | 'text' | null
   assistant_name?: string | null
   assistant_email?: string | null

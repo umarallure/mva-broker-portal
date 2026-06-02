@@ -33,6 +33,14 @@ import {
   validateBrokerRetainerDocument,
   type BrokerAttorneyRetainerDocument
 } from '../lib/broker-attorney-documents'
+import {
+  BROKER_ATTORNEY_INTAKE_ALL_STATES_VALUE,
+  BROKER_ATTORNEY_INTAKE_STATE_OPTIONS,
+  addBrokerAttorneyIntakeDid,
+  getBrokerAttorneyIntakeStateName,
+  normalizeBrokerAttorneyIntakeDids,
+  type BrokerAttorneyIntakeDid
+} from '../lib/broker-attorney-intake-dids'
 
 type AttorneyForm = {
   attorney_name: string
@@ -63,8 +71,11 @@ const loading = ref(true)
 const saving = ref(false)
 const openingDocumentId = ref<string | null>(null)
 const uploadingDocument = ref(false)
+const savingIntakeDid = ref(false)
+const deletingIntakeDidState = ref<string | null>(null)
 const attorney = ref<BrokerAttorneyRow | null>(null)
 const documents = ref<BrokerAttorneyRetainerDocument[]>([])
+const intakeDids = ref<BrokerAttorneyIntakeDid[]>([])
 const fileInput = ref<HTMLInputElement | null>(null)
 const usesSol = ref(false)
 const usesInjuryTypes = ref(false)
@@ -140,18 +151,47 @@ const form = ref<AttorneyForm>({
 
 const createNewDocumentDraft = (state = BROKER_RETAINER_DOCUMENT_ALL_STATES_VALUE) => ({
   state,
+  title: '',
   file: null as File | null,
-  notes: ''
+  notes: '',
+  walkthrough_url: ''
 })
 
 const newDocument = ref(createNewDocumentDraft())
 
-const usedDocumentStates = computed(() => new Set(documents.value.map(doc => doc.state)))
-const availableDocumentStates = computed(() =>
-  BROKER_RETAINER_DOCUMENT_STATE_OPTIONS.filter(option => !usedDocumentStates.value.has(option.value))
-)
-const canAddDocument = computed(() => availableDocumentStates.value.length > 0)
 const maxFileSizeLabel = `${Math.round(BROKER_RETAINER_DOCUMENT_MAX_SIZE_BYTES / (1024 * 1024))}MB`
+
+const createNewIntakeDidDraft = (state = BROKER_ATTORNEY_INTAKE_ALL_STATES_VALUE) => ({
+  state,
+  did_number: '',
+  contact_name: '',
+  availability_notes: ''
+})
+
+const newIntakeDid = ref(createNewIntakeDidDraft())
+const usedIntakeDidStates = computed(() => new Set(intakeDids.value.map(row => row.state)))
+const availableIntakeDidStates = computed(() =>
+  BROKER_ATTORNEY_INTAKE_STATE_OPTIONS.filter(option => !usedIntakeDidStates.value.has(option.value))
+)
+const canAddIntakeDid = computed(() => availableIntakeDidStates.value.length > 0)
+
+const getDefaultIntakeDidState = () => {
+  if (availableIntakeDidStates.value.some(option => option.value === BROKER_ATTORNEY_INTAKE_ALL_STATES_VALUE)) {
+    return BROKER_ATTORNEY_INTAKE_ALL_STATES_VALUE
+  }
+
+  return availableIntakeDidStates.value[0]?.value ?? ''
+}
+
+watch(
+  availableIntakeDidStates,
+  () => {
+    if (!availableIntakeDidStates.value.some(option => option.value === newIntakeDid.value.state)) {
+      newIntakeDid.value.state = getDefaultIntakeDidState()
+    }
+  },
+  { immediate: true }
+)
 
 const normalizeTransferInjuryTypes = (types: string[]) => {
   const allowedTypes = new Set(INJURY_TYPE_OPTIONS)
@@ -174,24 +214,6 @@ const normalizeTransferSolOption = (value?: string | null): TransferSolOption =>
   if (value === '12_plus_months') return '12_plus_months'
   return '6_12_months'
 }
-
-const getDefaultDocumentState = () => {
-  if (availableDocumentStates.value.some(option => option.value === BROKER_RETAINER_DOCUMENT_ALL_STATES_VALUE)) {
-    return BROKER_RETAINER_DOCUMENT_ALL_STATES_VALUE
-  }
-
-  return availableDocumentStates.value[0]?.value ?? ''
-}
-
-watch(
-  availableDocumentStates,
-  () => {
-    if (!availableDocumentStates.value.some(option => option.value === newDocument.value.state)) {
-      newDocument.value.state = getDefaultDocumentState()
-    }
-  },
-  { immediate: true }
-)
 
 watch([usesSol, usesInjuryTypes], () => {
   const selected: TransferStandardType[] = []
@@ -258,6 +280,7 @@ const load = async () => {
     attorney.value = row
     hydrateForm(row)
     documents.value = await listBrokerRetainerDocuments(row.id)
+    intakeDids.value = normalizeBrokerAttorneyIntakeDids(row.intake_dids)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unable to load attorney'
     toast.add({ title: 'Error', description: message, color: 'error', icon: 'i-lucide-x' })
@@ -309,12 +332,81 @@ const saveAttorney = async () => {
 }
 
 const resetNewDocument = () => {
-  newDocument.value = createNewDocumentDraft(getDefaultDocumentState())
+  newDocument.value = createNewDocumentDraft()
   if (fileInput.value) fileInput.value.value = ''
+}
+
+const resetNewIntakeDid = () => {
+  newIntakeDid.value = createNewIntakeDidDraft(getDefaultIntakeDidState())
+}
+
+const addIntakeDid = async () => {
+  if (!brokerId.value || !attorney.value) return
+
+  if (
+    !newIntakeDid.value.state
+    || !newIntakeDid.value.did_number.trim()
+    || !newIntakeDid.value.contact_name.trim()
+    || !newIntakeDid.value.availability_notes.trim()
+  ) {
+    toast.add({
+      title: 'Missing intake details',
+      description: 'Select a state and add the DID, contact name, and availability.',
+      color: 'warning',
+      icon: 'i-lucide-alert-triangle'
+    })
+    return
+  }
+
+  savingIntakeDid.value = true
+  try {
+    const nextIntakeDids = addBrokerAttorneyIntakeDid(intakeDids.value, {
+      state: newIntakeDid.value.state,
+      didNumber: newIntakeDid.value.did_number,
+      contactName: newIntakeDid.value.contact_name,
+      availabilityNotes: newIntakeDid.value.availability_notes
+    })
+    const updated = await updateBrokerAttorney(attorney.value.id, { intake_dids: nextIntakeDids })
+    attorney.value = updated
+    intakeDids.value = normalizeBrokerAttorneyIntakeDids(updated.intake_dids)
+    resetNewIntakeDid()
+    toast.add({ title: 'Intake DID added', color: 'success', icon: 'i-lucide-check' })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unable to add intake DID'
+    toast.add({ title: 'Error', description: message, color: 'error', icon: 'i-lucide-x' })
+  } finally {
+    savingIntakeDid.value = false
+  }
+}
+
+const removeIntakeDid = async (row: BrokerAttorneyIntakeDid) => {
+  if (!attorney.value) return
+  if (!confirm(`Delete the ${getBrokerAttorneyIntakeStateName(row.state)} intake DID?`)) return
+
+  const attorneyId = attorney.value.id
+  deletingIntakeDidState.value = row.state
+  try {
+    const updated = await updateBrokerAttorney(attorneyId, {
+      intake_dids: intakeDids.value.filter(item => item.state !== row.state)
+    })
+    attorney.value = updated
+    intakeDids.value = normalizeBrokerAttorneyIntakeDids(updated.intake_dids)
+    toast.add({ title: 'Intake DID deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unable to delete intake DID'
+    toast.add({ title: 'Error', description: message, color: 'error', icon: 'i-lucide-x' })
+  } finally {
+    deletingIntakeDidState.value = null
+  }
 }
 
 const openFilePicker = () => {
   fileInput.value?.click()
+}
+
+const clearSelectedDocumentFile = () => {
+  newDocument.value.file = null
+  if (fileInput.value) fileInput.value.value = ''
 }
 
 const handleFileSelected = (event: Event) => {
@@ -330,15 +422,18 @@ const handleFileSelected = (event: Event) => {
   }
 
   newDocument.value.file = file
+  if (!newDocument.value.title.trim()) {
+    newDocument.value.title = file.name.replace(/\.[^.]+$/, '')
+  }
 }
 
 const uploadDocument = async () => {
   if (!brokerId.value || !attorney.value) return
 
-  if (!newDocument.value.state || !newDocument.value.file) {
+  if (!newDocument.value.state || !newDocument.value.title.trim() || !newDocument.value.file) {
     toast.add({
       title: 'Missing document details',
-      description: 'Select a state and upload a file.',
+      description: 'Add a title, select a state, and upload a file.',
       color: 'warning',
       icon: 'i-lucide-alert-triangle'
     })
@@ -351,8 +446,10 @@ const uploadDocument = async () => {
       brokerId: brokerId.value,
       brokerAttorneyId: attorney.value.id,
       state: newDocument.value.state,
+      title: newDocument.value.title,
       file: newDocument.value.file,
-      notes: newDocument.value.notes
+      notes: newDocument.value.notes,
+      walkthroughUrl: newDocument.value.walkthrough_url
     })
     documents.value = [doc, ...documents.value]
     resetNewDocument()
@@ -382,7 +479,7 @@ const openDocument = async (doc: BrokerAttorneyRetainerDocument) => {
 }
 
 const removeDocument = async (doc: BrokerAttorneyRetainerDocument) => {
-  if (!confirm(`Delete the ${getBrokerRetainerDocumentStateName(doc.state)} document?`)) return
+  if (!confirm(`Delete "${doc.document_title}"?`)) return
 
   try {
     await deleteBrokerRetainerDocument(doc.id)
@@ -458,7 +555,7 @@ onMounted(load)
       </div>
 
       <div v-else class="space-y-6">
-        <!-- Row 1: Core Identity + Contact Details -->
+        <!-- Row 1: Core Identity + Intake Information -->
         <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <!-- ── Core Identity ── -->
           <div class="ap-fade-in ap-delay-1 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
@@ -560,10 +657,125 @@ onMounted(load)
                   Optional — what clients should know about this attorney.
                 </p>
               </div>
+
+              <div class="border-t border-[var(--ap-accent)]/10 pt-4 space-y-4">
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-medium text-highlighted">
+                      Primary Email
+                    </label>
+                    <UInput
+                      v-model="form.primary_email"
+                      type="email"
+                      placeholder="attorney@firm.com"
+                      autocomplete="off"
+                      size="md"
+                      class="w-full"
+                    />
+                  </div>
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-medium text-highlighted">
+                      Personal Email
+                    </label>
+                    <UInput
+                      v-model="form.personal_email"
+                      type="email"
+                      placeholder="attorney@gmail.com"
+                      autocomplete="off"
+                      size="md"
+                      class="w-full"
+                    />
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-medium text-highlighted">
+                      Direct Phone
+                    </label>
+                    <UInput
+                      v-model="form.direct_phone"
+                      type="tel"
+                      placeholder="+1 (555) 123-4567"
+                      autocomplete="off"
+                      size="md"
+                      class="w-full"
+                    />
+                  </div>
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-medium text-highlighted">
+                      Preferred Contact
+                    </label>
+                    <USelect
+                      v-model="form.preferred_contact"
+                      :items="CONTACT_METHOD_OPTIONS"
+                      value-key="value"
+                      label-key="label"
+                      placeholder="Select method"
+                      class="w-full"
+                    />
+                  </div>
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-xs font-medium text-highlighted">
+                    Office Address
+                  </label>
+                  <div class="grid grid-cols-3 gap-2.5">
+                    <UInput
+                      v-model="addressStreet"
+                      placeholder="Street Address"
+                      autocomplete="off"
+                      size="md"
+                    />
+                    <UInput
+                      v-model="addressSuite"
+                      placeholder="Suite / Unit"
+                      autocomplete="off"
+                      size="md"
+                    />
+                    <UInput
+                      v-model="addressCity"
+                      placeholder="City"
+                      autocomplete="off"
+                      size="md"
+                    />
+                  </div>
+                  <div class="grid grid-cols-2 gap-2.5">
+                    <USelect
+                      v-model="addressState"
+                      :items="addressStateOptions"
+                      value-key="value"
+                      label-key="label"
+                      placeholder="State"
+                    />
+                    <UInput
+                      v-model="addressZip"
+                      placeholder="ZIP Code"
+                      autocomplete="off"
+                      size="md"
+                    />
+                  </div>
+                </div>
+
+                <div class="space-y-1.5">
+                  <label class="text-xs font-medium text-highlighted">
+                    Website URL
+                  </label>
+                  <UInput
+                    v-model="form.website_url"
+                    type="url"
+                    placeholder="https://firm.com"
+                    autocomplete="off"
+                    size="md"
+                    class="w-full"
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
-          <!-- ── Contact Details ── -->
+          <!-- ── Intake Information ── -->
           <div class="ap-fade-in ap-delay-2 relative overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl">
             <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
 
@@ -572,164 +784,123 @@ onMounted(load)
               <div class="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-[var(--ap-accent)] via-[var(--ap-accent)]/60 to-transparent" />
               <div class="relative flex items-center gap-3 px-5 py-3.5">
                 <div class="flex h-7 w-7 items-center justify-center rounded-lg border-[0.5px] border-[var(--ap-accent)]/45 bg-[var(--ap-accent)]/10 dark:border-[var(--ap-accent)]/40">
-                  <UIcon name="i-lucide-phone" class="text-xs text-[var(--ap-accent)]" />
+                  <UIcon name="i-lucide-phone-call" class="text-xs text-[var(--ap-accent)]" />
                 </div>
-                <h3 class="text-[13px] font-semibold text-highlighted">
-                  Contact Details
-                </h3>
+                <div>
+                  <h3 class="text-[13px] font-semibold text-highlighted">
+                    Intake Information
+                  </h3>
+                  <p class="mt-0.5 text-[11px] text-muted">
+                    Configure state-specific DID routing and intake availability.
+                  </p>
+                </div>
               </div>
             </div>
 
             <div class="relative p-5 space-y-4">
-              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div class="space-y-1.5">
-                  <label class="text-xs font-medium text-highlighted">
-                    Primary Email
-                  </label>
-                  <UInput
-                    v-model="form.primary_email"
-                    type="email"
-                    placeholder="attorney@firm.com"
-                    autocomplete="off"
-                    size="md"
-                    class="w-full"
-                  />
+              <div
+                v-if="canAddIntakeDid"
+                class="space-y-3 rounded-xl border border-dashed border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/[0.02] p-4"
+              >
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-medium text-highlighted">State</label>
+                    <USelect
+                      v-model="newIntakeDid.state"
+                      :items="availableIntakeDidStates"
+                      placeholder="Select state"
+                      class="w-full"
+                    />
+                  </div>
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-medium text-highlighted">DID Number</label>
+                    <UInput
+                      v-model="newIntakeDid.did_number"
+                      type="tel"
+                      placeholder="+1 (555) 123-4567"
+                      autocomplete="off"
+                      class="w-full"
+                    />
+                  </div>
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-medium text-highlighted">Contact Name</label>
+                    <UInput
+                      v-model="newIntakeDid.contact_name"
+                      placeholder="Intake team contact"
+                      autocomplete="off"
+                      class="w-full"
+                    />
+                  </div>
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-medium text-highlighted">When Are They Available?</label>
+                    <UInput
+                      v-model="newIntakeDid.availability_notes"
+                      placeholder="Mon-Fri, 9 AM-5 PM ET"
+                      autocomplete="off"
+                      class="w-full"
+                    />
+                  </div>
                 </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-medium text-highlighted">
-                    Personal Email
-                  </label>
-                  <UInput
-                    v-model="form.personal_email"
-                    type="email"
-                    placeholder="attorney@gmail.com"
-                    autocomplete="off"
-                    size="md"
-                    class="w-full"
-                  />
-                </div>
-              </div>
-
-              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div class="space-y-1.5">
-                  <label class="text-xs font-medium text-highlighted">
-                    Direct Phone
-                  </label>
-                  <UInput
-                    v-model="form.direct_phone"
-                    type="tel"
-                    placeholder="+1 (555) 123-4567"
-                    autocomplete="off"
-                    size="md"
-                    class="w-full"
-                  />
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-medium text-highlighted">
-                    Preferred Contact
-                  </label>
-                  <USelect
-                    v-model="form.preferred_contact"
-                    :items="CONTACT_METHOD_OPTIONS"
-                    value-key="value"
-                    label-key="label"
-                    placeholder="Select method"
-                    class="w-full"
-                  />
+                <div class="flex justify-end">
+                  <UButton
+                    icon="i-lucide-plus"
+                    :loading="savingIntakeDid"
+                    class="rounded-lg"
+                    @click="addIntakeDid"
+                  >
+                    Add DID
+                  </UButton>
                 </div>
               </div>
 
-              <div class="space-y-2">
-                <label class="text-xs font-medium text-highlighted">
-                  Office Address
-                </label>
-                <div class="grid grid-cols-3 gap-2.5">
-                  <UInput
-                    v-model="addressStreet"
-                    placeholder="Street Address"
-                    autocomplete="off"
-                    size="md"
-                  />
-                  <UInput
-                    v-model="addressSuite"
-                    placeholder="Suite / Unit"
-                    autocomplete="off"
-                    size="md"
-                  />
-                  <UInput
-                    v-model="addressCity"
-                    placeholder="City"
-                    autocomplete="off"
-                    size="md"
-                  />
-                </div>
-                <div class="grid grid-cols-2 gap-2.5">
-                  <USelect
-                    v-model="addressState"
-                    :items="addressStateOptions"
-                    value-key="value"
-                    label-key="label"
-                    placeholder="State"
-                  />
-                  <UInput
-                    v-model="addressZip"
-                    placeholder="ZIP Code"
-                    autocomplete="off"
-                    size="md"
-                  />
-                </div>
+              <div
+                v-else
+                class="rounded-lg border border-dashed border-black/[0.08] p-4 text-center text-xs text-muted dark:border-white/[0.08]"
+              >
+                Every state has an intake DID configured.
               </div>
 
-              <div class="space-y-1.5">
-                <label class="text-xs font-medium text-highlighted">
-                  Website URL
-                </label>
-                <UInput
-                  v-model="form.website_url"
-                  type="url"
-                  placeholder="https://firm.com"
-                  autocomplete="off"
-                  size="md"
-                  class="w-full"
-                />
+              <div v-if="!intakeDids.length" class="rounded-lg border border-dashed border-black/[0.08] p-6 text-center dark:border-white/[0.08]">
+                <UIcon name="i-lucide-phone-forwarded" class="mx-auto size-6 text-muted" />
+                <p class="mt-2 text-sm font-medium text-highlighted">
+                  No intake DIDs added
+                </p>
               </div>
 
-              <!-- Support Staff -->
-              <div class="relative mt-1 rounded-xl border border-[var(--ap-accent)]/20 overflow-hidden">
-                <div class="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[var(--ap-accent)]/[0.08] to-transparent" />
-                <div class="relative flex items-center gap-2 border-b border-[var(--ap-accent)]/10 px-4 py-2.5">
-                  <UIcon name="i-lucide-users" class="text-xs text-[var(--ap-accent)]" />
-                  <span class="text-xs font-semibold text-highlighted">Support Staff</span>
-                  <span class="text-[11px] text-muted">(optional)</span>
-                </div>
-                <div class="p-4">
-                  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <div class="space-y-1.5">
-                      <label class="text-xs font-medium text-highlighted">
-                        Assistant Name
-                      </label>
-                      <UInput
-                        v-model="form.assistant_name"
-                        placeholder="Jane Smith"
-                        autocomplete="off"
-                        size="md"
-                        class="w-full"
-                      />
+              <div v-else class="space-y-2">
+                <div
+                  v-for="row in intakeDids"
+                  :key="row.state"
+                  class="flex items-start justify-between gap-3 rounded-xl border border-black/[0.06] p-3 dark:border-white/[0.08]"
+                >
+                  <div class="flex min-w-0 gap-3">
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--ap-accent)]/10 text-[11px] font-bold text-[var(--ap-accent)]">
+                      {{ row.state }}
                     </div>
-                    <div class="space-y-1.5">
-                      <label class="text-xs font-medium text-highlighted">
-                        Assistant Email
-                      </label>
-                      <UInput
-                        v-model="form.assistant_email"
-                        type="email"
-                        placeholder="assistant@firm.com"
-                        autocomplete="off"
-                        size="md"
-                        class="w-full"
-                      />
+                    <div class="min-w-0">
+                      <p class="truncate text-sm font-semibold text-highlighted">
+                        {{ row.did_number }}
+                      </p>
+                      <p class="mt-0.5 text-xs text-muted">
+                        {{ getBrokerAttorneyIntakeStateName(row.state) }}
+                      </p>
+                      <p class="mt-1 text-xs text-muted">
+                        <span class="font-medium text-highlighted">{{ row.contact_name }}</span>
+                        <span class="mx-1 text-muted/60">|</span>
+                        {{ row.availability_notes }}
+                      </p>
                     </div>
                   </div>
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    class="shrink-0 text-red-400 hover:text-red-300"
+                    :loading="deletingIntakeDidState === row.state"
+                    :aria-label="`Delete ${row.did_number}`"
+                    @click="removeIntakeDid(row)"
+                  />
                 </div>
               </div>
             </div>
@@ -868,47 +1039,25 @@ onMounted(load)
 
             <div class="relative p-5">
               <div class="space-y-4">
-                <div
-                  v-if="canAddDocument"
-                  class="rounded-xl border border-dashed border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/[0.02] p-4 space-y-3"
-                >
+                <div class="rounded-xl border border-dashed border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/[0.02] p-4 space-y-3">
                   <div class="grid gap-3 sm:grid-cols-2">
                     <div class="space-y-1.5">
                       <label class="text-xs font-medium text-highlighted">State</label>
                       <USelect
                         v-model="newDocument.state"
-                        :items="availableDocumentStates"
+                        :items="BROKER_RETAINER_DOCUMENT_STATE_OPTIONS"
                         placeholder="Select state"
                         class="w-full"
                       />
                     </div>
                     <div class="space-y-1.5">
-                      <label class="text-xs font-medium text-highlighted">Document</label>
-                      <input
-                        ref="fileInput"
-                        type="file"
-                        class="hidden"
-                        :accept="BROKER_RETAINER_DOCUMENT_ACCEPT"
-                        @change="handleFileSelected"
-                      >
-                      <div class="flex gap-2">
-                        <button
-                          type="button"
-                          class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--ap-accent)]/30 px-3 py-2 text-xs font-medium text-muted transition hover:border-[var(--ap-accent)]/60 hover:text-[var(--ap-accent)]"
-                          @click="openFilePicker"
-                        >
-                          <UIcon name="i-lucide-upload" class="size-4 text-[var(--ap-accent)]" />
-                          <span class="truncate">{{ newDocument.file?.name || `Upload (${maxFileSizeLabel} max)` }}</span>
-                        </button>
-                        <UButton
-                          v-if="newDocument.file"
-                          icon="i-lucide-x"
-                          color="neutral"
-                          variant="ghost"
-                          size="sm"
-                          @click="newDocument.file = null"
-                        />
-                      </div>
+                      <label class="text-xs font-medium text-highlighted">Document Title</label>
+                      <UInput
+                        v-model="newDocument.title"
+                        placeholder="Name this document"
+                        autocomplete="off"
+                        class="w-full"
+                      />
                     </div>
                   </div>
 
@@ -922,11 +1071,51 @@ onMounted(load)
                     />
                   </div>
 
-                  <div class="flex justify-end">
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-medium text-highlighted">
+                      Document Set Up Walkthrough
+                      <span class="text-[11px] font-normal text-muted">(Optional)</span>
+                    </label>
+                    <UInput
+                      v-model="newDocument.walkthrough_url"
+                      type="url"
+                      placeholder="https://www.loom.com/share/..."
+                      autocomplete="off"
+                      icon="i-lucide-circle-play"
+                      class="w-full"
+                    />
+                  </div>
+
+                  <div class="flex flex-col gap-3 border-t border-[var(--ap-accent)]/10 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                    <input
+                      ref="fileInput"
+                      type="file"
+                      class="hidden"
+                      :accept="BROKER_RETAINER_DOCUMENT_ACCEPT"
+                      @change="handleFileSelected"
+                    >
+                    <div class="flex min-w-0 flex-1 gap-2">
+                      <button
+                        type="button"
+                        class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--ap-accent)]/30 px-3 py-2 text-xs font-medium text-muted transition hover:border-[var(--ap-accent)]/60 hover:text-[var(--ap-accent)]"
+                        @click="openFilePicker"
+                      >
+                        <UIcon name="i-lucide-upload" class="size-4 text-[var(--ap-accent)]" />
+                        <span class="truncate">{{ newDocument.file?.name || `Choose file (${maxFileSizeLabel} max)` }}</span>
+                      </button>
+                      <UButton
+                        v-if="newDocument.file"
+                        icon="i-lucide-x"
+                        color="neutral"
+                        variant="ghost"
+                        size="sm"
+                        @click="clearSelectedDocumentFile"
+                      />
+                    </div>
                     <UButton
                       icon="i-lucide-upload-cloud"
                       :loading="uploadingDocument"
-                      :disabled="!newDocument.state || !newDocument.file"
+                      :disabled="!newDocument.state || !newDocument.title.trim() || !newDocument.file"
                       class="rounded-lg"
                       @click="uploadDocument"
                     >
@@ -955,7 +1144,7 @@ onMounted(load)
                       <div class="min-w-0">
                         <div class="flex flex-wrap items-center gap-2">
                           <p class="truncate text-sm font-medium text-highlighted">
-                            {{ doc.document_name }}
+                            {{ doc.document_title }}
                           </p>
                           <span class="rounded-md bg-[var(--ap-accent)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--ap-accent)]">
                             {{ getBrokerRetainerDocumentKind(doc.document_mime_type, doc.document_name).toUpperCase() }}
@@ -963,9 +1152,21 @@ onMounted(load)
                         </div>
                         <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
                           <span>{{ getBrokerRetainerDocumentStateName(doc.state) }}</span>
+                          <span>{{ doc.document_name }}</span>
                           <span>{{ formatBrokerRetainerDocumentFileSize(doc.document_size_bytes) }}</span>
                           <span>{{ formatUploadedAt(doc.created_at) }}</span>
                         </div>
+                        <a
+                          v-if="doc.setup_walkthrough_url"
+                          :href="doc.setup_walkthrough_url"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--ap-accent)] transition hover:underline"
+                        >
+                          <UIcon name="i-lucide-circle-play" class="size-3.5" />
+                          Document Set Up Walkthrough
+                          <UIcon name="i-lucide-external-link" class="size-3" />
+                        </a>
 
                         <div v-if="editingNotesId === doc.id" class="mt-3 space-y-2">
                           <UTextarea v-model="editingNotesValue" :rows="2" />
@@ -999,7 +1200,7 @@ onMounted(load)
                         variant="ghost"
                         size="xs"
                         :loading="openingDocumentId === doc.id"
-                        :aria-label="`Open ${doc.document_name}`"
+                        :aria-label="`Open ${doc.document_title}`"
                         @click="openDocument(doc)"
                       />
                       <UButton
@@ -1007,7 +1208,7 @@ onMounted(load)
                         color="neutral"
                         variant="ghost"
                         size="xs"
-                        :aria-label="`Edit notes for ${doc.document_name}`"
+                        :aria-label="`Edit notes for ${doc.document_title}`"
                         @click="startEditNotes(doc)"
                       />
                       <UButton
@@ -1016,7 +1217,7 @@ onMounted(load)
                         variant="ghost"
                         size="xs"
                         class="text-red-400 hover:text-red-300"
-                        :aria-label="`Delete ${doc.document_name}`"
+                        :aria-label="`Delete ${doc.document_title}`"
                         @click="removeDocument(doc)"
                       />
                     </div>

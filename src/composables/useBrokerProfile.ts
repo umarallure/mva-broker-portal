@@ -20,6 +20,9 @@ export interface BrokerProfileState {
   directPhone?: string
   officeAddress?: string
   websiteUrl?: string
+  linkedInUsername?: string
+  instagramUsername?: string
+  facebookUsername?: string
   preferredContact?: 'email' | 'phone' | 'text'
   assistantName?: string
   assistantEmail?: string
@@ -39,9 +42,10 @@ export const BROKER_PROFILE_OPTIONAL_FIELDS: Array<keyof BrokerProfileState> = [
   'yearsInBusiness',
   'personalEmail',
   'websiteUrl',
+  'linkedInUsername',
+  'instagramUsername',
+  'facebookUsername',
   'preferredContact',
-  'assistantName',
-  'assistantEmail'
 ]
 
 export const isBrokerProfileFieldFilled = (
@@ -92,6 +96,9 @@ const _useBrokerProfile = () => {
     if ('directPhone' in data) out.direct_phone = data.directPhone ?? null
     if ('officeAddress' in data) out.office_address = data.officeAddress ?? null
     if ('websiteUrl' in data) out.website_url = data.websiteUrl ?? null
+    if ('linkedInUsername' in data) out.linkedin_username = data.linkedInUsername ?? null
+    if ('instagramUsername' in data) out.instagram_username = data.instagramUsername ?? null
+    if ('facebookUsername' in data) out.facebook_username = data.facebookUsername ?? null
     if ('preferredContact' in data) out.preferred_contact = data.preferredContact ?? null
     if ('assistantName' in data) out.assistant_name = data.assistantName ?? null
     if ('assistantEmail' in data) out.assistant_email = data.assistantEmail ?? null
@@ -109,6 +116,9 @@ const _useBrokerProfile = () => {
     directPhone: db.direct_phone || '',
     officeAddress: db.office_address || '',
     websiteUrl: db.website_url || '',
+    linkedInUsername: db.linkedin_username || '',
+    instagramUsername: db.instagram_username || '',
+    facebookUsername: db.facebook_username || '',
     preferredContact: db.preferred_contact || undefined,
     assistantName: db.assistant_name || '',
     assistantEmail: db.assistant_email || ''

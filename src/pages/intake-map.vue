@@ -55,6 +55,9 @@ const multiSelectUi = {
   content: 'min-w-64 max-h-72 overflow-auto'
 }
 
+const ALL_ATTORNEYS_VALUE = '__all_attorneys__'
+const normalizeStateCode = (value: unknown) => String(value || '').trim().toUpperCase()
+
 const coverageForm = ref<CoverageForm>({
   broker_attorney_id: '',
   coverage_states: [],
@@ -75,16 +78,19 @@ const attorneyOptions = computed(() =>
     value: attorney.id
   }))
 )
+const attorneyViewOptions = computed(() => attorneys.value.length
+  ? [
+      { label: 'All Attorneys', value: ALL_ATTORNEYS_VALUE },
+      ...attorneyOptions.value
+    ]
+  : []
+)
+const isAllAttorneysSelected = computed(() => selectedAttorneyId.value === ALL_ATTORNEYS_VALUE)
 
 const selectedAttorney = computed(() =>
   attorneys.value.find(attorney => attorney.id === selectedAttorneyId.value) ?? null
 )
-
-const coveredStateRows = computed(() =>
-  (selectedAttorney.value?.coverage_states ?? [])
-    .map(code => ({ code, name: US_STATES.find(state => state.code === code)?.name ?? code }))
-    .sort((a, b) => a.name.localeCompare(b.name))
-)
+const hasAttorneyView = computed(() => isAllAttorneysSelected.value || Boolean(selectedAttorney.value))
 
 const coverageFormStateRows = computed(() =>
   coverageForm.value.coverage_states
@@ -104,6 +110,16 @@ const networkCoverageCounts = computed(() => {
   return counts
 })
 
+const coveredStateRows = computed(() => {
+  const codes = isAllAttorneysSelected.value
+    ? Array.from(networkCoverageCounts.value.keys())
+    : (selectedAttorney.value?.coverage_states ?? [])
+
+  return Array.from(new Set(codes.map(normalizeStateCode).filter(Boolean)))
+    .map(code => ({ code, name: US_STATES.find(state => state.code === code)?.name ?? code }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+})
+
 const coveredStateCount = computed(() => networkCoverageCounts.value.size)
 const highTrafficCount = computed(() => {
   let n = 0
@@ -116,8 +132,6 @@ const moderateTrafficCount = computed(() => {
   return n
 })
 const noCoverageCount = computed(() => US_STATES.length - networkCoverageCounts.value.size)
-
-const normalizeStateCode = (value: unknown) => String(value || '').trim().toUpperCase()
 
 const normalizeCoverageSolCriteria = (value?: string | null): CoverageSolCriteria => {
   if (value === '12_plus_months') return '12_plus_months'
@@ -169,7 +183,7 @@ const applyMapColors = async () => {
     path.style.strokeWidth = '0.8'
     path.style.cursor = selectedAttorney.value ? 'pointer' : 'default'
     path.style.transition = 'fill 160ms ease, opacity 160ms ease'
-    path.style.opacity = selectedAttorney.value ? '1' : '0.55'
+    path.style.opacity = hasAttorneyView.value ? '1' : '0.55'
   })
 
   applyStateLabels()
@@ -235,7 +249,13 @@ const loadAttorneys = async () => {
     }
 
     attorneys.value = await listBrokerAttorneys(brokerId.value)
-    if (!selectedAttorneyId.value || !attorneys.value.some(attorney => attorney.id === selectedAttorneyId.value)) {
+    if (
+      !selectedAttorneyId.value
+      || (
+        selectedAttorneyId.value !== ALL_ATTORNEYS_VALUE
+        && !attorneys.value.some(attorney => attorney.id === selectedAttorneyId.value)
+      )
+    ) {
       selectedAttorneyId.value = attorneys.value[0]?.id ?? ''
     }
   } catch (err) {
@@ -248,6 +268,16 @@ const loadAttorneys = async () => {
 }
 
 const openCoverageEditor = () => {
+  if (isAllAttorneysSelected.value) {
+    toast.add({
+      title: 'Select an attorney to edit',
+      description: 'All Attorneys is a read-only network view. Select one attorney before changing coverage.',
+      color: 'warning',
+      icon: 'i-lucide-alert-triangle'
+    })
+    return
+  }
+
   if (!selectedAttorney.value) {
     toast.add({
       title: 'Add an attorney first',
@@ -278,6 +308,16 @@ const handleMapClick = (event: MouseEvent) => {
   const path = target?.closest?.('path[data-id]') as SVGPathElement | null
   const code = normalizeStateCode(path?.dataset.id)
   if (!code) return
+
+  if (isAllAttorneysSelected.value) {
+    toast.add({
+      title: 'Select an attorney to edit',
+      description: 'All Attorneys is a read-only network view. Select one attorney before changing coverage.',
+      color: 'warning',
+      icon: 'i-lucide-alert-triangle'
+    })
+    return
+  }
 
   if (!selectedAttorney.value) {
     toast.add({
@@ -389,10 +429,10 @@ onMounted(loadAttorneys)
             </div>
             <div class="min-w-0">
               <p class="truncate text-sm font-semibold text-highlighted">
-                {{ selectedAttorney?.attorney_name || 'No attorney selected' }}
+                {{ isAllAttorneysSelected ? 'All Attorneys' : (selectedAttorney?.attorney_name || 'No attorney selected') }}
               </p>
               <p class="truncate text-xs text-muted">
-                {{ selectedAttorney?.firm_name || 'Select or add an attorney to begin' }}
+                {{ isAllAttorneysSelected ? `${attorneys.length} broker-managed attorneys` : (selectedAttorney?.firm_name || 'Select or add an attorney to begin') }}
               </p>
             </div>
             <div class="hidden h-8 w-px bg-[var(--ap-card-border)] mx-1 sm:block" />
@@ -420,13 +460,13 @@ onMounted(loadAttorneys)
             </UButton>
             <USelect
               v-model="selectedAttorneyId"
-              :items="attorneyOptions"
+              :items="attorneyViewOptions"
               value-key="value"
               label-key="label"
               placeholder="Select attorney"
               icon="i-lucide-user"
               class="w-full sm:w-72"
-              :disabled="!attorneyOptions.length"
+              :disabled="!attorneyViewOptions.length"
             />
             <UButton
               :disabled="!selectedAttorney"
