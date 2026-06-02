@@ -50,6 +50,7 @@ const tabs = [
 
 const headerTitle = computed(() => {
   if (!row.value) return 'Lead details'
+  if (row.value.status === 'attorney_rejected') return 'Lead Unavailable'
   const name = row.value.insured_name || 'Unknown'
   const phone = row.value.client_phone_number || 'N/A'
   return `${name} - ${phone}`
@@ -460,6 +461,10 @@ const formatStatusLabel = (value: unknown) => {
     .replace(/\b\w/g, letter => letter.toUpperCase())
 }
 
+const isRejected = computed(() => {
+  return row.value?.status === 'attorney_rejected'
+})
+
 const statusPillClass = computed(() => {
   const status = String(row.value?.status ?? '').toLowerCase()
   if (status.includes('approved') || status.includes('payable') || status.includes('qualified')) {
@@ -588,136 +593,166 @@ const accidentDetailsFields = computed(() => {
       </div>
 
       <div v-else-if="row" class="space-y-5">
-        <section class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60">
-          <div class="relative border-b border-[var(--ap-card-border)] px-5 py-5">
-            <div class="absolute inset-y-0 left-0 w-1 bg-[var(--ap-accent)]" />
-            <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div class="flex min-w-0 items-start gap-4">
-                <div class="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/10 text-lg font-bold text-[var(--ap-accent)]">
-                  {{ getInitials(leadName) }}
-                </div>
-                <div class="min-w-0">
-                  <p class="text-[11px] font-semibold uppercase tracking-wider text-muted">
-                    Lead Information
-                  </p>
-                  <h2 class="mt-1 truncate text-2xl font-semibold text-highlighted">
-                    {{ leadName }}
-                  </h2>
-                  <div class="mt-3 flex flex-wrap gap-2">
+        <div :class="isRejected ? 'relative overflow-hidden' : ''">
+          <div :class="isRejected ? 'pointer-events-none select-none blur-sm' : ''">
+            <section class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60">
+              <div class="relative border-b border-[var(--ap-card-border)] px-5 py-5">
+                <div class="absolute inset-y-0 left-0 w-1 bg-[var(--ap-accent)]" />
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div class="flex min-w-0 items-start gap-4">
+                    <div class="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/10 text-lg font-bold text-[var(--ap-accent)]">
+                      {{ getInitials(leadName) }}
+                    </div>
+                    <div class="min-w-0">
+                      <p class="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                        Lead Information
+                      </p>
+                      <h2 class="mt-1 truncate text-2xl font-semibold text-highlighted">
+                        {{ leadName }}
+                      </h2>
+                      <div class="mt-3 flex flex-wrap gap-2">
+                        <span
+                          v-for="item in leadContactSummary"
+                          :key="item.icon"
+                          class="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] px-2.5 py-1 text-xs font-medium text-muted"
+                        >
+                          <UIcon :name="item.icon" class="size-3.5 shrink-0" />
+                          <span class="truncate">{{ item.label }}</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="flex shrink-0 flex-col items-start gap-2 lg:items-end">
                     <span
-                      v-for="item in leadContactSummary"
-                      :key="item.icon"
-                      class="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] px-2.5 py-1 text-xs font-medium text-muted"
+                      class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
+                      :class="statusPillClass"
                     >
-                      <UIcon :name="item.icon" class="size-3.5 shrink-0" />
-                      <span class="truncate">{{ item.label }}</span>
+                      <UIcon name="i-lucide-activity" class="size-3.5" />
+                      {{ formatStatusLabel(row.status) }}
                     </span>
+                    <div
+                      v-if="createdDateLabel !== '-'"
+                      class="mt-10 flex items-center gap-1.5 text-xs font-medium text-muted"
+                    >
+                      <UIcon name="i-lucide-calendar-clock" class="size-3.5" />
+                      <span>Created {{ createdDateLabel }}</span>
+                    </div>
                   </div>
                 </div>
               </div>
+            </section>
 
-              <div class="flex shrink-0 flex-col items-start gap-2 lg:items-end">
-                <span
-                  class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
-                  :class="statusPillClass"
+            <UTabs v-model="activeTab" :items="tabs">
+              <template #content="{ item }">
+                <section
+                  v-if="item.value === 'basic'"
+                  class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60"
                 >
-                  <UIcon name="i-lucide-activity" class="size-3.5" />
-                  {{ formatStatusLabel(row.status) }}
-                </span>
-                <div
-                  v-if="createdDateLabel !== '-'"
-                  class="mt-10 flex items-center gap-1.5 text-xs font-medium text-muted"
+                  <div class="flex items-center gap-2 border-b border-[var(--ap-card-border)] px-5 py-3">
+                    <UIcon name="i-lucide-user" class="size-4 text-[var(--ap-accent)]" />
+                    <h3 class="text-sm font-semibold text-highlighted">
+                      Personal Information
+                    </h3>
+                  </div>
+                  <div class="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
+                    <div
+                      v-for="field in basicInfoFields"
+                      :key="field.key"
+                      class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3"
+                    >
+                      <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                        <UIcon :name="field.icon" class="size-3.5 shrink-0" />
+                        {{ field.label }}
+                      </div>
+                      <div class="mt-1 text-sm text-highlighted wrap-break-word">
+                        {{ formatFieldValue(field.key, field.value) }}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section
+                  v-else-if="item.value === 'accident'"
+                  class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60"
                 >
-                  <UIcon name="i-lucide-calendar-clock" class="size-3.5" />
-                  <span>Created {{ createdDateLabel }}</span>
-                </div>
+                  <div class="flex items-center gap-2 border-b border-[var(--ap-card-border)] px-5 py-3">
+                    <UIcon name="i-lucide-car" class="size-4 text-[var(--ap-accent)]" />
+                    <h3 class="text-sm font-semibold text-highlighted">
+                      Accident Details
+                    </h3>
+                  </div>
+                  <div class="grid gap-3 p-4 md:grid-cols-2">
+                    <div
+                      v-for="field in accidentDetailsFields"
+                      :key="field.key"
+                      class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3"
+                    >
+                      <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                        <UIcon :name="field.icon" class="size-3.5 shrink-0" />
+                        {{ field.label }}
+                      </div>
+                      <div class="mt-1 text-sm text-highlighted wrap-break-word">
+                        {{ formatFieldValue(field.key, field.value) }}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section
+                  v-else-if="item.value === 'documents'"
+                  class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60"
+                >
+                  <div class="flex items-center gap-2 border-b border-[var(--ap-card-border)] px-5 py-3">
+                    <UIcon name="i-lucide-folder-open" class="size-4 text-[var(--ap-accent)]" />
+                    <h3 class="text-sm font-semibold text-highlighted">
+                      Documents
+                    </h3>
+                  </div>
+                  <div class="p-4">
+                    <LeadDocumentsTab
+                      v-if="row.submission_id"
+                      :submission-id="String(row.submission_id || '')"
+                    />
+                    <UAlert
+                      v-else
+                      color="neutral"
+                      variant="subtle"
+                      title="No submission ID"
+                      description="No submission ID available to load documents."
+                    />
+                  </div>
+                </section>
+              </template>
+            </UTabs>
+          </div>
+
+          <div
+            v-if="isRejected"
+            class="absolute inset-0 z-10 flex items-center justify-center bg-black/40"
+          >
+            <div class="w-80 rounded-2xl border border-red-500/30 bg-red-500/10 p-8 text-center shadow-2xl backdrop-blur-xl">
+              <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-500/20">
+                <UIcon name="i-lucide-ban" class="size-8 text-red-500" />
               </div>
+              <h3 class="mt-5 text-lg font-bold text-highlighted">
+                Lead Rejected by Attorney
+              </h3>
+              <p class="mt-3 text-sm text-muted leading-relaxed">
+                This lead was already rejected by the attorney. The lead information is not available and cannot be viewed.
+              </p>
+              <UButton
+                color="neutral"
+                variant="outline"
+                icon="i-lucide-arrow-left"
+                class="mt-6"
+                @click="goBack"
+              >
+                Go Back
+              </UButton>
             </div>
           </div>
-        </section>
-
-        <UTabs v-model="activeTab" :items="tabs">
-          <template #content="{ item }">
-            <section
-              v-if="item.value === 'basic'"
-              class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60"
-            >
-              <div class="flex items-center gap-2 border-b border-[var(--ap-card-border)] px-5 py-3">
-                <UIcon name="i-lucide-user" class="size-4 text-[var(--ap-accent)]" />
-                <h3 class="text-sm font-semibold text-highlighted">
-                  Personal Information
-                </h3>
-              </div>
-              <div class="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
-                <div
-                  v-for="field in basicInfoFields"
-                  :key="field.key"
-                  class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3"
-                >
-                  <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
-                    <UIcon :name="field.icon" class="size-3.5 shrink-0" />
-                    {{ field.label }}
-                  </div>
-                  <div class="mt-1 text-sm text-highlighted wrap-break-word">
-                    {{ formatFieldValue(field.key, field.value) }}
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section
-              v-else-if="item.value === 'accident'"
-              class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60"
-            >
-              <div class="flex items-center gap-2 border-b border-[var(--ap-card-border)] px-5 py-3">
-                <UIcon name="i-lucide-car" class="size-4 text-[var(--ap-accent)]" />
-                <h3 class="text-sm font-semibold text-highlighted">
-                  Accident Details
-                </h3>
-              </div>
-              <div class="grid gap-3 p-4 md:grid-cols-2">
-                <div
-                  v-for="field in accidentDetailsFields"
-                  :key="field.key"
-                  class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3"
-                >
-                  <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
-                    <UIcon :name="field.icon" class="size-3.5 shrink-0" />
-                    {{ field.label }}
-                  </div>
-                  <div class="mt-1 text-sm text-highlighted wrap-break-word">
-                    {{ formatFieldValue(field.key, field.value) }}
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section
-              v-else-if="item.value === 'documents'"
-              class="overflow-hidden rounded-xl border border-[var(--ap-card-border)] bg-white/90 shadow-lg backdrop-blur-sm dark:bg-[#1a1a1a]/60"
-            >
-              <div class="flex items-center gap-2 border-b border-[var(--ap-card-border)] px-5 py-3">
-                <UIcon name="i-lucide-folder-open" class="size-4 text-[var(--ap-accent)]" />
-                <h3 class="text-sm font-semibold text-highlighted">
-                  Documents
-                </h3>
-              </div>
-              <div class="p-4">
-                <LeadDocumentsTab
-                  v-if="row.submission_id"
-                  :submission-id="String(row.submission_id || '')"
-                />
-                <UAlert
-                  v-else
-                  color="neutral"
-                  variant="subtle"
-                  title="No submission ID"
-                  description="No submission ID available to load documents."
-                />
-              </div>
-            </section>
-          </template>
-        </UTabs>
+        </div>
       </div>
     </template>
   </UDashboardPanel>
