@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { DropdownMenuItem } from '@nuxt/ui'
 // import { useDashboard } from '../composables/useDashboard'
@@ -15,19 +15,24 @@ const router = useRouter()
 // const { isNotificationsSlideoverOpen } = useDashboard()
 const auth = useAuth()
 
-const items = [[{
-  label: 'New mail',
-  icon: 'i-lucide-send',
-  to: '/inbox'
-}, {
-  label: 'New retainer',
-  icon: 'i-lucide-briefcase',
-  to: '/retainers'
-}]] satisfies DropdownMenuItem[][]
-
 const isSuperAdmin = computed(() => auth.state.value.profile?.role === 'super_admin')
 const isAdmin = computed(() => auth.state.value.profile?.role === 'admin')
 const isAdminOrSuper = computed(() => isSuperAdmin.value || isAdmin.value)
+const canViewCases = computed(() => auth.hasBrokerSection('cases'))
+const canViewInvoicing = computed(() => auth.hasBrokerSection('invoicing'))
+const canViewAttorneys = computed(() => auth.hasBrokerSection('attorneys'))
+const items = computed(() => [[
+  {
+    label: 'New mail',
+    icon: 'i-lucide-send',
+    to: '/inbox'
+  },
+  ...(canViewCases.value ? [{
+    label: 'New retainer',
+    icon: 'i-lucide-briefcase',
+    to: '/retainers'
+  }] : [])
+]] satisfies DropdownMenuItem[][])
 const dashboardHints = productGuideHints.dashboard
 
 const loading = ref(true)
@@ -176,10 +181,11 @@ const load = async () => {
   loading.value = true
   try {
     await auth.init()
-    const userId = auth.state.value.profile?.user_id ?? null
+    const userId = auth.state.value.brokerContext?.broker_id ?? auth.state.value.profile?.user_id ?? null
     const role = auth.state.value.profile?.role ?? null
+    const isBrokerWorkspace = role === 'broker' || role === 'broker_member'
 
-    if (role === 'broker') {
+    if (isBrokerWorkspace) {
       type LeadRetainerRow = {
         id: string
         submission_id: string
@@ -321,15 +327,17 @@ const load = async () => {
     }
 
     const invFilters: { lawyer_id?: string; broker_id?: string; status?: InvoiceStatus; invoice_type?: InvoiceType } = {
-      invoice_type: role === 'broker' ? 'broker' : 'lawyer'
+      invoice_type: isBrokerWorkspace ? 'broker' : 'lawyer'
     }
     if (role === 'lawyer' && userId) {
       invFilters.lawyer_id = userId
     }
-    if (role === 'broker' && userId) {
+    if (isBrokerWorkspace && userId) {
       invFilters.broker_id = userId
     }
-    const invData = (await listInvoices(invFilters)) as InvoiceRowWithLawyerName[]
+    const invData = canViewInvoicing.value
+      ? (await listInvoices(invFilters)) as InvoiceRowWithLawyerName[]
+      : []
 
     if (role === 'super_admin' || role === 'admin') {
       const lawyerIds = [...new Set(invData.map(d => d.lawyer_id).filter(Boolean))]
@@ -385,9 +393,15 @@ onMounted(() => {
 
 const activeWorkbenchTab = ref('retainers')
 const workbenchTabs = computed(() => [
-  { key: 'retainers', label: 'Retainers', icon: 'i-lucide-briefcase', count: retainerCount.value },
-  { key: 'invoices', label: 'Invoices', icon: 'i-lucide-receipt', count: invoices.value.length }
+  ...(canViewCases.value ? [{ key: 'retainers', label: 'Retainers', icon: 'i-lucide-briefcase', count: retainerCount.value }] : []),
+  ...(canViewInvoicing.value ? [{ key: 'invoices', label: 'Invoices', icon: 'i-lucide-receipt', count: invoices.value.length }] : [])
 ])
+
+watch(workbenchTabs, (tabs) => {
+  if (!tabs.some(tab => tab.key === activeWorkbenchTab.value)) {
+    activeWorkbenchTab.value = tabs[0]?.key ?? ''
+  }
+}, { immediate: true })
 
 type InvoiceTrendPoint = {
   month: string
@@ -546,7 +560,7 @@ const showMonthGrowth = computed(() =>
       <div class="flex flex-col gap-6">
         <!-- ═══ KPI Strip ═══ -->
         <div class="grid grid-cols-2 gap-4 lg:grid-cols-4 kpi-strip">
-          <div class="ap-fade-in">
+          <div v-if="canViewCases" class="ap-fade-in">
             <DashboardMetricCard
               title="Sent Retainers"
               :value="retainerCount"
@@ -566,7 +580,7 @@ const showMonthGrowth = computed(() =>
             </DashboardMetricCard>
           </div>
 
-          <div class="ap-fade-in ap-delay-1">
+          <div v-if="canViewCases" class="ap-fade-in ap-delay-1">
             <DashboardMetricCard
               title="Approved Retainers"
               :value="approvedRetainerCount"
@@ -586,7 +600,7 @@ const showMonthGrowth = computed(() =>
             </DashboardMetricCard>
           </div>
 
-          <div class="ap-fade-in ap-delay-2">
+          <div v-if="canViewInvoicing" class="ap-fade-in ap-delay-2">
             <DashboardMetricCard
               title="Pending Payment"
               :value="formatMoney(pendingInvoiceAmount)"
@@ -606,7 +620,7 @@ const showMonthGrowth = computed(() =>
             </DashboardMetricCard>
           </div>
 
-          <div class="ap-fade-in ap-delay-3">
+          <div v-if="canViewInvoicing" class="ap-fade-in ap-delay-3">
             <DashboardMetricCard
               title="Total Invoiced"
               :value="formatMoney(totalInvoiced)"
@@ -631,7 +645,7 @@ const showMonthGrowth = computed(() =>
         <!-- ═══ Main Row — Trend Chart + Action Center ═══ -->
         <div class="grid gap-5 lg:grid-cols-3">
           <!-- Invoice Trend -->
-          <div class="lg:col-span-2 ap-fade-in ap-delay-4 flex flex-col overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
+          <div v-if="canViewInvoicing" class="lg:col-span-2 ap-fade-in ap-delay-4 flex flex-col overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
             <div class="flex flex-col gap-4 border-b border-black/[0.06] dark:border-white/[0.06] px-5 py-4 xl:flex-row xl:items-center xl:justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10">
@@ -768,6 +782,7 @@ const showMonthGrowth = computed(() =>
               </div>
               <div class="space-y-2.5">
                 <button
+                  v-if="canViewAttorneys"
                   class="flex w-full items-center gap-3 rounded-lg border border-[var(--ap-accent)]/15 px-3.5 py-3 text-sm text-left transition-all duration-200 hover:bg-[var(--ap-accent)]/[0.06] hover:border-[var(--ap-accent)]/30 group"
                   @click="router.push('/attorneys')"
                 >
@@ -799,6 +814,7 @@ const showMonthGrowth = computed(() =>
                   <UIcon name="i-lucide-chevron-right" class="text-xs text-muted/50 transition-all duration-200 group-hover:text-amber-400 group-hover:translate-x-0.5" />
                 </button>
                 <button
+                  v-if="canViewCases"
                   class="flex w-full items-center gap-3 rounded-lg border border-orange-300/15 dark:border-orange-400/15 px-3.5 py-3 text-sm text-left transition-all duration-200 hover:bg-orange-400/[0.06] hover:border-orange-300/30 dark:hover:border-orange-400/30 group"
                   @click="router.push('/retainers')"
                 >
@@ -817,7 +833,7 @@ const showMonthGrowth = computed(() =>
             </div>
 
             <!-- Invoice Breakdown -->
-            <div class="overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm p-5">
+            <div v-if="canViewInvoicing" class="overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm p-5">
               <div class="mb-4 flex items-center justify-between gap-3">
                 <div class="flex items-center gap-1.5">
                   <h3 class="text-sm font-semibold text-highlighted">
@@ -866,7 +882,7 @@ const showMonthGrowth = computed(() =>
         </div>
 
         <!-- ═══ Tabbed Workbench ═══ -->
-        <div class="ap-fade-in ap-delay-6 overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
+        <div v-if="workbenchTabs.length" class="ap-fade-in ap-delay-6 overflow-hidden rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/90 dark:bg-[#1a1a1a]/60 shadow-lg backdrop-blur-sm">
           <!-- Tab Header -->
           <div class="flex items-center justify-between border-b border-black/[0.06] dark:border-white/[0.06] px-5">
             <div class="flex items-center gap-4">
@@ -1000,7 +1016,7 @@ const showMonthGrowth = computed(() =>
                     </td>
                     <td class="px-5 py-3 text-center">
                       <button
-                        v-if="row.invoice_id"
+                        v-if="row.invoice_id && canViewInvoicing"
                         class="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400 transition-all hover:bg-amber-500/20 hover:scale-110"
                         title="View linked invoice"
                         @click.stop="openRetainerInvoice(row)"

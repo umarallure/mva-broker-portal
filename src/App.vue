@@ -80,39 +80,40 @@ const role = computed(() => auth.state.value.profile?.role)
 const managedLaunch = computed(() => auth.managedLaunch.value)
 const isManagedSession = computed(() => auth.isManagedSession.value)
 const isSuperAdmin = computed(() => role.value === 'super_admin')
+const canSee = (section: Parameters<typeof auth.hasBrokerSection>[0]) => auth.hasBrokerSection(section)
 
 const links = computed(() => [
   [
-    {
+    ...(canSee('dashboard') ? [{
       label: 'Dashboard',
       icon: 'i-lucide-house',
       to: '/dashboard',
       onSelect: () => { open.value = false }
-    },
-    {
+    }] : []),
+    ...(canSee('order_map') ? [{
       label: 'Order Map',
       icon: 'i-lucide-map',
       to: '/intake-map',
       onSelect: () => { open.value = false }
-    },
-    {
+    }] : []),
+    ...(canSee('cases') ? [{
       label: 'My Cases',
       icon: 'i-lucide-briefcase',
       to: '/retainers',
       onSelect: () => { open.value = false }
-    },
-    {
+    }] : []),
+    ...(canSee('invoicing') ? [{
       label: 'Invoicing',
       icon: 'i-lucide-receipt',
-      to: '/invoicing/lawyer',
+      to: '/invoicing/broker',
       onSelect: () => { open.value = false }
-    },
-    {
+    }] : []),
+    ...(canSee('attorneys') ? [{
       label: 'My Attorneys',
       icon: 'i-lucide-scale',
       to: '/attorneys',
       onSelect: () => { open.value = false }
-    },
+    }] : []),
 
     ...(isSuperAdmin.value ? [{
       label: 'Users',
@@ -126,14 +127,21 @@ const links = computed(() => [
       onSelect: () => { open.value = false }
     }] : []),
 
-    {
+    ...(canSee('task_assignment') ? [{
       label: 'Task Assignment',
       icon: 'i-lucide-list-checks',
       to: '/task-management',
       onSelect: () => { open.value = false }
+    }] : []),
+
+    {
+      label: 'Product Guide',
+      icon: 'i-lucide-book-open',
+      to: '/product-guide',
+      onSelect: () => { open.value = false }
     }
   ],
-  [
+  canSee('settings') ? [
     {
       label: 'Settings',
       to: '/settings',
@@ -152,7 +160,7 @@ const links = computed(() => [
         onSelect: () => { open.value = false }
       }]
     }
-  ]
+  ] : []
 ] satisfies NavigationMenuItem[][])
 
 const groups = computed(() => [{

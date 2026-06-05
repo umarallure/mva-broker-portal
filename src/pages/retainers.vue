@@ -7,7 +7,16 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../composables/useAuth'
 import { useDragGhost } from '../composables/useDragGhost'
 
-type LeadStatus = 'attorney_review' | 'attorney_approved' | 'attorney_rejected' | 'qualified_payable'
+const BROKER_LEAD_STATUSES = [
+  'attorney_review',
+  'attorney_approved',
+  'attorney_rejected',
+  'qualified_payable',
+  'paid_to_bpo',
+  'paid_to_agency'
+] as const
+
+type LeadStatus = typeof BROKER_LEAD_STATUSES[number]
 
 type StageKey = 'review' | 'approved' | 'rejected' | 'billable'
 
@@ -15,14 +24,16 @@ const STAGES: { key: StageKey, label: string, status: LeadStatus }[] = [
   { key: 'review', label: 'Sent Retainers', status: 'attorney_review' },
   { key: 'rejected', label: 'Rejected by Attorney', status: 'attorney_rejected' },
   { key: 'approved', label: 'Approved by Attorney', status: 'attorney_approved' },
-  { key: 'billable', label: 'Billable', status: 'qualified_payable' }
+  { key: 'billable', label: 'Billable (API)', status: 'qualified_payable' }
 ]
 
 const STATUS_TO_STAGE: Record<LeadStatus, StageKey> = {
   attorney_review: 'review',
   attorney_approved: 'approved',
   attorney_rejected: 'rejected',
-  qualified_payable: 'billable'
+  qualified_payable: 'approved',
+  paid_to_bpo: 'approved',
+  paid_to_agency: 'approved'
 }
 
 type LeadCard = {
@@ -128,7 +139,10 @@ const dragFromStage = ref<StageKey | null>(null)
 const suppressNextCardClick = ref(false)
 
 const isBrokerStatus = (s: string | null): s is LeadStatus =>
-  s === 'attorney_review' || s === 'attorney_approved' || s === 'attorney_rejected' || s === 'qualified_payable'
+  typeof s === 'string' && BROKER_LEAD_STATUSES.includes(s as LeadStatus)
+
+const isPaidApprovedLead = (lead: Pick<LeadCard, 'status'>) =>
+  lead.status === 'paid_to_bpo' || lead.status === 'paid_to_agency'
 
 const formatDate = (value: string | null) => {
   if (!value) return '—'
@@ -198,8 +212,9 @@ const load = async () => {
   try {
     await auth.init()
     const role = auth.state.value.profile?.role
-    const userId = auth.state.value.profile?.user_id ?? auth.state.value.user?.id ?? null
-    if (role !== 'broker' && role !== 'super_admin') {
+    const userId = auth.state.value.brokerContext?.broker_id ?? null
+    const isBrokerWorkspace = role === 'broker' || role === 'broker_member'
+    if (!isBrokerWorkspace && role !== 'super_admin') {
       leads.value = []
       return
     }
@@ -207,7 +222,7 @@ const load = async () => {
     const attorneyNameById = new Map<string, string>()
     let brokerAttorneyIds: string[] | null = null
 
-    if (role === 'broker') {
+    if (isBrokerWorkspace) {
       if (!userId) {
         leads.value = []
         return
@@ -242,7 +257,7 @@ const load = async () => {
     let leadQuery = supabase
       .from('leads')
       .select('id,submission_id,customer_full_name,phone_number,lead_vendor,state,status,submission_date,created_at,assigned_broker_attorney_id')
-      .in('status', ['attorney_review', 'attorney_approved', 'attorney_rejected', 'qualified_payable'])
+      .in('status', [...BROKER_LEAD_STATUSES])
       .eq('is_active', true)
       .order('created_at', { ascending: false })
       .limit(2000)
@@ -576,6 +591,21 @@ const onDropToStage = (targetStage: StageKey) => {
 
   const idx = leads.value.findIndex(l => l.id === leadId)
   if (idx < 0) return
+  const lead = leads.value[idx]
+  const targetStatus = STAGES.find(s => s.key === targetStage)?.status
+  if (!targetStatus) return
+
+  if (targetStatus === 'qualified_payable' && lead.status === 'qualified_payable') {
+    toast.add({
+      title: 'Already moved to invoicing',
+      description: 'This lead is already available in the Invoicing section.',
+      icon: 'i-lucide-receipt',
+      color: 'info'
+    })
+    return
+  }
+
+  if (lead.status === targetStatus) return
 
   pendingMoveLeadId.value = leadId
   pendingMoveFromStage.value = fromStage
@@ -606,6 +636,7 @@ const confirmMove = async () => {
 
   const targetStatus = STAGES.find(s => s.key === targetStage)?.status
   if (!targetStatus) return
+  const resolvedStage = STATUS_TO_STAGE[targetStatus]
 
   if (targetStatus === 'attorney_rejected' && !trimmedBrokerRejectionNote.value) {
     toast.add({
@@ -620,7 +651,7 @@ const confirmMove = async () => {
   moveConfirmBusy.value = true
   const prev = leads.value[idx]
 
-  leads.value[idx] = { ...prev, stage: targetStage, status: targetStatus }
+  leads.value[idx] = { ...prev, stage: resolvedStage, status: targetStatus }
 
   try {
     const updatePayload: { status: LeadStatus, broker_rejection_note?: string } = { status: targetStatus }
@@ -862,7 +893,7 @@ const confirmMove = async () => {
             <div class="absolute inset-y-0 left-0 w-1 bg-amber-400" />
             <div class="flex items-center justify-between px-5 py-4 pl-5">
               <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">Billable</p>
+                <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">Billable (API)</p>
                 <p class="mt-1 text-2xl font-bold text-amber-500 dark:text-amber-400 tabular-nums">{{ billableCount }}</p>
               </div>
               <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">

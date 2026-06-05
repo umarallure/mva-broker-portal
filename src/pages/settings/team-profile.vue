@@ -5,7 +5,8 @@ import { onBeforeRouteLeave, useRouter, type RouteLocationRaw } from 'vue-router
 import type { FormSubmitEvent } from '@nuxt/ui'
 
 import { useAuth } from '../../composables/useAuth'
-import { NEW_TEAM_MEMBER_ID, useTeamMembers } from '../../composables/useTeamMembers'
+import { NEW_BROKER_TEAM_MEMBER_ID, useBrokerTeamMembers } from '../../composables/useBrokerTeamMembers'
+import { BROKER_SECTION_OPTIONS, BROKER_SECTION_VALUES } from '../../lib/broker-access'
 import {
   getHolidayHoursValidationMessage,
   TEAM_MEMBER_POSITION_VALUES,
@@ -132,7 +133,8 @@ const teamMemberSchema = z.object({
   position: z.enum(TEAM_MEMBER_POSITION_VALUES),
   position_other: z.string().optional().or(z.literal('')),
   weekly_availability: weeklyAvailabilitySchema,
-  holiday_hours: z.array(holidayHoursSchema)
+  holiday_hours: z.array(holidayHoursSchema),
+  allowed_sections: z.array(z.enum(BROKER_SECTION_VALUES)).min(1, 'Select at least one accessible section')
 }).superRefine((data, ctx) => {
   if (data.state && !isValidTeamMemberState(data.state)) {
     ctx.addIssue({
@@ -163,18 +165,18 @@ const teamMemberSchema = z.object({
 type TeamMemberSchema = z.output<typeof teamMemberSchema>
 
 const auth = useAuth()
-const team = useTeamMembers()
+const team = useBrokerTeamMembers()
 const toast = useToast()
 const router = useRouter()
 const saving = ref(false)
 
-const userId = computed(() => auth.state.value.user?.id ?? '')
+const token = computed(() => auth.state.value.session?.access_token ?? '')
 
 onMounted(async () => {
   await auth.init()
-  if (userId.value) {
+  if (token.value) {
     try {
-      await team.loadMembers(userId.value)
+      await team.loadMembers(token.value)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unable to load team members'
       toast.add({
@@ -251,12 +253,16 @@ const memberInitials = (fullName: string) => {
 }
 
 async function onSaveMember(event: FormSubmitEvent<TeamMemberSchema>) {
-  if (!userId.value || !canSubmitDraft.value) return
+  if (!token.value || !canSubmitDraft.value) return
 
   const isUpdatingMember = Boolean(team.draft.value?.id)
   saving.value = true
   try {
-    await team.saveMember(userId.value, event.data)
+    await team.saveMember(token.value, event.data)
+    await auth.refreshProfile()
+    if (!auth.hasBrokerSection('settings')) {
+      await router.replace(auth.getDefaultPath())
+    }
     toast.add({
       title: 'Success',
       description: isUpdatingMember ? 'Team member updated.' : 'Team member added.',
@@ -291,9 +297,9 @@ const confirmDelete = (id: string, name: string) => {
 }
 
 async function handleConfirmDelete() {
-  if (!memberToDelete.value) return
+  if (!memberToDelete.value || !token.value) return
   try {
-    await team.removeMember(memberToDelete.value.id)
+    await team.removeMember(token.value, memberToDelete.value.id)
     toast.add({
       title: 'Removed',
       description: `${memberToDelete.value.name} has been removed from your team.`,
@@ -311,6 +317,32 @@ async function handleConfirmDelete() {
   } finally {
     closeDeleteModal()
   }
+}
+
+async function regeneratePassword(member: typeof team.members.value[number]) {
+  if (!token.value) return
+
+  try {
+    await team.regeneratePassword(token.value, member)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unable to regenerate password'
+    toast.add({ title: 'Error', description: msg, icon: 'i-lucide-x', color: 'error' })
+  }
+}
+
+async function copyTemporaryPassword() {
+  if (!team.temporaryPassword.value) return
+  await navigator.clipboard.writeText(team.temporaryPassword.value)
+  toast.add({ title: 'Password copied', icon: 'i-lucide-check', color: 'success' })
+}
+
+function setAllowedSection(section: typeof BROKER_SECTION_VALUES[number], enabled: boolean) {
+  if (!team.draft.value) return
+
+  const sections = new Set(team.draft.value.allowed_sections)
+  if (enabled) sections.add(section)
+  else sections.delete(section)
+  team.draft.value.allowed_sections = [...sections]
 }
 
 // Unsaved changes guard
@@ -389,6 +421,34 @@ onBeforeRouteLeave((to) => {
     </template>
   </UModal>
 
+  <UModal
+    :open="Boolean(team.temporaryPassword.value)"
+    title="Temporary Login Password"
+    :dismissible="false"
+    @update:open="(v: boolean) => { if (!v) team.clearTemporaryPassword() }"
+  >
+    <template #body>
+      <div class="space-y-4">
+        <p class="text-sm text-white/80">
+          Share this password securely with <strong>{{ team.temporaryPasswordEmail.value }}</strong>. It is shown only once.
+        </p>
+        <div class="flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
+          <code class="min-w-0 flex-1 break-all text-sm text-white">{{ team.temporaryPassword.value }}</code>
+          <UButton
+            icon="i-lucide-copy"
+            color="neutral"
+            variant="ghost"
+            aria-label="Copy password"
+            @click="copyTemporaryPassword"
+          />
+        </div>
+        <div class="flex justify-end">
+          <UButton @click="team.clearTemporaryPassword()">Done</UButton>
+        </div>
+      </div>
+    </template>
+  </UModal>
+
   <div class="space-y-6">
     <!-- ═══ Page Header ═══ -->
     <div class="ap-fade-in flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -449,7 +509,7 @@ onBeforeRouteLeave((to) => {
     </div>
 
     <!-- ═══ Add Member Form ═══ -->
-    <div v-if="team.editingMemberId.value === NEW_TEAM_MEMBER_ID && team.draft.value" class="ap-fade-in ap-delay-1 relative w-full overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl dark:bg-[#1a1a1a]/60">
+    <div v-if="team.editingMemberId.value === NEW_BROKER_TEAM_MEMBER_ID && team.draft.value" class="ap-fade-in ap-delay-1 relative w-full overflow-hidden rounded-xl border border-[var(--ap-accent)]/25 bg-white/90 shadow-lg backdrop-blur-sm transition-shadow duration-300 hover:shadow-xl dark:bg-[#1a1a1a]/60">
       <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--ap-accent)]/[0.04] via-transparent to-transparent" />
 
       <div class="relative border-b border-black/[0.06] dark:border-white/[0.06]">
@@ -555,6 +615,19 @@ onBeforeRouteLeave((to) => {
           </div>
         </div>
 
+        <div class="space-y-2">
+          <label class="text-xs font-medium text-highlighted">Accessible Sections <span class="text-red-400/80">*</span></label>
+          <div class="flex flex-wrap gap-3 rounded-lg border border-black/[0.06] p-3 dark:border-white/[0.08]">
+            <UCheckbox
+              v-for="section in BROKER_SECTION_OPTIONS"
+              :key="section.value"
+              :model-value="team.draft.value.allowed_sections.includes(section.value)"
+              :label="section.label"
+              @update:model-value="(value: boolean | 'indeterminate') => setAllowedSection(section.value, value === true)"
+            />
+          </div>
+        </div>
+
         <TeamMemberAvailabilityEditor
           :weekly-availability="team.draft.value.weekly_availability"
           :holiday-hours="team.draft.value.holiday_hours"
@@ -652,11 +725,24 @@ onBeforeRouteLeave((to) => {
               <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
                 <div class="space-y-1.5">
                   <label class="text-xs font-medium text-highlighted">Full Name <span class="text-red-400/80">*</span></label>
-                  <UInput v-model="team.draft.value.full_name" placeholder="Jane Smith" autocomplete="off" size="md" class="w-full" />
+                  <UInput
+                    v-model="team.draft.value.full_name"
+                    placeholder="Jane Smith"
+                    autocomplete="off"
+                    size="md"
+                    class="w-full"
+                  />
                 </div>
                 <div class="space-y-1.5">
                   <label class="text-xs font-medium text-highlighted">Email <span class="text-red-400/80">*</span></label>
-                  <UInput v-model="team.draft.value.email" type="email" placeholder="jane@yourfirm.com" autocomplete="off" size="md" class="w-full" />
+                  <UInput
+                    v-model="team.draft.value.email"
+                    type="email"
+                    placeholder="jane@yourfirm.com"
+                    autocomplete="off"
+                    size="md"
+                    class="w-full"
+                  />
                 </div>
                 <div class="space-y-1.5">
                   <label class="text-xs font-medium text-highlighted">
@@ -674,18 +760,49 @@ onBeforeRouteLeave((to) => {
                 </div>
                 <div class="space-y-1.5">
                   <label class="text-xs font-medium text-highlighted">Phone</label>
-                  <UInput v-model="team.draft.value.phone" type="tel" placeholder="+1 (555) 123-4567" autocomplete="off" size="md" class="w-full" />
+                  <UInput
+                    v-model="team.draft.value.phone"
+                    type="tel"
+                    placeholder="+1 (555) 123-4567"
+                    autocomplete="off"
+                    size="md"
+                    class="w-full"
+                  />
                 </div>
                 <div class="space-y-1.5">
                   <label class="text-xs font-medium text-highlighted">Position <span class="text-red-400/80">*</span></label>
-                  <USelect v-model="team.draft.value.position" :items="TEAM_MEMBER_POSITIONS" placeholder="Select a position" class="w-full" />
+                  <USelect
+                    v-model="team.draft.value.position"
+                    :items="TEAM_MEMBER_POSITIONS"
+                    placeholder="Select a position"
+                    class="w-full"
+                  />
                 </div>
               </div>
 
               <div v-if="team.draft.value.position === 'other'" class="grid grid-cols-1 gap-3 xl:max-w-sm">
                 <div class="space-y-1.5">
                   <label class="text-xs font-medium text-highlighted">Specify Position <span class="text-red-400/80">*</span></label>
-                  <UInput v-model="team.draft.value.position_other" placeholder="e.g. Case Manager" autocomplete="off" size="md" class="w-full" />
+                  <UInput
+                    v-model="team.draft.value.position_other"
+                    placeholder="e.g. Case Manager"
+                    autocomplete="off"
+                    size="md"
+                    class="w-full"
+                  />
+                </div>
+              </div>
+
+              <div class="space-y-2">
+                <label class="text-xs font-medium text-highlighted">Accessible Sections <span class="text-red-400/80">*</span></label>
+                <div class="flex flex-wrap gap-3 rounded-lg border border-black/[0.06] p-3 dark:border-white/[0.08]">
+                  <UCheckbox
+                    v-for="section in BROKER_SECTION_OPTIONS"
+                    :key="section.value"
+                    :model-value="team.draft.value.allowed_sections.includes(section.value)"
+                    :label="section.label"
+                    @update:model-value="(value: boolean | 'indeterminate') => setAllowedSection(section.value, value === true)"
+                  />
                 </div>
               </div>
 
@@ -696,8 +813,22 @@ onBeforeRouteLeave((to) => {
               />
 
               <div class="flex justify-end gap-2 pt-1">
-                <UButton label="Cancel" type="button" color="neutral" variant="ghost" class="rounded-lg" @click="team.cancelEditing()" />
-                <UButton label="Save" type="submit" icon="i-lucide-check" :loading="saving" :disabled="!canSubmitDraft" class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90" />
+                <UButton
+                  label="Cancel"
+                  type="button"
+                  color="neutral"
+                  variant="ghost"
+                  class="rounded-lg"
+                  @click="team.cancelEditing()"
+                />
+                <UButton
+                  label="Save"
+                  type="submit"
+                  icon="i-lucide-check"
+                  :loading="saving"
+                  :disabled="!canSubmitDraft"
+                  class="rounded-lg bg-[var(--ap-accent)] text-white hover:bg-[var(--ap-accent)]/90"
+                />
               </div>
             </UForm>
           </div>
@@ -738,6 +869,16 @@ onBeforeRouteLeave((to) => {
                 <span class="hidden sm:inline-flex rounded-md border-[0.5px] border-[var(--ap-accent)]/55 bg-[var(--ap-accent)]/20 px-2 py-0.5 text-[11px] font-medium text-white/90">
                   {{ positionLabel(member.position, member.position_other) }}
                 </span>
+                <UButton
+                  icon="i-lucide-key-round"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  aria-label="Regenerate login password"
+                  class="rounded-lg"
+                  :disabled="team.isEditingAny.value"
+                  @click="regeneratePassword(member)"
+                />
                 <span class="hidden md:inline-flex rounded-md border border-black bg-black px-2 py-0.5 text-[11px] font-medium text-white ring-1 ring-white/45 dark:border-white/10 dark:bg-black dark:ring-white/35">
                   {{ availabilityLabel(member.weekly_availability) }}
                 </span>

@@ -4,9 +4,14 @@ import type { Session, User } from '@supabase/supabase-js'
 
 import { supabase } from '../lib/supabase'
 import { clearLaunchedPortalWindow } from '../lib/launchedSession'
+import {
+  getFirstBrokerSectionPath,
+  type BrokerSection,
+  type BrokerWorkspaceContext
+} from '../lib/broker-access'
 import { useManagedLaunch } from './useManagedLaunch'
 
-export type AppRole = 'super_admin' | 'admin' | 'lawyer' | 'agent' | 'accounts' | 'broker'
+export type AppRole = 'super_admin' | 'admin' | 'lawyer' | 'agent' | 'accounts' | 'broker' | 'broker_member'
 
 export type AppUserProfile = {
   user_id: string
@@ -23,6 +28,7 @@ type AuthState = {
   user: User | null
   session: Session | null
   profile: AppUserProfile
+  brokerContext: BrokerWorkspaceContext | null
 }
 
 const _useAuth = () => {
@@ -32,12 +38,34 @@ const _useAuth = () => {
     loading: true,
     user: null,
     session: null,
-    profile: null
+    profile: null,
+    brokerContext: null
   })
+
+  const loadBrokerContext = async () => {
+    const role = state.value.profile?.role
+    if (role !== 'broker' && role !== 'broker_member') {
+      state.value.brokerContext = null
+      return
+    }
+
+    const { data, error } = await supabase
+      .rpc('get_current_broker_context')
+      .maybeSingle()
+
+    if (error) {
+      console.warn('[auth] failed to load broker context', error.message)
+      state.value.brokerContext = null
+      return
+    }
+
+    state.value.brokerContext = (data as BrokerWorkspaceContext | null) ?? null
+  }
 
   const loadProfile = async () => {
     if (!state.value.user) {
       state.value.profile = null
+      state.value.brokerContext = null
       console.info('[auth] no user found, clearing profile')
       return
     }
@@ -57,7 +85,20 @@ const _useAuth = () => {
     }
 
     state.value.profile = (data as AppUserProfile) ?? null
+    await loadBrokerContext()
     console.info('[auth] profile loaded', state.value.profile)
+  }
+
+  const hasBrokerSection = (section: BrokerSection) => {
+    if (state.value.profile?.role === 'super_admin') return true
+    if (state.value.profile?.role === 'admin') return section === 'invoicing'
+    return state.value.brokerContext?.allowed_sections.includes(section) ?? false
+  }
+
+  const getDefaultPath = () => {
+    if (state.value.profile?.role === 'super_admin') return '/dashboard'
+    if (state.value.profile?.role === 'admin') return '/invoicing/broker'
+    return getFirstBrokerSectionPath(state.value.brokerContext?.allowed_sections ?? [])
   }
 
   const init = async () => {
@@ -110,6 +151,7 @@ const _useAuth = () => {
     state.value.session = null
     state.value.user = null
     state.value.profile = null
+    state.value.brokerContext = null
     clearLaunchedPortalWindow()
     managedLaunch.clearContext()
     if (error) console.warn('[auth] signOut server error (local session cleared):', error.message)
@@ -121,6 +163,8 @@ const _useAuth = () => {
     isManagedSession: managedLaunch.isManaged,
     init,
     refreshProfile: loadProfile,
+    hasBrokerSection,
+    getDefaultPath,
     signInWithPassword,
     signOut
   }

@@ -6,11 +6,13 @@ export type BrokerAttorneyRetainerDocument = {
   broker_id: string
   broker_attorney_id: string
   state: string
+  document_title: string
   document_path: string
   document_name: string
   document_mime_type: string
   document_size_bytes: number
   notes: string | null
+  setup_walkthrough_url: string | null
   created_at: string
   updated_at: string
 }
@@ -100,15 +102,39 @@ export function buildBrokerRetainerDocumentPath(
   return `${brokerId}/${brokerAttorneyId}/${state}/${timestamp}-${sanitizedFileName}`
 }
 
+const normalizeOptionalHttpUrl = (value?: string | null) => {
+  const normalized = value?.trim() || ''
+  if (!normalized) return null
+
+  let url: URL
+  try {
+    url = new URL(normalized)
+  } catch {
+    throw new Error('Walkthrough link must be a valid URL')
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('Walkthrough link must use http:// or https://')
+  }
+
+  return normalized
+}
+
 export async function uploadBrokerRetainerDocument(input: {
   brokerId: string
   brokerAttorneyId: string
   state: string
+  title: string
   file: File
   notes?: string | null
+  walkthroughUrl?: string | null
 }): Promise<BrokerAttorneyRetainerDocument> {
   const validationError = validateBrokerRetainerDocument(input.file)
   if (validationError) throw new Error(validationError)
+
+  const normalizedTitle = input.title.trim()
+  if (!normalizedTitle) throw new Error('Document title is required')
+  const walkthroughUrl = normalizeOptionalHttpUrl(input.walkthroughUrl)
 
   const path = buildBrokerRetainerDocumentPath(
     input.brokerId,
@@ -138,11 +164,13 @@ export async function uploadBrokerRetainerDocument(input: {
       broker_id: input.brokerId,
       broker_attorney_id: input.brokerAttorneyId,
       state: input.state,
+      document_title: normalizedTitle,
       document_path: path,
       document_name: normalizedName,
       document_mime_type: mimeType,
       document_size_bytes: input.file.size,
-      notes: input.notes || null
+      notes: input.notes || null,
+      setup_walkthrough_url: walkthroughUrl
     })
     .select()
     .single()

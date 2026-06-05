@@ -24,7 +24,7 @@ const createOpen = ref(false)
 const search = ref('')
 const attorneys = ref<BrokerAttorneyRow[]>([])
 
-const brokerId = computed(() => auth.state.value.user?.id ?? '')
+const brokerId = computed(() => auth.state.value.brokerContext?.broker_id ?? '')
 
 const createForm = ref({
   attorney_name: '',
