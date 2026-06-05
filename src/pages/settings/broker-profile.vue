@@ -48,7 +48,7 @@ const contactMethodOptions = [
 
 const stateOptions = US_STATES.map(s => ({ label: s.code, value: s.code }))
 
-const userId = computed(() => auth.state.value.user?.id ?? '')
+const userId = computed(() => auth.state.value.brokerContext?.broker_id ?? '')
 
 const profile = brokerProfile.draft as unknown as Ref<BrokerProfileState>
 

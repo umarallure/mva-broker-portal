@@ -83,7 +83,7 @@ const editingNotesId = ref<string | null>(null)
 const editingNotesValue = ref('')
 
 const attorneyId = computed(() => String(route.params.id || ''))
-const brokerId = computed(() => auth.state.value.user?.id ?? '')
+const brokerId = computed(() => auth.state.value.brokerContext?.broker_id ?? '')
 
 const addressStateOptions = US_STATES.map(s => ({ label: s.code, value: s.code }))
 

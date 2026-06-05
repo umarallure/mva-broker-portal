@@ -8,6 +8,8 @@ export type CoverageLiabilityStatus = 'clear_only' | 'disputed_ok'
 export type CoverageInsuranceStatus = 'insured_only' | 'uninsured_ok'
 export type CoverageMedicalTreatment = 'no_medical' | 'ongoing' | 'proof_of_medical_treatment'
 export type PreferredContact = 'email' | 'phone' | 'text'
+export type CoverageTrafficLevel = 'moderate' | 'high'
+export type CoverageStateTraffic = Record<string, CoverageTrafficLevel>
 
 export type BrokerAttorneyIntakeDid = {
   state: string
@@ -38,6 +40,7 @@ export type BrokerAttorneyRow = {
   transfer_injury_types: string[]
   transfer_injury_other: string | null
   coverage_states: string[]
+  coverage_state_traffic: CoverageStateTraffic
   coverage_case_category: CoverageCaseCategory
   coverage_sol_criteria: CoverageSolCriteria
   coverage_liability_status: CoverageLiabilityStatus
@@ -79,6 +82,7 @@ export const BROKER_ATTORNEY_COLUMNS = [
   'transfer_injury_types',
   'transfer_injury_other',
   'coverage_states',
+  'coverage_state_traffic',
   'coverage_case_category',
   'coverage_sol_criteria',
   'coverage_liability_status',
@@ -140,12 +144,18 @@ export const MEDICAL_TREATMENT_OPTIONS = [
   { label: 'Proof of medical treatment', value: 'proof_of_medical_treatment' }
 ]
 
+export const COVERAGE_TRAFFIC_OPTIONS = [
+  { label: 'Moderate', value: 'moderate' },
+  { label: 'High', value: 'high' }
+] satisfies Array<{ label: string; value: CoverageTrafficLevel }>
+
 export const defaultBrokerAttorneyInput = (): Required<Pick<
   BrokerAttorneyInput,
   | 'languages'
   | 'transfer_standard_types'
   | 'transfer_injury_types'
   | 'coverage_states'
+  | 'coverage_state_traffic'
   | 'coverage_case_category'
   | 'coverage_sol_criteria'
   | 'coverage_liability_status'
@@ -158,6 +168,7 @@ export const defaultBrokerAttorneyInput = (): Required<Pick<
   transfer_standard_types: [],
   transfer_injury_types: [],
   coverage_states: [],
+  coverage_state_traffic: {},
   coverage_case_category: 'Consumer Cases',
   coverage_sol_criteria: '6_12_months',
   coverage_liability_status: 'clear_only',
@@ -170,6 +181,37 @@ export const defaultBrokerAttorneyInput = (): Required<Pick<
 const normalizeStringArray = (value: unknown) => {
   if (!Array.isArray(value)) return []
   return Array.from(new Set(value.map(item => String(item || '').trim()).filter(Boolean)))
+}
+
+const normalizeStateCode = (value: unknown) => String(value || '').trim().toUpperCase()
+
+export function normalizeCoverageStateTraffic(
+  value: unknown,
+  coverageStates: string[] = []
+): CoverageStateTraffic {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+  const sourceByCode = new Map<string, unknown>()
+
+  Object.entries(source).forEach(([key, traffic]) => {
+    const code = normalizeStateCode(key)
+    if (code) sourceByCode.set(code, traffic)
+  })
+
+  const stateCodes = coverageStates.length
+    ? coverageStates.map(normalizeStateCode).filter(Boolean)
+    : Array.from(sourceByCode.keys())
+
+  return Array.from(new Set(stateCodes)).reduce<CoverageStateTraffic>((trafficByState, code) => {
+    const rawTraffic = String(sourceByCode.get(code) || '').trim().toLowerCase()
+    if (rawTraffic === 'high') {
+      trafficByState[code] = 'high'
+    } else if (coverageStates.length || rawTraffic === 'moderate') {
+      trafficByState[code] = 'moderate'
+    }
+    return trafficByState
+  }, {})
 }
 
 const buildPayload = (input: BrokerAttorneyInput) => {
@@ -193,6 +235,13 @@ const buildPayload = (input: BrokerAttorneyInput) => {
   ].forEach((key) => {
     if (payload[key] !== undefined) payload[key] = normalizeStringArray(payload[key])
   })
+
+  if (payload.coverage_state_traffic !== undefined) {
+    payload.coverage_state_traffic = normalizeCoverageStateTraffic(
+      payload.coverage_state_traffic,
+      normalizeStringArray(payload.coverage_states)
+    )
+  }
 
   if (payload.intake_dids !== undefined) {
     payload.intake_dids = Array.isArray(payload.intake_dids) ? payload.intake_dids : []
@@ -271,6 +320,42 @@ export async function updateBrokerAttorney(
     .eq('id', attorneyId)
     .select(BROKER_ATTORNEY_COLUMNS)
     .single()
+
+  if (error) throw new Error(error.message)
+  return data as unknown as BrokerAttorneyRow
+}
+
+export async function updateBrokerAttorneyCoverage(
+  attorneyId: string,
+  input: Pick<
+    BrokerAttorneyRow,
+    | 'coverage_states'
+    | 'coverage_case_category'
+    | 'coverage_sol_criteria'
+    | 'coverage_liability_status'
+    | 'coverage_insurance_status'
+    | 'coverage_medical_treatment'
+    | 'coverage_languages'
+    | 'coverage_no_prior_attorney'
+    | 'coverage_notes'
+  > & {
+    coverage_state_traffic?: CoverageStateTraffic
+  }
+): Promise<BrokerAttorneyRow> {
+  const coverageStates = normalizeStringArray(input.coverage_states)
+  const { data, error } = await supabase.rpc('update_broker_attorney_coverage_with_traffic', {
+    p_broker_attorney_id: attorneyId,
+    p_coverage_states: coverageStates,
+    p_coverage_state_traffic: normalizeCoverageStateTraffic(input.coverage_state_traffic, coverageStates),
+    p_coverage_case_category: input.coverage_case_category,
+    p_coverage_sol_criteria: input.coverage_sol_criteria,
+    p_coverage_liability_status: input.coverage_liability_status,
+    p_coverage_insurance_status: input.coverage_insurance_status,
+    p_coverage_medical_treatment: input.coverage_medical_treatment,
+    p_coverage_languages: normalizeStringArray(input.coverage_languages),
+    p_coverage_no_prior_attorney: input.coverage_no_prior_attorney,
+    p_coverage_notes: input.coverage_notes
+  })
 
   if (error) throw new Error(error.message)
   return data as unknown as BrokerAttorneyRow

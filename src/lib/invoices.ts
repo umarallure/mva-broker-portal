@@ -41,6 +41,18 @@ export type InvoiceRow = {
   updated_at: string
 }
 
+export type InvoicePaymentProofRow = {
+  id: string
+  invoice_id: string
+  broker_id: string
+  uploaded_by: string
+  proof_path: string
+  proof_name: string
+  proof_mime_type: string
+  proof_size_bytes: number
+  created_at: string
+}
+
 export type InvoiceWithLawyer = InvoiceRow & {
   lawyer_name?: string | null
   lawyer_email?: string | null
@@ -53,7 +65,92 @@ export type InvoiceWithVendor = InvoiceRow & {
   vendor_contact_email?: string | null
 }
 
+export type BrokerInvoiceBrokerOption = {
+  user_id: string
+  full_name: string | null
+  company_name: string | null
+  primary_email: string | null
+}
+
+export type BrokerInvoiceLeadRow = {
+  id: string
+  submission_id: string | null
+  customer_full_name: string | null
+  phone_number: string | null
+  state: string | null
+  lead_vendor: string | null
+  status: string | null
+  created_at: string | null
+  assigned_broker_attorney_id: string | null
+  broker_invoice_id: string | null
+  broker_id: string
+  broker_name: string | null
+  broker_attorney_name: string | null
+}
+
 const INVOICE_COLUMNS = 'id,invoice_number,lawyer_id,lead_vendor_id,broker_id,invoice_type,created_by,date_range_start,date_range_end,deal_ids,items,subtotal,tax_rate,tax_amount,total_amount,status,notes,due_date,created_at,updated_at'
+
+export const INVOICE_PAYMENT_PROOF_BUCKET = 'invoice-payment-proofs'
+export const INVOICE_PAYMENT_PROOF_MAX_SIZE_BYTES = 10 * 1024 * 1024
+export const INVOICE_PAYMENT_PROOF_ACCEPT = 'image/png,image/jpeg,image/webp'
+export const INVOICE_PAYMENT_PROOF_ALLOWED_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp'
+] as const
+
+const INVOICE_PAYMENT_PROOF_EXTENSION_BY_MIME: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp'
+}
+
+export function normalizeInvoicePaymentProofMimeType(file: File) {
+  const type = file.type || ''
+  if (INVOICE_PAYMENT_PROOF_ALLOWED_MIME_TYPES.includes(type as typeof INVOICE_PAYMENT_PROOF_ALLOWED_MIME_TYPES[number])) {
+    return type
+  }
+
+  const name = file.name.toLowerCase()
+  if (name.endsWith('.png')) return 'image/png'
+  if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg'
+  if (name.endsWith('.webp')) return 'image/webp'
+  return type
+}
+
+export function validateInvoicePaymentProof(file: File) {
+  const mimeType = normalizeInvoicePaymentProofMimeType(file)
+
+  if (!INVOICE_PAYMENT_PROOF_ALLOWED_MIME_TYPES.includes(mimeType as typeof INVOICE_PAYMENT_PROOF_ALLOWED_MIME_TYPES[number])) {
+    return 'Upload a PNG, JPG, or WebP image.'
+  }
+
+  if (file.size > INVOICE_PAYMENT_PROOF_MAX_SIZE_BYTES) {
+    return 'Payment proof image must be 10MB or smaller.'
+  }
+
+  if (file.size <= 0) {
+    return 'Payment proof image is empty.'
+  }
+
+  return null
+}
+
+export function formatInvoicePaymentProofFileSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB'
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export function buildInvoicePaymentProofPath(
+  brokerId: string,
+  invoiceId: string,
+  fileName: string
+) {
+  const timestamp = Date.now()
+  const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_')
+  return `${brokerId}/${invoiceId}/${timestamp}-${sanitizedFileName}`
+}
 
 export async function generateInvoiceNumber(): Promise<string> {
   const year = new Date().getFullYear()
@@ -234,6 +331,140 @@ export async function getLawyerProfile(lawyerId: string): Promise<{
   return data ?? null
 }
 
+const brokerDisplayName = (broker: Pick<BrokerInvoiceBrokerOption, 'company_name' | 'full_name' | 'primary_email'>) =>
+  String(broker.company_name || broker.full_name || broker.primary_email || '').trim() || null
+
+const attorneyDisplayName = (attorney: { attorney_name?: string | null; firm_name?: string | null }) => {
+  const name = [attorney.attorney_name, attorney.firm_name]
+    .map(value => value?.trim())
+    .filter(Boolean)
+    .join(' - ')
+  return name || null
+}
+
+export async function listBrokersForInvoice(): Promise<BrokerInvoiceBrokerOption[]> {
+  const { data, error } = await supabase
+    .from('broker_profiles')
+    .select('user_id,full_name,company_name,primary_email')
+    .order('company_name', { ascending: true })
+    .order('full_name', { ascending: true })
+
+  if (error) throw new Error(error.message)
+  return (data ?? []) as BrokerInvoiceBrokerOption[]
+}
+
+async function hydrateBrokerLeadRows(rows: Array<{
+  id: string
+  submission_id: string | null
+  customer_full_name: string | null
+  phone_number: string | null
+  state: string | null
+  lead_vendor: string | null
+  status: string | null
+  created_at: string | null
+  assigned_broker_attorney_id: string | null
+  broker_invoice_id: string | null
+}>): Promise<BrokerInvoiceLeadRow[]> {
+  const attorneyIds = [...new Set(rows.map(row => row.assigned_broker_attorney_id).filter((id): id is string => Boolean(id)))]
+  if (!attorneyIds.length) return []
+
+  const { data: attorneyData, error: attorneyError } = await supabase
+    .from('broker_attorneys')
+    .select('id,broker_id,attorney_name,firm_name')
+    .in('id', attorneyIds)
+
+  if (attorneyError) throw new Error(attorneyError.message)
+
+  const attorneys = (attorneyData ?? []) as Array<{
+    id: string
+    broker_id: string
+    attorney_name: string | null
+    firm_name: string | null
+  }>
+  const attorneyById = new Map(attorneys.map(attorney => [attorney.id, attorney]))
+  const brokerIds = [...new Set(attorneys.map(attorney => attorney.broker_id).filter(Boolean))]
+  const brokerNameById = new Map<string, string | null>()
+
+  if (brokerIds.length) {
+    const { data: brokerData, error: brokerError } = await supabase
+      .from('broker_profiles')
+      .select('user_id,full_name,company_name,primary_email')
+      .in('user_id', brokerIds)
+
+    if (brokerError) throw new Error(brokerError.message)
+
+    for (const broker of (brokerData ?? []) as BrokerInvoiceBrokerOption[]) {
+      brokerNameById.set(broker.user_id, brokerDisplayName(broker))
+    }
+  }
+
+  return rows.flatMap((row) => {
+    const attorney = row.assigned_broker_attorney_id ? attorneyById.get(row.assigned_broker_attorney_id) : null
+    if (!attorney?.broker_id) return []
+
+    return [{
+      ...row,
+      broker_id: attorney.broker_id,
+      broker_name: brokerNameById.get(attorney.broker_id) ?? null,
+      broker_attorney_name: attorneyDisplayName(attorney)
+    }]
+  })
+}
+
+export async function getBrokerInvoiceLead(leadId: string): Promise<BrokerInvoiceLeadRow | null> {
+  const { data, error } = await supabase
+    .from('leads')
+    .select('id,submission_id,customer_full_name,phone_number,state,lead_vendor,status,created_at,assigned_broker_attorney_id,broker_invoice_id')
+    .eq('id', leadId)
+    .maybeSingle()
+
+  if (error) throw new Error(error.message)
+  if (!data) return null
+
+  const rows = await hydrateBrokerLeadRows([data as BrokerInvoiceLeadRow])
+  return rows[0] ?? null
+}
+
+export async function listBrokerLeadsForInvoice(input: {
+  brokerId: string
+  dateStart: string
+  dateEnd: string
+  editingInvoiceId?: string | null
+}): Promise<BrokerInvoiceLeadRow[]> {
+  const { data: attorneyData, error: attorneyError } = await supabase
+    .from('broker_attorneys')
+    .select('id')
+    .eq('broker_id', input.brokerId)
+
+  if (attorneyError) throw new Error(attorneyError.message)
+
+  const attorneyIds = ((attorneyData ?? []) as Array<{ id: string | null }>)
+    .map(attorney => attorney.id)
+    .filter((id): id is string => Boolean(id))
+  if (!attorneyIds.length) return []
+
+  let qb = supabase
+    .from('leads')
+    .select('id,submission_id,customer_full_name,phone_number,state,lead_vendor,status,created_at,assigned_broker_attorney_id,broker_invoice_id')
+    .eq('is_active', true)
+    .eq('status', 'qualified_payable')
+    .in('assigned_broker_attorney_id', attorneyIds)
+    .gte('created_at', input.dateStart)
+    .lte('created_at', input.dateEnd + 'T23:59:59.999Z')
+    .order('created_at', { ascending: false })
+
+  if (input.editingInvoiceId) {
+    qb = qb.or(`broker_invoice_id.is.null,broker_invoice_id.eq.${input.editingInvoiceId}`)
+  } else {
+    qb = qb.is('broker_invoice_id', null)
+  }
+
+  const { data, error } = await qb
+  if (error) throw new Error(error.message)
+
+  return hydrateBrokerLeadRows((data ?? []) as Parameters<typeof hydrateBrokerLeadRows>[0])
+}
+
 export type DealFlowRow = {
   id: string
   submission_id: string
@@ -396,6 +627,76 @@ export async function requestChargeback(invoiceId: string): Promise<InvoiceRow> 
   return data as InvoiceRow
 }
 
+export async function createBrokerInvoice(input: {
+  broker_id: string
+  lead_ids: string[]
+  date_range_start: string
+  date_range_end: string
+  items: InvoiceItem[]
+  subtotal: number
+  tax_rate: number
+  tax_amount: number
+  total_amount: number
+  due_date: string
+  notes?: string | null
+  invoice_number?: string | null
+}): Promise<InvoiceRow> {
+  const { data, error } = await supabase
+    .rpc('create_broker_invoice', {
+      p_broker_id: input.broker_id,
+      p_lead_ids: input.lead_ids,
+      p_date_range_start: input.date_range_start,
+      p_date_range_end: input.date_range_end,
+      p_items: input.items,
+      p_subtotal: input.subtotal,
+      p_tax_rate: input.tax_rate,
+      p_tax_amount: input.tax_amount,
+      p_total_amount: input.total_amount,
+      p_due_date: input.due_date,
+      p_notes: input.notes ?? null,
+      p_invoice_number: input.invoice_number ?? null
+    })
+
+  if (error) throw new Error(error.message)
+  return data as InvoiceRow
+}
+
+export async function updateBrokerInvoice(
+  invoiceId: string,
+  input: {
+    broker_id: string
+    lead_ids: string[]
+    date_range_start: string
+    date_range_end: string
+    items: InvoiceItem[]
+    subtotal: number
+    tax_rate: number
+    tax_amount: number
+    total_amount: number
+    due_date: string
+    notes?: string | null
+  }
+): Promise<InvoiceRow> {
+  const { data, error } = await supabase
+    .rpc('update_broker_invoice', {
+      p_invoice_id: invoiceId,
+      p_broker_id: input.broker_id,
+      p_lead_ids: input.lead_ids,
+      p_date_range_start: input.date_range_start,
+      p_date_range_end: input.date_range_end,
+      p_items: input.items,
+      p_subtotal: input.subtotal,
+      p_tax_rate: input.tax_rate,
+      p_tax_amount: input.tax_amount,
+      p_total_amount: input.total_amount,
+      p_due_date: input.due_date,
+      p_notes: input.notes ?? null
+    })
+
+  if (error) throw new Error(error.message)
+  return data as InvoiceRow
+}
+
 export async function brokerDropInvoiceWithNote(invoiceId: string, note: string): Promise<InvoiceRow> {
   const { data, error } = await supabase
     .rpc('broker_drop_invoice_with_note', {
@@ -405,6 +706,75 @@ export async function brokerDropInvoiceWithNote(invoiceId: string, note: string)
 
   if (error) throw new Error(error.message)
   return data as InvoiceRow
+}
+
+export async function markBrokerInvoiceAsPaidWithProof(input: {
+  brokerId: string
+  invoiceId: string
+  file: File
+}): Promise<InvoiceRow> {
+  const validationError = validateInvoicePaymentProof(input.file)
+  if (validationError) throw new Error(validationError)
+
+  const mimeType = normalizeInvoicePaymentProofMimeType(input.file)
+  const extension = INVOICE_PAYMENT_PROOF_EXTENSION_BY_MIME[mimeType] ?? 'png'
+  const normalizedName = input.file.name.trim() || `payment-proof.${extension}`
+  const path = buildInvoicePaymentProofPath(input.brokerId, input.invoiceId, normalizedName)
+
+  const { error: uploadError } = await supabase.storage
+    .from(INVOICE_PAYMENT_PROOF_BUCKET)
+    .upload(path, input.file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: mimeType
+    })
+
+  if (uploadError) {
+    throw new Error(uploadError.message || 'Failed to upload payment proof')
+  }
+
+  try {
+    const { data, error } = await supabase
+      .rpc('broker_mark_invoice_paid_with_proof', {
+        p_invoice_id: input.invoiceId,
+        p_proof_path: path,
+        p_proof_name: normalizedName,
+        p_proof_mime_type: mimeType,
+        p_proof_size_bytes: input.file.size
+      })
+
+    if (error) throw new Error(error.message)
+    return data as InvoiceRow
+  } catch (error) {
+    await supabase.storage
+      .from(INVOICE_PAYMENT_PROOF_BUCKET)
+      .remove([path])
+
+    throw error
+  }
+}
+
+export async function listInvoicePaymentProofs(invoiceIds: string[]): Promise<InvoicePaymentProofRow[]> {
+  const ids = [...new Set(invoiceIds.map(id => id.trim()).filter(Boolean))]
+  if (!ids.length) return []
+
+  const { data, error } = await supabase
+    .from('invoice_payment_proofs')
+    .select('*')
+    .in('invoice_id', ids)
+    .order('created_at', { ascending: false })
+
+  if (error) throw new Error(error.message || 'Failed to load payment proofs')
+  return (data ?? []) as InvoicePaymentProofRow[]
+}
+
+export async function getInvoicePaymentProofSignedUrl(path: string, expiresInSeconds = 60 * 30) {
+  const { data, error } = await supabase.storage
+    .from(INVOICE_PAYMENT_PROOF_BUCKET)
+    .createSignedUrl(path, expiresInSeconds)
+
+  if (error) throw new Error(error.message || 'Failed to open payment proof')
+  return data.signedUrl
 }
 
 export async function linkDealsToInvoice(dealIds: string[], invoiceId: string): Promise<void> {

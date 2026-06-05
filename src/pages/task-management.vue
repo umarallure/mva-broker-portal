@@ -456,22 +456,6 @@ function resetFilters() {
   priorityFilter.value = 'all'
 }
 
-const leadSelectOptions = computed(() => {
-  const q = leadSearch.value.trim().toLowerCase()
-  const leads = leadOptions.value
-    .filter((lead) => {
-      if (!q) return true
-      return [lead.reference, lead.customerName, lead.phoneNumber].filter(Boolean).join(' ').toLowerCase().includes(q)
-    })
-    .slice(0, 30)
-    .map(lead => ({
-      value: lead.id,
-      label: `${lead.reference} - ${lead.customerName}`
-    }))
-
-  return [{ value: NO_LEAD, label: 'No related case' }, ...leads]
-})
-
 const leadSearchResults = computed(() => {
   const q = leadSearch.value.trim().toLowerCase()
   return leadOptions.value
@@ -567,13 +551,18 @@ async function loadLeadOptions() {
 }
 
 async function loadTasks() {
-  const { data, error } = await supabase
+  let query = supabase
     .from('closer_tasks')
     .select('*')
-    .or('created_by_role.eq.broker,assignment_scope.eq.all_agents')
     .order('created_at', { ascending: false })
     .limit(2000)
 
+  const brokerId = auth.state.value.brokerContext?.broker_id
+  query = brokerId
+    ? query.eq('broker_id', brokerId)
+    : query.or('created_by_role.eq.broker,assignment_scope.eq.all_agents')
+
+  const { data, error } = await query
   if (error) throw error
 
   const rows = ((data ?? []) as CloserTaskRow[]).map(row => ({
@@ -623,7 +612,7 @@ async function load(showRefreshToast = false) {
   try {
     await auth.init()
     const role = auth.state.value.profile?.role
-    if (role !== 'broker' && role !== 'super_admin') {
+    if (role !== 'broker' && role !== 'broker_member' && role !== 'super_admin') {
       tasks.value = []
       leadOptions.value = []
       return

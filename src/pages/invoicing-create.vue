@@ -4,19 +4,27 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { useAuth } from '../composables/useAuth'
 import {
+  createBrokerInvoice,
   createInvoice,
   generateInvoiceNumber,
+  getBrokerInvoiceLead,
   getInvoice,
   getLawyerProfile,
   linkDealsToInvoice,
   linkDealsToPublisherInvoice,
+  listBrokerLeadsForInvoice,
+  listBrokersForInvoice,
   listLawyers,
   listDealsForInvoice,
   listDealsForPublisherInvoice,
   unlinkDealsFromInvoice,
   unlinkDealsFromPublisherInvoice,
+  updateBrokerInvoice,
   updateInvoice,
+  type BrokerInvoiceBrokerOption,
+  type BrokerInvoiceLeadRow,
   type InvoiceItem,
+  type InvoiceType,
   type InvoiceStatus,
   type DealFlowRow
 } from '../lib/invoices'
@@ -27,12 +35,32 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuth()
 
+type SelectableInvoiceDeal = DealFlowRow & {
+  selected: boolean
+  broker_id?: string | null
+  broker_name?: string | null
+  broker_attorney_name?: string | null
+  broker_invoice_id?: string | null
+}
+
 const isEdit = computed(() => route.path.includes('/edit/'))
 const invoiceId = computed(() => (route.params as Record<string, string>).id ?? null)
-const isPublisherMode = computed(() => route.query.mode === 'publisher')
+const editingInvoiceType = ref<InvoiceType | null>(null)
+const requestedMode = computed(() => typeof route.query.mode === 'string' ? route.query.mode : 'broker')
+const isBrokerMode = computed(() => requestedMode.value === 'broker' || editingInvoiceType.value === 'broker')
+const isPublisherMode = computed(() => !isBrokerMode.value && (requestedMode.value === 'publisher' || editingInvoiceType.value === 'publisher'))
 const isQuickFlow = computed(() => route.query.quick === '1')
 const pageTitle = computed(() => {
-  if (isEdit.value) return isPublisherMode.value ? 'Edit Publisher Invoice' : 'Edit Invoice'
+  if (isEdit.value) {
+    if (isBrokerMode.value) return 'Edit Broker Invoice'
+    return isPublisherMode.value ? 'Edit Publisher Invoice' : 'Edit Invoice'
+  }
+  if (isBrokerMode.value) return 'Create Broker Invoice'
+  return isPublisherMode.value ? 'Create Publisher Invoice' : 'Create Invoice'
+})
+const submitLabel = computed(() => {
+  if (isEdit.value) return 'Update Invoice'
+  if (isBrokerMode.value) return 'Create Broker Invoice'
   return isPublisherMode.value ? 'Create Publisher Invoice' : 'Create Invoice'
 })
 
@@ -43,15 +71,18 @@ const success = ref<string | null>(null)
 
 const lawyers = ref<Array<{ user_id: string; email: string; display_name: string | null }>>([])
 const vendors = ref<CenterRow[]>([])
+const brokers = ref<BrokerInvoiceBrokerOption[]>([])
 const selectedVendor = ref<CenterRow | null>(null)
-const deals = ref<Array<DealFlowRow & { selected: boolean }>>([])
+const deals = ref<SelectableInvoiceDeal[]>([])
 const loadingDeals = ref(false)
+const lockedBrokerId = ref<string | null>(null)
 
 const invoiceNumber = ref('')
 
 const form = ref({
   lawyer_id: '',
   lead_vendor_id: '',
+  broker_id: '',
   date_range_start: '',
   date_range_end: '',
   deal_ids: [] as string[],
@@ -117,15 +148,42 @@ const vendorOptions = computed(() =>
   }))
 )
 
+const brokerDisplayName = (broker: BrokerInvoiceBrokerOption) =>
+  String(broker.company_name || broker.full_name || broker.primary_email || '').trim() || 'Unnamed broker'
 
-const recipientLabel = computed(() => isPublisherMode.value ? 'Lead Vendor' : 'Lawyer')
-const recipientOptions = computed(() => isPublisherMode.value ? vendorOptions.value : lawyerOptions.value)
+const brokerOptions = computed(() =>
+  brokers.value.map(b => ({
+    label: brokerDisplayName(b),
+    value: b.user_id
+  }))
+)
+
+const selectedBroker = computed(() => brokers.value.find(b => b.user_id === form.value.broker_id) ?? null)
+const selectedBrokerLabel = computed(() => selectedBroker.value ? brokerDisplayName(selectedBroker.value) : '')
+const brokerSelectorLocked = computed(() => isBrokerMode.value && Boolean(lockedBrokerId.value || isEdit.value))
+
+const recipientLabel = computed(() => {
+  if (isBrokerMode.value) return 'Broker'
+  return isPublisherMode.value ? 'Lead Vendor' : 'Lawyer'
+})
+const recipientOptions = computed(() => {
+  if (isBrokerMode.value) return brokerOptions.value
+  return isPublisherMode.value ? vendorOptions.value : lawyerOptions.value
+})
 const recipientValue = computed({
-  get: () => isPublisherMode.value ? form.value.lead_vendor_id : form.value.lawyer_id,
+  get: () => {
+    if (isBrokerMode.value) return form.value.broker_id
+    return isPublisherMode.value ? form.value.lead_vendor_id : form.value.lawyer_id
+  },
   set: (v: string) => {
-    if (isPublisherMode.value) form.value.lead_vendor_id = v
+    if (isBrokerMode.value) form.value.broker_id = v
+    else if (isPublisherMode.value) form.value.lead_vendor_id = v
     else form.value.lawyer_id = v
   }
+})
+const recipientPlaceholder = computed(() => {
+  if (isBrokerMode.value) return 'Choose a broker...'
+  return isPublisherMode.value ? 'Choose a vendor...' : 'Choose a lawyer...'
 })
 
 const statusOptions = [
@@ -133,11 +191,29 @@ const statusOptions = [
   { label: 'Paid', value: 'paid' },
   { label: 'Chargeback', value: 'chargeback' }
 ]
+const visibleStatusOptions = computed(() =>
+  isBrokerMode.value ? [{ label: 'In Review', value: 'in_review' }] : statusOptions
+)
 
-watch(isPublisherMode, (isPub) => {
+const toFiniteNumber = (value: unknown, fallback = 0) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback
+  const text = String(value ?? '').trim()
+  if (!text) return fallback
+  const parsed = Number(text)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+const toMoneyNumber = (value: unknown, fallback = 0) =>
+  Math.round(toFiniteNumber(value, fallback) * 100) / 100
+
+const normalizedTaxRate = computed(() =>
+  Math.min(1, Math.max(0, toFiniteNumber(form.value.tax_rate, 0)))
+)
+
+watch([isPublisherMode, isBrokerMode], () => {
   // Default newly-created invoices to review stage
   if (!isEdit.value) {
-    form.value.status = (isPub ? 'in_review' : 'in_review') as InvoiceStatus
+    form.value.status = 'in_review' as InvoiceStatus
   }
 })
 
@@ -145,9 +221,9 @@ const validItems = computed(() => {
   return form.value.items
     .map((i) => {
       const description = String(i.description ?? '').trim()
-      const quantity = Number(i.quantity ?? 0)
-      const unit_price = Number(i.unit_price ?? 0)
-      const amount = Math.round(quantity * unit_price * 100) / 100
+      const quantity = toFiniteNumber(i.quantity, 0)
+      const unit_price = toMoneyNumber(i.unit_price, 0)
+      const amount = toMoneyNumber(quantity * unit_price)
       return {
         ...i,
         description,
@@ -160,15 +236,15 @@ const validItems = computed(() => {
 })
 
 const subtotal = computed(() =>
-  validItems.value.reduce((sum, item) => sum + item.amount, 0)
+  toMoneyNumber(validItems.value.reduce((sum, item) => sum + item.amount, 0))
 )
 
 const taxAmount = computed(() =>
-  Math.round(subtotal.value * form.value.tax_rate * 100) / 100
+  toMoneyNumber(subtotal.value * normalizedTaxRate.value)
 )
 
 const totalAmount = computed(() =>
-  subtotal.value + taxAmount.value
+  toMoneyNumber(subtotal.value + taxAmount.value)
 )
 
 const formatMoney = (n: number) => {
@@ -190,7 +266,7 @@ const formatDate = (value: string | null) => {
 }
 
 const addItem = () => {
-  const unit = isPublisherMode.value ? 0 : caseRatePerDeal.value
+  const unit = isPublisherMode.value || isBrokerMode.value ? 0 : caseRatePerDeal.value
   form.value.items.push({
     description: '',
     quantity: 1,
@@ -206,7 +282,7 @@ const removeItem = (index: number) => {
 const recalcItem = (index: number) => {
   const item = form.value.items[index]
   if (item) {
-    item.amount = Math.round(item.quantity * item.unit_price * 100) / 100
+    item.amount = toMoneyNumber(toFiniteNumber(item.quantity, 0) * toFiniteNumber(item.unit_price, 0))
   }
 }
 
@@ -226,6 +302,39 @@ const toDealUnitPrice = (deal: DealFlowRow) => {
   return Math.max(0, Math.round(n * 100) / 100)
 }
 
+const dateInputFromTimestamp = (value: string | null) => {
+  if (!value) return ''
+  return value.slice(0, 10)
+}
+
+const brokerLeadDescription = (deal: Pick<SelectableInvoiceDeal, 'insured_name' | 'submission_id'>) => {
+  const name = String(deal.insured_name ?? '').trim() || 'Unknown'
+  const submission = String(deal.submission_id ?? '').trim()
+  return submission ? `${name} (${submission})` : name
+}
+
+const mapBrokerLeadToDeal = (lead: BrokerInvoiceLeadRow): SelectableInvoiceDeal => ({
+  id: lead.id,
+  submission_id: lead.submission_id ?? '',
+  insured_name: lead.customer_full_name,
+  client_phone_number: lead.phone_number,
+  lead_vendor: lead.lead_vendor,
+  status: lead.status,
+  payment_status: null,
+  assigned_attorney_id: lead.assigned_broker_attorney_id,
+  agent: null,
+  carrier: null,
+  face_amount: null,
+  invoice_id: lead.broker_invoice_id,
+  publisher_invoice_id: null,
+  created_at: lead.created_at,
+  selected: form.value.deal_ids.includes(lead.id),
+  broker_id: lead.broker_id,
+  broker_name: lead.broker_name,
+  broker_attorney_name: lead.broker_attorney_name,
+  broker_invoice_id: lead.broker_invoice_id
+})
+
 const syncItemsWithSelectedDeals = () => {
   const selected = deals.value.filter(d => d.selected)
   const selectedForInvoice = selected.filter(d => {
@@ -238,11 +347,16 @@ const syncItemsWithSelectedDeals = () => {
   const manualItems = form.value.items.filter(i => !i.deal_id)
 
   const dealItems = selectedForInvoice.map((d) => {
-    const baseUnit = isPublisherMode.value ? toDealUnitPrice(d) : caseRatePerDeal.value
-    const unit = Math.round(baseUnit * upfrontMultiplier.value * 100) / 100
     const existing = form.value.items.find(i => i.deal_id === d.id)
+    const baseUnit = isBrokerMode.value
+      ? toFiniteNumber(existing?.unit_price, 0)
+      : isPublisherMode.value
+        ? toDealUnitPrice(d)
+        : caseRatePerDeal.value
+    const unit = Math.round(baseUnit * (isBrokerMode.value ? 1 : upfrontMultiplier.value) * 100) / 100
+    const description = isBrokerMode.value ? brokerLeadDescription(d) : `${d.insured_name ?? 'Unknown'}`
     if (existing) {
-      existing.description = `${d.insured_name ?? 'Unknown'}`
+      existing.description = description
       existing.quantity = 1
       existing.unit_price = unit
       existing.amount = unit
@@ -251,7 +365,7 @@ const syncItemsWithSelectedDeals = () => {
 
     return {
       deal_id: d.id,
-      description: `${d.insured_name ?? 'Unknown'}`,
+      description,
       quantity: 1,
       unit_price: unit,
       amount: unit
@@ -265,7 +379,7 @@ const syncItemsWithSelectedDeals = () => {
 }
 
 watch([isUpfrontPayment, upfrontPercent], () => {
-  if (isPublisherMode.value) return
+  if (isPublisherMode.value || isBrokerMode.value) return
   syncItemsWithSelectedDeals()
 })
 
@@ -274,25 +388,30 @@ const fullSubtotal = computed(() => {
     .filter(i => !i.deal_id)
     .map(i => ({
       description: String(i.description ?? '').trim(),
-      quantity: Number(i.quantity ?? 0),
-      unit_price: Number(i.unit_price ?? 0)
+      quantity: toFiniteNumber(i.quantity, 0),
+      unit_price: toFiniteNumber(i.unit_price, 0)
     }))
     .filter(i => i.description.length > 0 && i.quantity > 0 && i.unit_price >= 0)
     .reduce((sum, i) => sum + (Math.round(i.quantity * i.unit_price * 100) / 100), 0)
 
   const selectedDeals = deals.value.filter(d => d.selected)
   const dealSum = selectedDeals.reduce((sum, d) => {
-    const unit = isPublisherMode.value ? toDealUnitPrice(d) : caseRatePerDeal.value
+    const unit = isBrokerMode.value ? 0 : isPublisherMode.value ? toDealUnitPrice(d) : caseRatePerDeal.value
     return sum + unit
   }, 0)
   return Math.round((manual + dealSum) * 100) / 100
 })
 
-const fullTaxAmount = computed(() => Math.round(fullSubtotal.value * form.value.tax_rate * 100) / 100)
-const fullTotalAmount = computed(() => fullSubtotal.value + fullTaxAmount.value)
+const fullTaxAmount = computed(() => toMoneyNumber(fullSubtotal.value * normalizedTaxRate.value))
+const fullTotalAmount = computed(() => toMoneyNumber(fullSubtotal.value + fullTaxAmount.value))
 
 const canSubmit = computed(() => {
-  if (isPublisherMode.value) {
+  if (isBrokerMode.value) {
+    if (!form.value.broker_id) return false
+    if (!form.value.date_range_start || !form.value.date_range_end) return false
+    if (form.value.deal_ids.length === 0) return false
+    if (totalAmount.value <= 0) return false
+  } else if (isPublisherMode.value) {
     if (!form.value.lead_vendor_id) return false
   } else {
     if (!form.value.lawyer_id) return false
@@ -304,6 +423,31 @@ const canSubmit = computed(() => {
 })
 
 const fetchDeals = async () => {
+  if (isBrokerMode.value) {
+    if (!form.value.broker_id || !form.value.date_range_start || !form.value.date_range_end) {
+      deals.value = []
+      return
+    }
+
+    loadingDeals.value = true
+    try {
+      const data = await listBrokerLeadsForInvoice({
+        brokerId: form.value.broker_id,
+        dateStart: form.value.date_range_start,
+        dateEnd: form.value.date_range_end,
+        editingInvoiceId: isEdit.value ? invoiceId.value : null
+      })
+
+      deals.value = data.map(mapBrokerLeadToDeal)
+      syncItemsWithSelectedDeals()
+    } catch (e) {
+      console.error('Failed to fetch broker leads:', e)
+    } finally {
+      loadingDeals.value = false
+    }
+    return
+  }
+
   if (isPublisherMode.value) {
     if (!form.value.lead_vendor_id || !selectedVendor.value?.lead_vendor) {
       deals.value = []
@@ -379,6 +523,34 @@ const ensureDealSelected = async (dealId: string) => {
   const existing = deals.value.find(d => d.id === dealId)
   if (existing) {
     existing.selected = true
+    syncItemsWithSelectedDeals()
+    return
+  }
+
+  if (isBrokerMode.value) {
+    const lead = await getBrokerInvoiceLead(dealId)
+    if (!lead) return
+
+    if (form.value.broker_id && form.value.broker_id !== lead.broker_id) {
+      throw new Error('The selected lead belongs to a different broker')
+    }
+
+    form.value.broker_id = lead.broker_id
+    lockedBrokerId.value = lead.broker_id
+
+    const createdDate = dateInputFromTimestamp(lead.created_at)
+    if (createdDate) {
+      form.value.date_range_start ||= createdDate
+      form.value.date_range_end ||= createdDate
+    }
+
+    deals.value = [
+      {
+        ...mapBrokerLeadToDeal(lead),
+        selected: true,
+      },
+      ...deals.value,
+    ]
     syncItemsWithSelectedDeals()
     return
   }
@@ -494,10 +666,12 @@ const loadExisting = async () => {
     }
 
     invoiceNumber.value = inv.invoice_number
+    editingInvoiceType.value = inv.invoice_type
 
     form.value = {
       lawyer_id: inv.lawyer_id ?? '',
       lead_vendor_id: inv.lead_vendor_id ?? '',
+      broker_id: inv.broker_id ?? '',
       date_range_start: inv.date_range_start,
       date_range_end: inv.date_range_end,
       deal_ids: inv.deal_ids ?? [],
@@ -508,7 +682,9 @@ const loadExisting = async () => {
       due_date: inv.due_date ?? ''
     }
 
-    if (isPublisherMode.value) {
+    if (isBrokerMode.value) {
+      lockedBrokerId.value = inv.broker_id ?? null
+    } else if (isPublisherMode.value) {
       fetchVendorInfo()
     } else {
       await fetchLawyerProfile()
@@ -526,7 +702,20 @@ const handleSave = async () => {
   error.value = null
   success.value = null
 
-  if (isPublisherMode.value) {
+  if (isBrokerMode.value) {
+    if (!form.value.broker_id) {
+      error.value = 'Please select a broker'
+      return
+    }
+    if (!form.value.date_range_start || !form.value.date_range_end) {
+      error.value = 'Please select a date range'
+      return
+    }
+    if (form.value.deal_ids.length === 0) {
+      error.value = 'Please select at least one broker lead'
+      return
+    }
+  } else if (isPublisherMode.value) {
     if (!form.value.lead_vendor_id) {
       error.value = 'Please select a lead vendor'
       return
@@ -549,6 +738,10 @@ const handleSave = async () => {
     error.value = 'Please add at least one line item with a description'
     return
   }
+  if (isBrokerMode.value && totalAmount.value <= 0) {
+    error.value = 'Broker invoices require a positive total amount'
+    return
+  }
 
   saving.value = true
   try {
@@ -557,8 +750,8 @@ const handleSave = async () => {
 
     const today = new Date().toISOString().slice(0, 10)
     const basePayload = {
-      date_range_start: isQuickFlow.value ? today : (form.value.date_range_start || today),
-      date_range_end: isQuickFlow.value ? today : (form.value.date_range_end || today),
+      date_range_start: isQuickFlow.value && !isBrokerMode.value ? today : (form.value.date_range_start || today),
+      date_range_end: isQuickFlow.value && !isBrokerMode.value ? today : (form.value.date_range_end || today),
       deal_ids: form.value.deal_ids,
       items: validItems.value.map(({ description, quantity, unit_price, amount }) => ({
         description,
@@ -567,7 +760,7 @@ const handleSave = async () => {
         amount
       })),
       subtotal: subtotal.value,
-      tax_rate: form.value.tax_rate,
+      tax_rate: normalizedTaxRate.value,
       tax_amount: taxAmount.value,
       total_amount: totalAmount.value,
       status: form.value.status,
@@ -575,11 +768,44 @@ const handleSave = async () => {
       due_date: form.value.due_date || null
     }
 
+    if (isBrokerMode.value) {
+      const brokerPayload = {
+        broker_id: form.value.broker_id,
+        lead_ids: form.value.deal_ids,
+        date_range_start: basePayload.date_range_start,
+        date_range_end: basePayload.date_range_end,
+        items: basePayload.items,
+        subtotal: basePayload.subtotal,
+        tax_rate: basePayload.tax_rate,
+        tax_amount: basePayload.tax_amount,
+        total_amount: basePayload.total_amount,
+        due_date: form.value.due_date,
+        notes: basePayload.notes
+      }
+
+      if (isEdit.value && invoiceId.value) {
+        await updateBrokerInvoice(invoiceId.value, brokerPayload)
+        success.value = 'Invoice updated successfully'
+      } else {
+        const created = await createBrokerInvoice({
+          ...brokerPayload,
+          invoice_number: null
+        })
+        invoiceNumber.value = created.invoice_number
+        success.value = 'Invoice created successfully'
+      }
+
+      setTimeout(() => {
+        router.push('/invoicing/broker')
+      }, 1200)
+      return
+    }
+
     const payload = isPublisherMode.value
       ? { ...basePayload, invoice_type: 'publisher' as const, lead_vendor_id: form.value.lead_vendor_id, lawyer_id: null }
       : { ...basePayload, invoice_type: 'lawyer' as const, lawyer_id: form.value.lawyer_id, lead_vendor_id: null }
 
-    const backRoute = isPublisherMode.value ? '/invoicing/publisher' : '/invoicing/lawyer'
+    const backRoute = isPublisherMode.value ? '/invoicing/publisher' : '/invoicing/broker'
 
     if (isEdit.value && invoiceId.value) {
       if (isPublisherMode.value) {
@@ -618,11 +844,15 @@ const handleSave = async () => {
 }
 
 const goBack = () => {
-  router.push(isPublisherMode.value ? '/invoicing/publisher' : '/invoicing/lawyer')
+  if (isBrokerMode.value) {
+    router.push('/invoicing/broker')
+    return
+  }
+  router.push(isPublisherMode.value ? '/invoicing/publisher' : '/invoicing/broker')
 }
 
 watch(() => form.value.lawyer_id, () => {
-  if (!isPublisherMode.value) {
+  if (!isPublisherMode.value && !isBrokerMode.value) {
     fetchLawyerProfile()
     fetchDeals()
   }
@@ -635,8 +865,37 @@ watch(() => form.value.lead_vendor_id, () => {
   }
 })
 
+watch(() => form.value.broker_id, () => {
+  if (isBrokerMode.value) {
+    fetchDeals()
+  }
+})
+
 watch([() => form.value.date_range_start, () => form.value.date_range_end], () => {
   fetchDeals()
+})
+
+const dealSectionTitle = computed(() => isBrokerMode.value ? 'Broker Leads' : 'Assigned Deals')
+const dealSelectionBlocked = computed(() => {
+  if (isBrokerMode.value) return !form.value.broker_id || !form.value.date_range_start || !form.value.date_range_end
+  return isPublisherMode.value
+    ? !form.value.lead_vendor_id
+    : (!form.value.lawyer_id || (!isQuickFlow.value && (!form.value.date_range_start || !form.value.date_range_end)))
+})
+const dealSelectionPrompt = computed(() => {
+  if (isBrokerMode.value) return 'Select a broker and date range to load qualified payable leads'
+  if (isPublisherMode.value) return 'Select a lead vendor to load their approved deals'
+  return isQuickFlow.value
+    ? 'Select a lawyer to attach this retainer'
+    : 'Select a lawyer and date range to load deals'
+})
+const noDealsMessage = computed(() => {
+  if (isBrokerMode.value) return 'No uninvoiced qualified payable leads found for this broker'
+  return isPublisherMode.value ? 'No approved payable deals found for this vendor' : 'No deals found for this lawyer in the selected date range'
+})
+const selectedRecipientSummary = computed(() => {
+  if (isBrokerMode.value) return selectedBrokerLabel.value || '—'
+  return isPublisherMode.value ? (selectedVendor.value?.center_name || '—') : (selectedLawyerLabel.value || '—')
 })
 
 onMounted(async () => {
@@ -646,29 +905,53 @@ onMounted(async () => {
 
     const role = auth.state.value.profile?.role
     if (role !== 'super_admin' && role !== 'admin') {
-      router.push('/invoicing/lawyer')
+      router.push('/invoicing/broker')
       return
     }
 
-    // Load both lawyers and vendors in parallel
-    const [lawyerData, vendorData] = await Promise.all([
+    if (!isEdit.value && requestedMode.value !== 'broker') {
+      await router.replace({
+        path: '/invoicing/create',
+        query: { ...route.query, mode: 'broker' }
+      })
+    }
+
+    // Load invoice recipient lists in parallel. Broker mode uses the broker list;
+    // the legacy modes continue to use lawyers/vendors.
+    const [lawyerData, vendorData, brokerData] = await Promise.all([
       listLawyers(),
-      listCenters()
+      listCenters(),
+      listBrokersForInvoice()
     ])
     lawyers.value = lawyerData
     vendors.value = vendorData
+    brokers.value = brokerData
 
     if (isEdit.value) {
       await loadExisting()
     } else {
-      invoiceNumber.value = await generateInvoiceNumber()
+      if (!isBrokerMode.value) {
+        invoiceNumber.value = await generateInvoiceNumber()
+      }
 
       // Pre-select from query params (e.g. navigating from retainers-details)
       const qLawyerId = route.query.lawyer_id as string | undefined
       const qCenterId = route.query.center_id as string | undefined
       const qDealId = route.query.deal_id as string | undefined
+      const qBrokerId = route.query.broker_id as string | undefined
+      const qLeadId = route.query.lead_id as string | undefined
 
-      if (isPublisherMode.value && qCenterId) {
+      if (isBrokerMode.value) {
+        if (qBrokerId) {
+          form.value.broker_id = qBrokerId
+        }
+        if (qLeadId) {
+          await ensureDealSelected(qLeadId)
+          await fetchDeals()
+        } else if (form.value.broker_id) {
+          await fetchDeals()
+        }
+      } else if (isPublisherMode.value && qCenterId) {
         form.value.lead_vendor_id = qCenterId
         fetchVendorInfo()
         await fetchDeals()
@@ -730,7 +1013,7 @@ onMounted(async () => {
               :disabled="saving || !canSubmit"
               @click="handleSave"
             >
-              {{ isEdit ? 'Update Invoice' : (isPublisherMode ? 'Create Publisher Invoice' : 'Create Invoice') }}
+              {{ submitLabel }}
             </UButton>
           </div>
         </template>
@@ -790,7 +1073,8 @@ onMounted(async () => {
                     <label class="mb-1.5 block text-xs font-medium text-muted">Status</label>
                     <USelect
                       v-model="form.status"
-                      :items="statusOptions"
+                      :items="visibleStatusOptions"
+                      :disabled="isBrokerMode"
                       class="w-full [&_button]:rounded-xl [&_button]:border-[var(--ap-card-border)] [&_button]:bg-[var(--ap-card-hover)]"
                       value-key="value"
                       label-key="label"
@@ -804,10 +1088,11 @@ onMounted(async () => {
                     <USelect
                       v-model="recipientValue"
                       :items="recipientOptions"
+                      :disabled="brokerSelectorLocked"
                       class="w-full [&_button]:rounded-xl [&_button]:border-[var(--ap-card-border)] [&_button]:bg-[var(--ap-card-hover)]"
                       value-key="value"
                       label-key="label"
-                      :placeholder="isPublisherMode ? 'Choose a vendor...' : 'Choose a lawyer...'"
+                      :placeholder="recipientPlaceholder"
                     />
                   </div>
 
@@ -820,7 +1105,7 @@ onMounted(async () => {
                     />
                   </div>
 
-                  <div v-if="!isQuickFlow">
+                  <div v-if="!isQuickFlow || isBrokerMode">
                     <label class="mb-1.5 block text-xs font-medium text-muted">
                       Date Range Start <span v-if="!isPublisherMode" class="text-red-400">*</span>
                     </label>
@@ -831,7 +1116,7 @@ onMounted(async () => {
                     />
                   </div>
 
-                  <div v-if="!isQuickFlow">
+                  <div v-if="!isQuickFlow || isBrokerMode">
                     <label class="mb-1.5 block text-xs font-medium text-muted">
                       Date Range End <span v-if="!isPublisherMode" class="text-red-400">*</span>
                     </label>
@@ -843,7 +1128,7 @@ onMounted(async () => {
                   </div>
                 </div>
 
-                <div v-if="!isPublisherMode" class="mt-4">
+                <div v-if="!isPublisherMode && !isBrokerMode" class="mt-4">
                   <div class="flex items-center gap-3">
                     <UCheckbox v-model="isUpfrontPayment" label="Upfront payment" />
 
@@ -875,7 +1160,7 @@ onMounted(async () => {
               <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-6">
                 <div class="mb-4 flex items-center justify-between">
                   <h3 class="text-sm font-semibold uppercase tracking-wider text-highlighted">
-                    Assigned Deals
+                    {{ dealSectionTitle }}
                   </h3>
                   <div class="flex items-center gap-2">
                     <UButton
@@ -903,15 +1188,10 @@ onMounted(async () => {
                 </div>
 
                 <div
-                  v-if="isPublisherMode ? !form.lead_vendor_id : (!form.lawyer_id || (!isQuickFlow && (!form.date_range_start || !form.date_range_end)))"
+                  v-if="dealSelectionBlocked"
                   class="rounded-xl border border-dashed border-[var(--ap-card-border)] px-4 py-8 text-center text-xs text-muted"
                 >
-                  {{ isPublisherMode
-                    ? 'Select a lead vendor to load their approved deals'
-                    : (isQuickFlow
-                      ? 'Select a lawyer to attach this retainer'
-                      : 'Select a lawyer and date range to load deals')
-                  }}
+                  {{ dealSelectionPrompt }}
                 </div>
 
                 <div v-else-if="loadingDeals" class="flex items-center justify-center py-8">
@@ -919,7 +1199,7 @@ onMounted(async () => {
                 </div>
 
                 <div v-else-if="!deals.length" class="rounded-xl border border-dashed border-[var(--ap-card-border)] px-4 py-8 text-center text-xs text-muted">
-                  {{ isPublisherMode ? 'No approved payable deals found for this vendor' : 'No deals found for this lawyer in the selected date range' }}
+                  {{ noDealsMessage }}
                 </div>
 
                 <div v-else class="space-y-2 max-h-64 overflow-y-auto create-invoice-scroll">
@@ -945,11 +1225,19 @@ onMounted(async () => {
                         {{ deal.insured_name ?? 'Unknown' }}
                       </div>
                       <div class="mt-0.5 text-xs text-muted">
-                        {{ deal.status ?? 'Successfull Cases' }}
+                        <template v-if="isBrokerMode">
+                          {{ deal.broker_attorney_name || 'Unknown attorney' }}
+                        </template>
+                        <template v-else>
+                          {{ deal.status ?? 'Successfull Cases' }}
+                        </template>
                       </div>
                     </div>
                     <div class="shrink-0 text-right">
-                      <div class="text-sm font-semibold text-[var(--ap-accent)]">
+                      <div v-if="isBrokerMode" class="text-sm font-semibold text-[var(--ap-accent)]">
+                        Manual amount
+                      </div>
+                      <div v-else class="text-sm font-semibold text-[var(--ap-accent)]">
                         {{ formatMoney(isPublisherMode ? Number(deal.face_amount ?? 0) : (caseRatePerDeal || Number(deal.face_amount ?? 0))) }}
                       </div>
                       <div class="text-xs text-muted">
@@ -1070,11 +1358,34 @@ onMounted(async () => {
               <!-- Recipient Info Card -->
               <div class="rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)] p-6">
                 <h3 class="mb-4 text-sm font-semibold uppercase tracking-wider text-highlighted">
-                  {{ isPublisherMode ? 'Vendor Info' : 'Lawyer Info' }}
+                  {{ isBrokerMode ? 'Broker Info' : isPublisherMode ? 'Vendor Info' : 'Lawyer Info' }}
                 </h3>
 
+                <template v-if="isBrokerMode">
+                  <div v-if="!form.broker_id" class="text-xs text-muted">
+                    Select a broker to see their details
+                  </div>
+                  <div v-else-if="selectedBroker" class="space-y-3">
+                    <div>
+                      <div class="text-xs text-muted">Broker</div>
+                      <div class="text-sm font-medium text-highlighted">{{ selectedBrokerLabel }}</div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-muted">Company</div>
+                      <div class="text-sm text-default">{{ selectedBroker.company_name ?? '—' }}</div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-muted">Contact Email</div>
+                      <div class="text-sm text-default">{{ selectedBroker.primary_email ?? '—' }}</div>
+                    </div>
+                  </div>
+                  <div v-else class="text-xs text-muted">
+                    No details found for this broker
+                  </div>
+                </template>
+
                 <!-- Publisher mode: Vendor Info -->
-                <template v-if="isPublisherMode">
+                <template v-else-if="isPublisherMode">
                   <div v-if="!form.lead_vendor_id" class="text-xs text-muted">
                     Select a lead vendor to see their details
                   </div>
@@ -1151,7 +1462,7 @@ onMounted(async () => {
                   </div>
                   <div class="flex items-center justify-between">
                     <span class="text-xs text-muted">{{ recipientLabel }}</span>
-                    <span class="text-sm text-default">{{ isPublisherMode ? (selectedVendor?.center_name || '—') : (selectedLawyerLabel || '—') }}</span>
+                    <span class="text-sm text-default">{{ selectedRecipientSummary }}</span>
                   </div>
                   <div class="flex items-center justify-between">
                     <span class="text-xs text-muted">Date Range</span>
@@ -1187,7 +1498,7 @@ onMounted(async () => {
                   </div>
 
                   <div class="border-t border-[var(--ap-card-border)] pt-3">
-                    <div v-if="!isPublisherMode && isUpfrontPayment" class="space-y-2">
+                    <div v-if="!isPublisherMode && !isBrokerMode && isUpfrontPayment" class="space-y-2">
                       <div class="flex items-center justify-between">
                         <span class="text-xs text-muted">Full Total</span>
                         <span class="text-sm font-semibold text-highlighted">{{ formatMoney(fullTotalAmount) }}</span>
@@ -1216,7 +1527,7 @@ onMounted(async () => {
                   :disabled="saving || !canSubmit"
                   @click="handleSave"
                 >
-                  {{ isEdit ? 'Update Invoice' : (isPublisherMode ? 'Create Publisher Invoice' : 'Create Invoice') }}
+                  {{ submitLabel }}
                 </UButton>
                 <UButton
                   color="neutral"

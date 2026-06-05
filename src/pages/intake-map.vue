@@ -6,25 +6,30 @@ import usSvgRaw from '../assets/us.svg?raw'
 import { useAuth } from '../composables/useAuth'
 import {
   COVERAGE_CASE_CATEGORY_OPTIONS,
+  COVERAGE_TRAFFIC_OPTIONS,
   COVERAGE_SOL_OPTIONS,
   INSURANCE_OPTIONS,
   LANGUAGE_OPTIONS,
   LIABILITY_OPTIONS,
   MEDICAL_TREATMENT_OPTIONS,
   listBrokerAttorneys,
-  updateBrokerAttorney,
+  normalizeCoverageStateTraffic,
+  updateBrokerAttorneyCoverage,
   type BrokerAttorneyRow,
   type CoverageCaseCategory,
   type CoverageInsuranceStatus,
   type CoverageLiabilityStatus,
   type CoverageMedicalTreatment,
-  type CoverageSolCriteria
+  type CoverageSolCriteria,
+  type CoverageStateTraffic,
+  type CoverageTrafficLevel
 } from '../lib/broker-attorneys'
 import { US_STATES } from '../lib/us-states'
 
 type CoverageForm = {
   broker_attorney_id: string
   coverage_states: string[]
+  coverage_state_traffic: CoverageStateTraffic
   coverage_case_category: CoverageCaseCategory
   coverage_sol_criteria: CoverageSolCriteria
   coverage_liability_status: CoverageLiabilityStatus
@@ -45,6 +50,7 @@ const coverageOpen = ref(false)
 const attorneys = ref<BrokerAttorneyRow[]>([])
 const selectedAttorneyId = ref('')
 const mapRoot = ref<HTMLDivElement | null>(null)
+const focusedStateCode = ref<string | null>(null)
 
 const stateOptions = US_STATES.map(state => ({
   label: `${state.code} - ${state.name}`,
@@ -57,10 +63,17 @@ const multiSelectUi = {
 
 const ALL_ATTORNEYS_VALUE = '__all_attorneys__'
 const normalizeStateCode = (value: unknown) => String(value || '').trim().toUpperCase()
+const TRAFFIC_COLOR = {
+  high: '#22c55e',
+  moderate: '#eab308',
+  none: '#ef4444',
+  focused: '#f59e0b'
+} as const
 
 const coverageForm = ref<CoverageForm>({
   broker_attorney_id: '',
   coverage_states: [],
+  coverage_state_traffic: {},
   coverage_case_category: 'Consumer Cases',
   coverage_sol_criteria: '6_12_months',
   coverage_liability_status: 'clear_only',
@@ -71,7 +84,7 @@ const coverageForm = ref<CoverageForm>({
   coverage_notes: ''
 })
 
-const brokerId = computed(() => auth.state.value.user?.id ?? '')
+const brokerId = computed(() => auth.state.value.brokerContext?.broker_id ?? '')
 const attorneyOptions = computed(() =>
   attorneys.value.map(attorney => ({
     label: attorney.firm_name ? `${attorney.attorney_name} - ${attorney.firm_name}` : attorney.attorney_name,
@@ -92,46 +105,85 @@ const selectedAttorney = computed(() =>
 )
 const hasAttorneyView = computed(() => isAllAttorneysSelected.value || Boolean(selectedAttorney.value))
 
+const getStateName = (code: string) => US_STATES.find(state => state.code === code)?.name ?? code
+const getTrafficLevel = (
+  traffic: CoverageStateTraffic | null | undefined,
+  stateCode: string
+): CoverageTrafficLevel => traffic?.[normalizeStateCode(stateCode)] === 'high' ? 'high' : 'moderate'
+
 const coverageFormStateRows = computed(() =>
   coverageForm.value.coverage_states
-    .map(code => ({ code, name: US_STATES.find(state => state.code === code)?.name ?? code }))
+    .map(code => ({
+      code,
+      name: getStateName(code),
+      traffic: getTrafficLevel(coverageForm.value.coverage_state_traffic, code)
+    }))
     .sort((a, b) => a.name.localeCompare(b.name))
 )
 
-const networkCoverageCounts = computed(() => {
-  const counts = new Map<string, number>()
+const networkTrafficByState = computed(() => {
+  const trafficByState = new Map<string, CoverageTrafficLevel>()
   attorneys.value.forEach(attorney => {
     ;(attorney.coverage_states ?? []).forEach(code => {
-      const normalized = String(code || '').trim().toUpperCase()
+      const normalized = normalizeStateCode(code)
       if (!normalized) return
-      counts.set(normalized, (counts.get(normalized) ?? 0) + 1)
+
+      const attorneyTraffic = getTrafficLevel(attorney.coverage_state_traffic, normalized)
+      const currentTraffic = trafficByState.get(normalized)
+      trafficByState.set(normalized, currentTraffic === 'high' || attorneyTraffic === 'high' ? 'high' : 'moderate')
     })
   })
-  return counts
+  return trafficByState
 })
 
-const coveredStateRows = computed(() => {
-  const codes = isAllAttorneysSelected.value
-    ? Array.from(networkCoverageCounts.value.keys())
-    : (selectedAttorney.value?.coverage_states ?? [])
+const selectedAttorneyTrafficByState = computed(() => {
+  const trafficByState = new Map<string, CoverageTrafficLevel>()
+  const attorney = selectedAttorney.value
+  if (!attorney) return trafficByState
 
-  return Array.from(new Set(codes.map(normalizeStateCode).filter(Boolean)))
-    .map(code => ({ code, name: US_STATES.find(state => state.code === code)?.name ?? code }))
+  ;(attorney.coverage_states ?? []).forEach(code => {
+    const normalized = normalizeStateCode(code)
+    if (!normalized) return
+    trafficByState.set(normalized, getTrafficLevel(attorney.coverage_state_traffic, normalized))
+  })
+
+  return trafficByState
+})
+
+const visibleTrafficByState = computed(() =>
+  isAllAttorneysSelected.value ? networkTrafficByState.value : selectedAttorneyTrafficByState.value
+)
+
+const coveredStateRows = computed(() =>
+  Array.from(visibleTrafficByState.value.entries())
+    .map(([code, traffic]) => ({ code, name: getStateName(code), traffic }))
     .sort((a, b) => a.name.localeCompare(b.name))
-})
+)
 
-const coveredStateCount = computed(() => networkCoverageCounts.value.size)
+const coveredStateCount = computed(() => visibleTrafficByState.value.size)
 const highTrafficCount = computed(() => {
   let n = 0
-  networkCoverageCounts.value.forEach(v => { if (v >= 2) n++ })
+  visibleTrafficByState.value.forEach(v => { if (v === 'high') n++ })
   return n
 })
 const moderateTrafficCount = computed(() => {
   let n = 0
-  networkCoverageCounts.value.forEach(v => { if (v === 1) n++ })
+  visibleTrafficByState.value.forEach(v => { if (v === 'moderate') n++ })
   return n
 })
-const noCoverageCount = computed(() => US_STATES.length - networkCoverageCounts.value.size)
+const noCoverageCount = computed(() => US_STATES.length - visibleTrafficByState.value.size)
+
+const focusedState = computed(() => {
+  const code = focusedStateCode.value
+  if (!code) return null
+  const covered = coverageForm.value.coverage_states.includes(code)
+  return {
+    code,
+    name: getStateName(code),
+    covered,
+    traffic: getTrafficLevel(coverageForm.value.coverage_state_traffic, code)
+  }
+})
 
 const normalizeCoverageSolCriteria = (value?: string | null): CoverageSolCriteria => {
   if (value === '12_plus_months') return '12_plus_months'
@@ -139,9 +191,14 @@ const normalizeCoverageSolCriteria = (value?: string | null): CoverageSolCriteri
 }
 
 const hydrateCoverageForm = (attorney: BrokerAttorneyRow) => {
+  const coverageStates = Array.from(new Set(
+    (attorney.coverage_states ?? []).map(normalizeStateCode).filter(Boolean)
+  )).sort()
+
   coverageForm.value = {
     broker_attorney_id: attorney.id,
-    coverage_states: [...(attorney.coverage_states ?? [])],
+    coverage_states: coverageStates,
+    coverage_state_traffic: normalizeCoverageStateTraffic(attorney.coverage_state_traffic, coverageStates),
     coverage_case_category: attorney.coverage_case_category ?? 'Consumer Cases',
     coverage_sol_criteria: normalizeCoverageSolCriteria(attorney.coverage_sol_criteria),
     coverage_liability_status: attorney.coverage_liability_status ?? 'clear_only',
@@ -162,27 +219,26 @@ const applyMapColors = async () => {
   if (svg) {
     svg.removeAttribute('width')
     svg.removeAttribute('height')
-    svg.style.width = '100%'
-    svg.style.height = '100%'
+    svg.style.width = ''
+    svg.style.height = ''
     svg.style.display = 'block'
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
   }
 
   root.querySelectorAll<SVGPathElement>('path[data-id]').forEach((path) => {
     const code = normalizeStateCode(path.dataset.id)
-    const selectedInForm = coverageOpen.value && coverageForm.value.coverage_states.includes(code)
-    const networkCount = networkCoverageCounts.value.get(code) ?? 0
-
-    let fill = '#ef4444'
-    if (selectedInForm) fill = '#f59e0b'
-    else if (networkCount >= 2) fill = '#22c55e'
-    else if (networkCount === 1) fill = '#eab308'
+    const draftIsActive = coverageOpen.value && coverageForm.value.broker_attorney_id === selectedAttorney.value?.id
+    const traffic = draftIsActive
+      ? (coverageForm.value.coverage_states.includes(code) ? getTrafficLevel(coverageForm.value.coverage_state_traffic, code) : null)
+      : (visibleTrafficByState.value.get(code) ?? null)
+    const isFocused = coverageOpen.value && focusedStateCode.value === code
+    const fill = traffic ? TRAFFIC_COLOR[traffic] : TRAFFIC_COLOR.none
 
     path.style.fill = fill
-    path.style.stroke = '#0b0b0b'
-    path.style.strokeWidth = '0.8'
+    path.style.stroke = isFocused ? TRAFFIC_COLOR.focused : '#0b0b0b'
+    path.style.strokeWidth = isFocused ? '2.4' : '0.8'
     path.style.cursor = selectedAttorney.value ? 'pointer' : 'default'
-    path.style.transition = 'fill 160ms ease, opacity 160ms ease'
+    path.style.transition = 'fill 160ms ease, opacity 160ms ease, stroke 160ms ease'
     path.style.opacity = hasAttorneyView.value ? '1' : '0.55'
   })
 
@@ -249,14 +305,16 @@ const loadAttorneys = async () => {
     }
 
     attorneys.value = await listBrokerAttorneys(brokerId.value)
-    if (
+    if (!attorneys.value.length) {
+      selectedAttorneyId.value = ''
+    } else if (
       !selectedAttorneyId.value
       || (
         selectedAttorneyId.value !== ALL_ATTORNEYS_VALUE
         && !attorneys.value.some(attorney => attorney.id === selectedAttorneyId.value)
       )
     ) {
-      selectedAttorneyId.value = attorneys.value[0]?.id ?? ''
+      selectedAttorneyId.value = ALL_ATTORNEYS_VALUE
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unable to load attorneys'
@@ -289,18 +347,53 @@ const openCoverageEditor = () => {
   }
 
   hydrateCoverageForm(selectedAttorney.value)
+  focusedStateCode.value = null
   coverageOpen.value = true
 }
 
-const toggleCoverageState = (stateCode: string) => {
+const syncCoverageTraffic = () => {
+  coverageForm.value.coverage_state_traffic = normalizeCoverageStateTraffic(
+    coverageForm.value.coverage_state_traffic,
+    coverageForm.value.coverage_states
+  )
+}
+
+const addCoverageState = (stateCode: string) => {
   const code = normalizeStateCode(stateCode)
   if (!code) return
 
-  const selected = new Set(coverageForm.value.coverage_states)
-  if (selected.has(code)) selected.delete(code)
-  else selected.add(code)
-
+  const selected = new Set(coverageForm.value.coverage_states.map(normalizeStateCode).filter(Boolean))
+  selected.add(code)
   coverageForm.value.coverage_states = Array.from(selected).sort()
+  coverageForm.value.coverage_state_traffic = normalizeCoverageStateTraffic({
+    ...coverageForm.value.coverage_state_traffic,
+    [code]: coverageForm.value.coverage_state_traffic[code] ?? 'moderate'
+  }, coverageForm.value.coverage_states)
+}
+
+const removeCoverageState = (stateCode: string) => {
+  const code = normalizeStateCode(stateCode)
+  if (!code) return
+
+  coverageForm.value.coverage_states = coverageForm.value.coverage_states
+    .map(normalizeStateCode)
+    .filter(state => state && state !== code)
+    .sort()
+
+  const nextTraffic = { ...coverageForm.value.coverage_state_traffic }
+  delete nextTraffic[code]
+  coverageForm.value.coverage_state_traffic = normalizeCoverageStateTraffic(nextTraffic, coverageForm.value.coverage_states)
+}
+
+const setCoverageTraffic = (stateCode: string, traffic: CoverageTrafficLevel) => {
+  const code = normalizeStateCode(stateCode)
+  if (!code) return
+
+  addCoverageState(code)
+  coverageForm.value.coverage_state_traffic = normalizeCoverageStateTraffic({
+    ...coverageForm.value.coverage_state_traffic,
+    [code]: traffic
+  }, coverageForm.value.coverage_states)
 }
 
 const handleMapClick = (event: MouseEvent) => {
@@ -329,12 +422,13 @@ const handleMapClick = (event: MouseEvent) => {
     return
   }
 
-  if (!coverageOpen.value) {
+  if (!coverageOpen.value || coverageForm.value.broker_attorney_id !== selectedAttorney.value.id) {
     hydrateCoverageForm(selectedAttorney.value)
-    coverageOpen.value = true
   }
 
-  toggleCoverageState(code)
+  focusedStateCode.value = code
+  addCoverageState(code)
+  coverageOpen.value = true
 }
 
 const saveCoverage = async () => {
@@ -343,8 +437,12 @@ const saveCoverage = async () => {
 
   saving.value = true
   try {
-    const updated = await updateBrokerAttorney(attorneyId, {
+    const updated = await updateBrokerAttorneyCoverage(attorneyId, {
       coverage_states: coverageForm.value.coverage_states,
+      coverage_state_traffic: normalizeCoverageStateTraffic(
+        coverageForm.value.coverage_state_traffic,
+        coverageForm.value.coverage_states
+      ),
       coverage_case_category: coverageForm.value.coverage_case_category,
       coverage_sol_criteria: normalizeCoverageSolCriteria(coverageForm.value.coverage_sol_criteria),
       coverage_liability_status: coverageForm.value.coverage_liability_status,
@@ -370,6 +468,7 @@ const saveCoverage = async () => {
 }
 
 watch(selectedAttorneyId, () => {
+  focusedStateCode.value = null
   if (selectedAttorney.value && coverageOpen.value) hydrateCoverageForm(selectedAttorney.value)
   applyMapColors()
 })
@@ -380,6 +479,7 @@ watch(
     const nextAttorney = attorneys.value.find(attorney => attorney.id === attorneyId)
     if (nextAttorney) {
       selectedAttorneyId.value = nextAttorney.id
+      focusedStateCode.value = null
       hydrateCoverageForm(nextAttorney)
     }
   }
@@ -387,10 +487,22 @@ watch(
 
 watch(
   () => coverageForm.value.coverage_states.slice(),
-  () => applyMapColors()
+  () => {
+    syncCoverageTraffic()
+    applyMapColors()
+  }
 )
 
-watch(coverageOpen, () => applyMapColors())
+watch(
+  () => coverageForm.value.coverage_state_traffic,
+  () => applyMapColors(),
+  { deep: true }
+)
+
+watch(coverageOpen, (open) => {
+  if (!open) focusedStateCode.value = null
+  applyMapColors()
+})
 
 onMounted(loadAttorneys)
 </script>
@@ -481,15 +593,15 @@ onMounted(loadAttorneys)
           </div>
         </div>
 
-        <!-- ═══ Full-width map with glass overlays ═══ -->
+        <!-- ═══ Map with glass overlays ═══ -->
         <section class="ap-fade-in relative overflow-hidden rounded-2xl border border-[var(--ap-card-border)] bg-[var(--ap-card-bg)]">
           <!-- Loading state -->
-          <div v-if="loading" class="flex h-[640px] items-center justify-center">
+          <div v-if="loading" class="flex h-[340px] items-center justify-center">
             <UIcon name="i-lucide-loader-2" class="size-7 animate-spin text-[var(--ap-accent)]" />
           </div>
 
           <!-- Empty state -->
-          <div v-else-if="!attorneys.length" class="flex h-[640px] items-center justify-center px-6 text-center">
+          <div v-else-if="!attorneys.length" class="flex h-[340px] items-center justify-center px-6 text-center">
             <div>
               <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--ap-accent)]/10 text-[var(--ap-accent)]">
                 <UIcon name="i-lucide-scale" class="size-7" />
@@ -506,86 +618,75 @@ onMounted(loadAttorneys)
           <div v-else class="relative">
             <div
               ref="mapRoot"
-              class="w-full px-2 py-4 sm:px-4 sm:py-6 [&_svg]:h-[640px] [&_svg]:w-full"
+              class="w-full px-2 pb-[4.5rem] pt-[5.5rem] sm:px-4 sm:pb-5 sm:pt-12 [&_svg]:mx-auto [&_svg]:h-[clamp(42rem,60vh,650px)] [&_svg]:w-[clamp(38rem,80vw,80rem)] [&_svg]:max-w-[calc(100vw-2rem)]"
               @click="handleMapClick"
               v-html="usSvgRaw"
             />
 
-            <!-- ── Glass strip stat cards: top-left ── -->
-            <div class="ap-fade-in-left absolute top-3 left-3 z-[5] w-40 overflow-hidden rounded-xl border border-black/[0.08] bg-white/75 shadow-lg backdrop-blur-md dark:border-white/[0.08] dark:bg-[#1a1a1a]/65">
-              <div class="flex flex-col divide-y divide-black/[0.06] dark:divide-white/[0.08]">
-                <div class="relative px-3 py-2.5 pl-5" style="animation-delay: 400ms">
-                  <div class="absolute inset-y-0 left-0 w-1 bg-[var(--ap-accent)]" />
-                  <div class="text-[10px] font-medium uppercase tracking-wider text-[var(--ap-accent)]">Covered States</div>
-                  <div class="mt-0.5 text-lg font-bold text-[var(--ap-accent)] tabular-nums">{{ coveredStateCount }}</div>
-                </div>
-                <div class="relative px-3 py-2.5 pl-5" style="animation-delay: 500ms">
-                  <div class="absolute inset-y-0 left-0 w-1 bg-green-500" />
-                  <div class="text-[10px] font-medium uppercase tracking-wider text-green-600 dark:text-green-400">High Traffic</div>
-                  <div class="mt-0.5 text-lg font-bold text-green-600 dark:text-green-400 tabular-nums">{{ highTrafficCount }}</div>
-                </div>
-                <div class="relative px-3 py-2.5 pl-5" style="animation-delay: 600ms">
-                  <div class="absolute inset-y-0 left-0 w-1 bg-yellow-500" />
-                  <div class="text-[10px] font-medium uppercase tracking-wider text-yellow-600 dark:text-yellow-400">Moderate Traffic</div>
-                  <div class="mt-0.5 text-lg font-bold text-yellow-600 dark:text-yellow-400 tabular-nums">{{ moderateTrafficCount }}</div>
-                </div>
-                <div class="relative px-3 py-2.5 pl-5" style="animation-delay: 700ms">
-                  <div class="absolute inset-y-0 left-0 w-1 bg-red-500" />
-                  <div class="text-[10px] font-medium uppercase tracking-wider text-red-500 dark:text-red-400">No Coverage</div>
-                  <div class="mt-0.5 text-lg font-bold text-red-500 dark:text-red-400 tabular-nums">{{ noCoverageCount }}</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- ── Glass active states card: bottom-left ── -->
-            <div class="absolute bottom-3 left-3 z-[5] w-56 overflow-hidden rounded-xl border border-black/[0.08] bg-white/75 shadow-lg backdrop-blur-md dark:border-white/[0.08] dark:bg-[#1a1a1a]/65">
-              <div class="flex items-center justify-between border-b border-black/[0.06] px-3 py-2 dark:border-white/[0.08]">
-                <div class="flex items-center gap-1.5">
-                  <UIcon name="i-lucide-map-pin" class="size-3 text-[var(--ap-accent)]" />
-                  <span class="text-[11px] font-semibold text-highlighted">Active States</span>
-                </div>
-                <span class="inline-flex items-center rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                  {{ coveredStateRows.length }}
-                </span>
-              </div>
-              <div class="max-h-40 overflow-y-auto px-2.5 py-2">
-                <div v-if="!coveredStateRows.length" class="flex flex-col items-center justify-center gap-1 px-2 py-4 text-center">
-                  <UIcon name="i-lucide-map" class="size-4 text-muted/50" />
-                  <p class="text-[10px] text-muted">No states selected.</p>
-                </div>
-                <div v-else class="flex flex-wrap gap-1">
-                  <span
-                    v-for="row in coveredStateRows"
-                    :key="row.code"
-                    class="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400"
-                    :title="row.name"
-                  >
-                    <span class="size-1 rounded-full bg-emerald-500" />
-                    {{ row.code }}
+            <div class="pointer-events-none absolute left-3 right-3 top-3 z-[6] sm:left-1/2 sm:right-auto sm:w-[min(28rem,calc(100%-13rem))] sm:-translate-x-1/2">
+              <div class="pointer-events-auto rounded-xl border border-black/[0.08] bg-white/80 px-3 py-2.5 text-center shadow-lg backdrop-blur-md dark:border-white/[0.08] dark:bg-[#1a1a1a]/72">
+                <div class="flex items-center justify-center gap-2">
+                  <UIcon name="i-lucide-map-pinned" class="size-3.5 text-[var(--ap-accent)]" />
+                  <span class="text-[11px] font-semibold uppercase tracking-wider text-highlighted">Covered States</span>
+                  <span class="rounded-md bg-[var(--ap-accent)]/10 px-1.5 py-0.5 text-[10px] font-bold text-[var(--ap-accent)] tabular-nums">
+                    {{ coveredStateCount }}
                   </span>
                 </div>
+                <div class="mx-auto mt-2 h-px w-16 bg-black/[0.10] dark:bg-white/[0.14]" />
+                <div class="mt-2 max-h-12 overflow-y-auto">
+                  <div v-if="!coveredStateRows.length" class="text-[10px] font-medium text-muted">
+                    No states selected.
+                  </div>
+                  <div v-else class="flex flex-wrap justify-center gap-1">
+                    <span
+                      v-for="row in coveredStateRows"
+                      :key="row.code"
+                      class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
+                      :class="row.traffic === 'high'
+                        ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                        : 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400'"
+                      :title="row.name"
+                    >
+                      <span
+                        class="size-1 rounded-full"
+                        :class="row.traffic === 'high' ? 'bg-green-500' : 'bg-yellow-500'"
+                      />
+                      {{ row.code }}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <!-- ── Glass bottom legend (centered) ── -->
-            <div class="pointer-events-none absolute bottom-3 right-3 z-[5] px-2 sm:left-1/2 sm:right-auto sm:-translate-x-1/2">
-              <div class="pointer-events-auto flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 rounded-xl border border-black/[0.08] bg-white/85 px-4 py-2 shadow-lg backdrop-blur-md dark:border-white/[0.08] dark:bg-[#1a1a1a]/75">
-                <div class="flex items-center gap-1.5">
-                  <span class="size-2.5 rounded-full bg-green-500" />
-                  <span class="text-[10px] font-medium text-gray-600 dark:text-gray-300">High Traffic</span>
+            <div class="absolute bottom-3 left-3 right-3 z-[5] grid grid-cols-3 overflow-hidden rounded-xl border border-black/[0.08] bg-white/78 shadow-lg backdrop-blur-md dark:border-white/[0.08] dark:bg-[#1a1a1a]/68 sm:bottom-auto sm:right-auto sm:top-3 sm:w-40 sm:grid-cols-1">
+              <div class="relative flex items-center gap-2 px-3 py-2.5 pl-4">
+                <div class="absolute inset-y-0 left-0 w-1 bg-green-500" />
+                <div class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-white/50 bg-white/55 text-green-600 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-white/[0.08] dark:text-green-400">
+                  <UIcon name="i-lucide-trending-up" class="size-4" />
                 </div>
-                <div class="flex items-center gap-1.5">
-                  <span class="size-2.5 rounded-full bg-yellow-500" />
-                  <span class="text-[10px] font-medium text-gray-600 dark:text-gray-300">Moderate Traffic</span>
+                <div class="min-w-0">
+                  <div class="truncate text-[9px] font-semibold uppercase tracking-wider text-green-600 dark:text-green-400">High Traffic</div>
+                  <div class="text-lg font-bold text-green-600 dark:text-green-400 tabular-nums">{{ highTrafficCount }}</div>
                 </div>
-                <div class="flex items-center gap-1.5">
-                  <span class="size-2.5 rounded-full bg-red-500" />
-                  <span class="text-[10px] font-medium text-gray-600 dark:text-gray-300">No Coverage</span>
+              </div>
+              <div class="relative flex items-center gap-2 border-l border-black/[0.06] px-3 py-2.5 pl-4 dark:border-white/[0.08] sm:border-l-0 sm:border-t">
+                <div class="absolute inset-y-0 left-0 w-1 bg-yellow-500" />
+                <div class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-white/50 bg-white/55 text-yellow-700 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-white/[0.08] dark:text-yellow-400">
+                  <UIcon name="i-lucide-activity" class="size-4" />
                 </div>
-                <div v-if="coverageOpen" class="hidden h-3 w-px bg-black/[0.08] dark:bg-white/[0.08] sm:block" />
-                <div v-if="coverageOpen" class="flex items-center gap-1.5">
-                  <span class="size-2.5 rounded-full bg-amber-500 ring-2 ring-amber-500/30" />
-                  <span class="text-[10px] font-medium text-amber-600 dark:text-amber-400">Editing</span>
+                <div class="min-w-0">
+                  <div class="truncate text-[9px] font-semibold uppercase tracking-wider text-yellow-700 dark:text-yellow-400">Moderate Traffic</div>
+                  <div class="text-lg font-bold text-yellow-700 dark:text-yellow-400 tabular-nums">{{ moderateTrafficCount }}</div>
+                </div>
+              </div>
+              <div class="relative flex items-center gap-2 border-l border-black/[0.06] px-3 py-2.5 pl-4 dark:border-white/[0.08] sm:border-l-0 sm:border-t">
+                <div class="absolute inset-y-0 left-0 w-1 bg-red-500" />
+                <div class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-white/50 bg-white/55 text-red-500 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-white/[0.08]">
+                  <UIcon name="i-lucide-ban" class="size-4" />
+                </div>
+                <div class="min-w-0">
+                  <div class="truncate text-[9px] font-semibold uppercase tracking-wider text-red-500 dark:text-red-400">No Coverage</div>
+                  <div class="text-lg font-bold text-red-500 dark:text-red-400 tabular-nums">{{ noCoverageCount }}</div>
                 </div>
               </div>
             </div>
@@ -663,16 +764,117 @@ onMounted(loadAttorneys)
                 />
               </UFormField>
 
+              <div
+                v-if="focusedState"
+                class="rounded-xl border border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/[0.05] p-3"
+              >
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div class="flex min-w-0 items-center gap-2.5">
+                    <div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10 text-[var(--ap-accent)]">
+                      <UIcon name="i-lucide-map-pin" class="size-4" />
+                    </div>
+                    <div class="min-w-0">
+                      <p class="text-[10px] font-medium uppercase tracking-wider text-muted">Focused State</p>
+                      <p class="truncate text-sm font-semibold text-highlighted">
+                        {{ focusedState.name }} ({{ focusedState.code }})
+                      </p>
+                    </div>
+                    <span
+                      class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
+                      :class="focusedState.covered
+                        ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                        : 'bg-red-500/10 text-red-500 dark:text-red-400'"
+                    >
+                      {{ focusedState.covered ? 'Covered' : 'No Coverage' }}
+                    </span>
+                  </div>
+
+                  <div class="flex flex-wrap items-center gap-2">
+                    <div class="inline-flex overflow-hidden rounded-lg border border-black/[0.08] bg-white/70 p-0.5 dark:border-white/[0.08] dark:bg-white/[0.04]">
+                      <button
+                        v-for="option in COVERAGE_TRAFFIC_OPTIONS"
+                        :key="option.value"
+                        type="button"
+                        :disabled="!focusedState.covered"
+                        class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-45"
+                        :class="focusedState.traffic === option.value && focusedState.covered
+                          ? option.value === 'high'
+                            ? 'bg-green-500 text-white shadow-sm'
+                            : 'bg-yellow-500 text-white shadow-sm'
+                          : 'text-muted hover:text-highlighted'"
+                        @click="setCoverageTraffic(focusedState.code, option.value)"
+                      >
+                        {{ option.label }}
+                      </button>
+                    </div>
+                    <UButton
+                      v-if="focusedState.covered"
+                      color="neutral"
+                      variant="ghost"
+                      icon="i-lucide-x"
+                      class="rounded-lg"
+                      @click="removeCoverageState(focusedState.code)"
+                    >
+                      Remove
+                    </UButton>
+                    <UButton
+                      v-else
+                      icon="i-lucide-plus"
+                      class="rounded-lg"
+                      @click="addCoverageState(focusedState.code)"
+                    >
+                      Add Coverage
+                    </UButton>
+                  </div>
+                </div>
+              </div>
+
               <div class="min-h-12 rounded-lg border border-dashed border-[var(--ap-card-border)] bg-[var(--ap-card-hover)] p-3">
-                <div v-if="coverageFormStateRows.length" class="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto pr-1">
-                  <span
+                <div v-if="coverageFormStateRows.length" class="max-h-56 space-y-2 overflow-y-auto pr-1">
+                  <div
                     v-for="state in coverageFormStateRows"
                     :key="state.code"
-                    class="inline-flex items-center gap-1 rounded-md border border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/10 px-2 py-1 text-[11px] font-medium text-highlighted"
+                    class="flex flex-col gap-2 rounded-lg border border-[var(--ap-card-border)] bg-white/70 px-3 py-2 dark:bg-white/[0.03] sm:flex-row sm:items-center sm:justify-between"
                   >
-                    <span class="font-semibold text-[var(--ap-accent)]">{{ state.code }}</span>
-                    <span class="text-muted">{{ state.name }}</span>
-                  </span>
+                    <div class="flex min-w-0 items-center gap-2">
+                      <span
+                        class="flex h-7 w-9 shrink-0 items-center justify-center rounded-md text-[11px] font-bold"
+                        :class="state.traffic === 'high'
+                          ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                          : 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400'"
+                      >
+                        {{ state.code }}
+                      </span>
+                      <span class="truncate text-xs font-medium text-highlighted">{{ state.name }}</span>
+                    </div>
+                    <div class="flex shrink-0 items-center gap-2">
+                      <div class="inline-flex overflow-hidden rounded-lg border border-black/[0.08] bg-white/70 p-0.5 dark:border-white/[0.08] dark:bg-white/[0.04]">
+                        <button
+                          v-for="option in COVERAGE_TRAFFIC_OPTIONS"
+                          :key="option.value"
+                          type="button"
+                          class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition"
+                          :class="state.traffic === option.value
+                            ? option.value === 'high'
+                              ? 'bg-green-500 text-white shadow-sm'
+                              : 'bg-yellow-500 text-white shadow-sm'
+                            : 'text-muted hover:text-highlighted'"
+                          @click="setCoverageTraffic(state.code, option.value)"
+                        >
+                          {{ option.label }}
+                        </button>
+                      </div>
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-x"
+                        size="xs"
+                        class="rounded-lg"
+                        :aria-label="`Remove ${state.name}`"
+                        @click="removeCoverageState(state.code)"
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div v-else class="flex items-center gap-2 text-xs text-muted">
                   <UIcon name="i-lucide-info" class="size-4" />

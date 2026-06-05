@@ -159,16 +159,17 @@ const load = async () => {
   try {
     await auth.init()
 
-    const userId = auth.state.value.profile?.user_id
+    const userId = auth.state.value.brokerContext?.broker_id ?? auth.state.value.profile?.user_id
     const userRole = auth.state.value.profile?.role
+    const isBrokerWorkspace = userRole === 'broker' || userRole === 'broker_member'
 
-    if (userRole === 'broker' && !userId) {
+    if (isBrokerWorkspace && !userId) {
       error.value = 'Lead not found'
       row.value = null
       return
     }
 
-    if (userRole === 'broker' && userId) {
+    if (isBrokerWorkspace && userId) {
       const { data: brokerAttorneyRows, error: brokerAttorneyError } = await supabase
         .from('broker_attorneys')
         .select('id')

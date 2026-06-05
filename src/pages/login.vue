@@ -16,14 +16,14 @@ const showPassword = ref(false)
 
 const redirectTo = computed(() => {
   const fromQuery = route.query.redirect
-  return typeof fromQuery === 'string' && fromQuery.length ? fromQuery : '/retainers'
+  return typeof fromQuery === 'string' && fromQuery.length ? fromQuery : auth.getDefaultPath()
 })
 
 
 const isSubmitting = ref(false)
 const showedRoleBlockMessage = ref(false)
 
-const allowedRoles = new Set(['super_admin', 'broker'])
+const allowedRoles = new Set(['super_admin', 'admin', 'broker', 'broker_member'])
 
 const showRoleBlockedMessage = () => {
   const description = 'Your account does not have access to this portal. Please contact an administrator if you believe this is a mistake.'
@@ -50,7 +50,8 @@ const handleSubmit = async () => {
     await auth.signInWithPassword(email.value.trim(), password.value)
 
     const role = auth.state.value.profile?.role
-    if (!role || !allowedRoles.has(role)) {
+    const missingBrokerContext = (role === 'broker' || role === 'broker_member') && !auth.state.value.brokerContext
+    if (!role || !allowedRoles.has(role) || missingBrokerContext) {
       await auth.signOut()
       showRoleBlockedMessage()
       isSubmitting.value = false

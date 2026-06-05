@@ -17,8 +17,8 @@ const route = useRoute()
 const auth = useAuth()
 const brokerProfile = useBrokerProfile()
 
-const userId = computed(() => auth.state.value.user?.id ?? '')
-const isBroker = computed(() => auth.state.value.profile?.role === 'broker')
+const userId = computed(() => auth.state.value.brokerContext?.broker_id ?? '')
+const isBroker = computed(() => ['broker', 'broker_member'].includes(auth.state.value.profile?.role ?? ''))
 
 const brokerProfileData = computed(
   () => brokerProfile.state.value as unknown as Partial<BrokerProfileState>

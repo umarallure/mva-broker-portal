@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { DateFormatter, getLocalTimeZone, CalendarDate, today } from '@internationalized/date'
 
@@ -7,7 +7,24 @@ import ProductGuideHint from '../components/product-guide/ProductGuideHint.vue'
 import { useAuth } from '../composables/useAuth'
 import { useDragGhost } from '../composables/useDragGhost'
 import { productGuideHints } from '../data/product-guide-hints'
-import { brokerDropInvoiceWithNote, deleteInvoice, listInvoices, markInvoiceAsPaid, requestChargeback, updateInvoice, type InvoiceRow, type InvoiceStatus, type InvoiceType } from '../lib/invoices'
+import {
+  INVOICE_PAYMENT_PROOF_ACCEPT,
+  brokerDropInvoiceWithNote,
+  deleteInvoice,
+  formatInvoicePaymentProofFileSize,
+  getInvoicePaymentProofSignedUrl,
+  listInvoicePaymentProofs,
+  listInvoices,
+  markBrokerInvoiceAsPaidWithProof,
+  markInvoiceAsPaid,
+  requestChargeback,
+  updateInvoice,
+  validateInvoicePaymentProof,
+  type InvoicePaymentProofRow,
+  type InvoiceRow,
+  type InvoiceStatus,
+  type InvoiceType
+} from '../lib/invoices'
 import { supabase } from '../lib/supabase'
 
 type ViewMode = 'kanban' | 'list'
@@ -15,7 +32,9 @@ type ViewMode = 'kanban' | 'list'
 type InvoiceListRow = InvoiceRow & {
   lawyer_name?: string | null
   vendor_name?: string | null
+  broker_name?: string | null
   lead_names?: string | null
+  latest_payment_proof?: InvoicePaymentProofRow | null
 }
 
 type QualifiedDealRow = {
@@ -30,6 +49,22 @@ type QualifiedDealRow = {
   invoice_id: string | null
   publisher_invoice_id: string | null
   created_at: string | null
+  broker_id?: string | null
+  broker_name?: string | null
+  broker_attorney_name?: string | null
+  broker_invoice_id?: string | null
+}
+
+type BrokerQualifiedLeadRow = {
+  id: string
+  submission_id: string | null
+  customer_full_name: string | null
+  phone_number: string | null
+  state: string | null
+  lead_vendor: string | null
+  created_at: string | null
+  assigned_broker_attorney_id: string | null
+  broker_invoice_id: string | null
 }
 
 const route = useRoute()
@@ -41,13 +76,62 @@ const isSuperAdmin = computed(() => auth.state.value.profile?.role === 'super_ad
 const isAdmin = computed(() => auth.state.value.profile?.role === 'admin')
 const isAccounts = computed(() => auth.state.value.profile?.role === 'accounts')
 const isAdminOrSuper = computed(() => isSuperAdmin.value || isAdmin.value || isAccounts.value)
+const canCreateInvoice = computed(() => isSuperAdmin.value || isAdmin.value)
 const isPublisherMode = computed(() => route.path === '/invoicing/publisher')
+const isBrokerWorkspace = computed(() => {
+  const role = auth.state.value.profile?.role ?? null
+  return role === 'broker' || role === 'broker_member'
+})
+const isBrokerBoard = computed(() => route.path === '/invoicing/broker' || isBrokerWorkspace.value)
+const brokerWorkspaceId = computed(() => {
+  if (!isBrokerWorkspace.value) return null
+  return auth.state.value.brokerContext?.broker_id ?? auth.state.value.user?.id ?? null
+})
+const canSubmitBrokerPaymentProof = computed(() =>
+  isSuperAdmin.value || (isBrokerWorkspace.value && Boolean(brokerWorkspaceId.value))
+)
+
+const getBrokerPaymentProofBrokerId = (invoice: InvoiceRow) => {
+  if (invoice.invoice_type !== 'broker') return null
+  if (isSuperAdmin.value) return invoice.broker_id
+
+  const workspaceId = brokerWorkspaceId.value
+  if (!workspaceId || invoice.broker_id !== workspaceId) return null
+  return workspaceId
+}
+
+const canSubmitBrokerPaymentProofForInvoice = (invoice: InvoiceRow) =>
+  canSubmitBrokerPaymentProof.value && Boolean(getBrokerPaymentProofBrokerId(invoice))
 
 const canFilterByAttorney = computed(() => !isPublisherMode.value && (isSuperAdmin.value || isAdmin.value))
 const canFilterByVendor = computed(() => isPublisherMode.value && (isSuperAdmin.value || isAdmin.value))
 
-const pageTitle = computed(() => isPublisherMode.value ? 'Publisher Invoicing' : 'Invoicing')
-const createRoute = computed(() => isPublisherMode.value ? '/invoicing/create?mode=publisher' : '/invoicing/create?mode=lawyer')
+const pageTitle = computed(() => {
+  if (isPublisherMode.value) return 'Publisher Invoicing'
+  return 'Invoicing'
+})
+const createRoute = computed(() => {
+  if (isBrokerBoard.value) return '/invoicing/create?mode=broker'
+  return isPublisherMode.value ? '/invoicing/create?mode=publisher' : '/invoicing/create?mode=lawyer'
+})
+const createInvoiceLabel = computed(() => {
+  if (isBrokerBoard.value) return 'Create Broker Invoice'
+  return isPublisherMode.value ? 'Create Publisher Invoice' : 'Create Invoice'
+})
+const invoicePartyHeader = computed(() => {
+  if (isBrokerBoard.value) return 'Broker'
+  return isPublisherMode.value ? 'Vendor' : 'Lawyer'
+})
+const getInvoicePartyName = (invoice: InvoiceListRow) => {
+  if (isBrokerBoard.value) return invoice.broker_name ?? '—'
+  return isPublisherMode.value ? invoice.vendor_name ?? '—' : invoice.lawyer_name ?? '—'
+}
+const qualifiedLeadActionLabel = computed(() =>
+  isBrokerBoard.value && !canCreateInvoice.value ? 'View Lead' : '+ Create Invoice'
+)
+const qualifiedLeadActionTitle = computed(() =>
+  isBrokerBoard.value && !canCreateInvoice.value ? 'View lead' : 'Create invoice'
+)
 
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -65,7 +149,7 @@ const filterDueDate = ref<'all' | 'today' | 'yesterday' | 'this_week'>('all')
 const selectedDateRange = ref('all')
 
 const calendarDf = new DateFormatter('en-US', { dateStyle: 'medium' })
-const calendarRange = ref<{ start: CalendarDate | undefined; end: CalendarDate | undefined }>({
+const calendarRange = shallowRef<{ start: CalendarDate | undefined; end: CalendarDate | undefined }>({
   start: undefined,
   end: undefined
 })
@@ -84,6 +168,17 @@ const brokerDropTarget = ref<InvoiceListRow | null>(null)
 const brokerDropBusy = ref(false)
 const brokerDropNote = ref('')
 const brokerDropNoteTrimmed = computed(() => brokerDropNote.value.trim())
+
+const brokerPaidConfirmOpen = ref(false)
+const brokerPaidTarget = ref<InvoiceListRow | null>(null)
+const brokerPaidBusy = ref(false)
+const brokerPaidFile = ref<File | null>(null)
+const brokerPaidFileError = ref('')
+const brokerPaidFileInput = ref<HTMLInputElement | null>(null)
+const brokerPaidFileLabel = computed(() => {
+  if (!brokerPaidFile.value) return 'Choose screenshot/image proof'
+  return `${brokerPaidFile.value.name} (${formatInvoicePaymentProofFileSize(brokerPaidFile.value.size)})`
+})
 
 const loadSeq = ref(0)
 
@@ -368,6 +463,7 @@ const filteredInvoices = computed(() => {
       inv.invoice_number,
       inv.lawyer_name ?? '',
       inv.vendor_name ?? '',
+      inv.broker_name ?? '',
       inv.lead_names ?? '',
       itemDescriptions,
       inv.notes ?? ''
@@ -407,7 +503,9 @@ const filteredQualifiedDeals = computed(() => {
     const haystack = [
       d.submission_id ?? '',
       d.insured_name ?? '',
-      d.lead_vendor ?? ''
+      d.lead_vendor ?? '',
+      d.broker_name ?? '',
+      d.broker_attorney_name ?? ''
     ].join(' ').toLowerCase()
     return haystack.includes(q)
   })
@@ -488,6 +586,16 @@ const getSummaryCardLabel = (status: InvoiceStatus) => {
     if (status === 'in_review') return 'Pending Payment'
     if (status === 'paid') return 'Paid Successfully'
     if (status === 'chargeback') return 'Dropped'
+  }
+
+  return getStatusLabel(status)
+}
+
+const getKanbanStatusLabel = (status: InvoiceStatus) => {
+  if (!isPublisherMode.value) {
+    if (status === 'in_review') return 'Pending Payment (Due)'
+    if (status === 'paid') return 'Paid Successfully (Done)'
+    if (status === 'chargeback') return 'Dropped (7 days)'
   }
 
   return getStatusLabel(status)
@@ -636,6 +744,132 @@ const confirmBrokerDrop = async () => {
   }
 }
 
+const openBrokerPaidConfirm = (invoice: InvoiceListRow) => {
+  if (!canSubmitBrokerPaymentProofForInvoice(invoice)) {
+    error.value = 'Payment proof can be uploaded by the broker or a super admin.'
+    return
+  }
+
+  brokerPaidTarget.value = invoice
+  brokerPaidFile.value = null
+  brokerPaidFileError.value = ''
+  if (brokerPaidFileInput.value) {
+    brokerPaidFileInput.value.value = ''
+  }
+  brokerPaidConfirmOpen.value = true
+}
+
+const closeBrokerPaidConfirm = (force = false) => {
+  if (brokerPaidBusy.value && !force) return
+  brokerPaidConfirmOpen.value = false
+  brokerPaidTarget.value = null
+  brokerPaidFile.value = null
+  brokerPaidFileError.value = ''
+  if (brokerPaidFileInput.value) {
+    brokerPaidFileInput.value.value = ''
+  }
+}
+
+const openBrokerPaidFilePicker = () => {
+  brokerPaidFileInput.value?.click()
+}
+
+const clearBrokerPaidFile = () => {
+  brokerPaidFile.value = null
+  brokerPaidFileError.value = ''
+  if (brokerPaidFileInput.value) {
+    brokerPaidFileInput.value.value = ''
+  }
+}
+
+const handleBrokerPaidProofSelected = (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0] ?? null
+  brokerPaidFileError.value = ''
+
+  if (!file) {
+    brokerPaidFile.value = null
+    return
+  }
+
+  const validationError = validateInvoicePaymentProof(file)
+  if (validationError) {
+    brokerPaidFile.value = null
+    brokerPaidFileError.value = validationError
+    input.value = ''
+    return
+  }
+
+  brokerPaidFile.value = file
+}
+
+const getLatestPaymentProof = async (invoiceId: string) => {
+  const proofs = await listInvoicePaymentProofs([invoiceId])
+  return proofs[0] ?? null
+}
+
+const confirmBrokerPaid = async () => {
+  const invoice = brokerPaidTarget.value
+  const file = brokerPaidFile.value
+  const brokerId = invoice ? getBrokerPaymentProofBrokerId(invoice) : null
+  if (!invoice || !file || !brokerId || !canSubmitBrokerPaymentProofForInvoice(invoice)) {
+    brokerPaidFileError.value = 'Payment proof can be uploaded by the broker or a super admin.'
+    return
+  }
+
+  const validationError = validateInvoicePaymentProof(file)
+  if (validationError) {
+    brokerPaidFileError.value = validationError
+    return
+  }
+
+  brokerPaidBusy.value = true
+  brokerPaidFileError.value = ''
+  error.value = null
+
+  try {
+    const updated = await markBrokerInvoiceAsPaidWithProof({
+      brokerId,
+      invoiceId: invoice.id,
+      file
+    })
+    const idx = invoices.value.findIndex(i => i.id === invoice.id)
+    let latestProof: InvoicePaymentProofRow | null = null
+
+    try {
+      latestProof = await getLatestPaymentProof(invoice.id)
+    } catch (proofError) {
+      console.error('confirmBrokerPaid: failed to load payment proof', proofError)
+    }
+
+    if (idx !== -1) {
+      invoices.value[idx] = {
+        ...invoices.value[idx],
+        ...updated,
+        latest_payment_proof: latestProof ?? invoices.value[idx].latest_payment_proof ?? null
+      }
+    }
+
+    closeBrokerPaidConfirm(true)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Failed to mark broker invoice as paid'
+  } finally {
+    brokerPaidBusy.value = false
+  }
+}
+
+const openPaymentProof = async (invoice: InvoiceListRow) => {
+  const proof = invoice.latest_payment_proof
+  if (!proof) return
+
+  try {
+    const url = await getInvoicePaymentProofSignedUrl(proof.proof_path)
+    window.open(url, '_blank', 'noopener,noreferrer')
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Failed to open payment proof'
+  }
+}
+
 const handleDrop = async (e: DragEvent, targetStatus: InvoiceStatus) => {
   e.preventDefault()
   if (!dragInvoiceId.value) return
@@ -651,6 +885,20 @@ const handleDrop = async (e: DragEvent, targetStatus: InvoiceStatus) => {
 
   if (targetStatus === 'chargeback' && invoice.invoice_type === 'broker') {
     openBrokerDropConfirm(invoice)
+    return
+  }
+
+  if (targetStatus === 'paid' && invoice.invoice_type === 'broker') {
+    if (!canSubmitBrokerPaymentProofForInvoice(invoice)) {
+      error.value = 'Payment proof can be uploaded by the broker or a super admin.'
+      return
+    }
+    openBrokerPaidConfirm(invoice)
+    return
+  }
+
+  if (invoice.invoice_type === 'broker') {
+    error.value = 'Broker invoices can only be marked paid with proof or dropped with a note.'
     return
   }
 
@@ -700,22 +948,205 @@ const handleDrop = async (e: DragEvent, targetStatus: InvoiceStatus) => {
   }
 }
 
+const hydrateLatestPaymentProofs = async (rows: InvoiceListRow[]) => {
+  rows.forEach((invoice) => {
+    invoice.latest_payment_proof = null
+  })
+
+  const brokerInvoiceIds = rows
+    .filter(invoice => invoice.invoice_type === 'broker')
+    .map(invoice => invoice.id)
+
+  if (!brokerInvoiceIds.length) return
+
+  const proofs = await listInvoicePaymentProofs(brokerInvoiceIds)
+  const latestByInvoiceId = new Map<string, InvoicePaymentProofRow>()
+
+  proofs.forEach((proof) => {
+    if (!latestByInvoiceId.has(proof.invoice_id)) {
+      latestByInvoiceId.set(proof.invoice_id, proof)
+    }
+  })
+
+  rows.forEach((invoice) => {
+    if (invoice.invoice_type === 'broker') {
+      invoice.latest_payment_proof = latestByInvoiceId.get(invoice.id) ?? null
+    }
+  })
+}
+
+const loadBrokerQualifiedDeals = async (brokerId: string | null) => {
+  qualifiedDeals.value = []
+  qualifiedDealCenterIdMap.value = new Map()
+  qualifiedDealVendorNameMap.value = new Map()
+  qualifiedDealLawyerNameMap.value = new Map()
+  dealStateMap.value = new Map()
+
+  let leadQuery = supabase
+    .from('leads')
+    .select('id,submission_id,customer_full_name,phone_number,state,lead_vendor,created_at,assigned_broker_attorney_id,broker_invoice_id')
+    .eq('is_active', true)
+    .eq('status', 'qualified_payable')
+    .is('broker_invoice_id', null)
+    .order('created_at', { ascending: false })
+    .limit(2000)
+
+  if (filterDateStart.value) {
+    leadQuery = leadQuery.gte('created_at', filterDateStart.value)
+  }
+
+  const { data: leadData, error: leadError } = await leadQuery
+  if (leadError) throw new Error(leadError.message)
+
+  const leadRows = (leadData ?? []) as BrokerQualifiedLeadRow[]
+  const attorneyIds = [...new Set(
+    leadRows
+      .map(lead => lead.assigned_broker_attorney_id)
+      .filter((id): id is string => Boolean(id))
+  )]
+  const attorneyNameMap = new Map<string, string>()
+  const attorneyBrokerIdMap = new Map<string, string>()
+  const brokerNameMap = new Map<string, string>()
+
+  if (attorneyIds.length) {
+    let attorneyQuery = supabase
+      .from('broker_attorneys')
+      .select('id,broker_id,attorney_name,firm_name')
+      .in('id', attorneyIds)
+
+    if (brokerId) {
+      attorneyQuery = attorneyQuery.eq('broker_id', brokerId)
+    }
+
+    const { data: attorneys } = await attorneyQuery
+
+    const brokerIds = new Set<string>()
+
+    for (const attorney of (attorneys ?? []) as Array<{ id: string | null, broker_id: string | null, attorney_name: string | null, firm_name: string | null }>) {
+      if (!attorney.id) continue
+      const name = [attorney.attorney_name, attorney.firm_name]
+        .map(value => value?.trim())
+        .filter(Boolean)
+        .join(' - ')
+      if (name) attorneyNameMap.set(attorney.id, name)
+      if (attorney.broker_id) {
+        attorneyBrokerIdMap.set(attorney.id, attorney.broker_id)
+        brokerIds.add(attorney.broker_id)
+      }
+    }
+
+    if (brokerIds.size) {
+      const { data: brokers } = await supabase
+        .from('broker_profiles')
+        .select('user_id,company_name,full_name,primary_email')
+        .in('user_id', [...brokerIds])
+
+      for (const broker of (brokers ?? []) as Array<{ user_id: string | null, company_name: string | null, full_name: string | null, primary_email: string | null }>) {
+        if (!broker.user_id) continue
+        const name = String(broker.company_name || broker.full_name || broker.primary_email || '').trim()
+        if (name) brokerNameMap.set(broker.user_id, name)
+      }
+    }
+  }
+
+  qualifiedDealLawyerNameMap.value = attorneyNameMap
+  qualifiedDeals.value = leadRows.flatMap((lead) => {
+    const attorneyId = lead.assigned_broker_attorney_id
+    const resolvedBrokerId = attorneyId ? attorneyBrokerIdMap.get(attorneyId) : null
+    if (!resolvedBrokerId) return []
+
+    return [{
+      id: lead.id,
+      submission_id: lead.submission_id,
+      insured_name: lead.customer_full_name,
+      client_phone_number: lead.phone_number,
+      state: lead.state,
+      lead_vendor: lead.lead_vendor,
+      payment_status: null,
+      assigned_attorney_id: lead.assigned_broker_attorney_id,
+      invoice_id: lead.broker_invoice_id,
+      publisher_invoice_id: null,
+      created_at: lead.created_at,
+      broker_id: resolvedBrokerId,
+      broker_name: brokerNameMap.get(resolvedBrokerId) ?? null,
+      broker_attorney_name: attorneyId ? attorneyNameMap.get(attorneyId) ?? null : null,
+      broker_invoice_id: lead.broker_invoice_id
+    }]
+  })
+}
+
+const enrichBrokerInvoices = async (rows: InvoiceListRow[]) => {
+  const brokerIds = [...new Set(rows.map(invoice => invoice.broker_id).filter((id): id is string => Boolean(id)))]
+  const brokerNameMap = new Map<string, string>()
+
+  if (brokerIds.length) {
+    const { data: brokers, error: brokerError } = await supabase
+      .from('broker_profiles')
+      .select('user_id,company_name,full_name,primary_email')
+      .in('user_id', brokerIds)
+
+    if (brokerError) {
+      if (!isBrokerWorkspace.value) throw new Error(brokerError.message)
+      console.warn('enrichBrokerInvoices: failed to load broker names', brokerError.message)
+    }
+
+    for (const broker of (brokers ?? []) as Array<{ user_id: string | null, company_name: string | null, full_name: string | null, primary_email: string | null }>) {
+      if (!broker.user_id) continue
+      const name = String(broker.company_name || broker.full_name || broker.primary_email || '').trim()
+      if (name) brokerNameMap.set(broker.user_id, name)
+    }
+  }
+
+  rows.forEach((invoice) => {
+    invoice.broker_name = invoice.broker_id ? brokerNameMap.get(invoice.broker_id) ?? null : null
+  })
+
+  const leadIds = [...new Set(rows.flatMap(invoice => invoice.deal_ids ?? []).filter(Boolean))]
+  if (!leadIds.length) {
+    dealStateMap.value = new Map()
+    return
+  }
+
+  const { data: leads, error: leadError } = await supabase
+    .from('leads')
+    .select('id,customer_full_name,state')
+    .in('id', leadIds)
+
+  if (leadError) throw new Error(leadError.message)
+
+  const leadRows = (leads ?? []) as Array<{ id: string; customer_full_name: string | null; state: string | null }>
+  const nameMap = new Map(leadRows.map(lead => [String(lead.id), String(lead.customer_full_name ?? '').trim()]))
+  dealStateMap.value = new Map(leadRows.map(lead => [String(lead.id), normalizeState(lead.state ?? '')]))
+
+  rows.forEach((invoice) => {
+    const names = (invoice.deal_ids ?? [])
+      .map(id => nameMap.get(String(id)) ?? '')
+      .map(name => name.trim())
+      .filter(Boolean)
+    invoice.lead_names = [...new Set(names)].join(' · ')
+  })
+}
+
 const load = async () => {
   const seq = ++loadSeq.value
-  const modeAtStart = isPublisherMode.value
+  const modeAtStart = `${isPublisherMode.value}:${isBrokerBoard.value}`
   loading.value = true
   error.value = null
 
   try {
     await auth.init()
-    const userId = auth.state.value.user?.id ?? null
+    const userId = auth.state.value.brokerContext?.broker_id ?? auth.state.value.user?.id ?? null
     const role = auth.state.value.profile?.role ?? null
+    const isBroker = isBrokerWorkspace.value
+    const brokerBoard = isBrokerBoard.value
 
     const filters: { lawyer_id?: string; broker_id?: string; status?: InvoiceStatus; invoice_type?: InvoiceType } = {}
 
-    if (role === 'broker' && userId) {
+    if (brokerBoard) {
       filters.invoice_type = 'broker'
-      filters.broker_id = userId
+      if (isBroker && userId) {
+        filters.broker_id = userId
+      }
     } else if (isPublisherMode.value) {
       filters.invoice_type = 'publisher'
     } else {
@@ -734,14 +1165,14 @@ const load = async () => {
     }
 
     const data = (await listInvoices(filters)) as InvoiceListRow[]
+    await hydrateLatestPaymentProofs(data)
 
-    if (role === 'broker') {
-      qualifiedDeals.value = []
-      qualifiedDealCenterIdMap.value = new Map()
-      qualifiedDealVendorNameMap.value = new Map()
-      qualifiedDealLawyerNameMap.value = new Map()
-      dealStateMap.value = new Map()
-      invoices.value = data
+    if (brokerBoard) {
+      await loadBrokerQualifiedDeals(isBroker ? userId : null)
+      await enrichBrokerInvoices(data)
+      if (seq === loadSeq.value && modeAtStart === `${isPublisherMode.value}:${isBrokerBoard.value}`) {
+        invoices.value = data
+      }
       return
     }
 
@@ -917,7 +1348,7 @@ const load = async () => {
     }
 
     // Ignore stale loads when route mode changes quickly (prevents brief UI flash)
-    if (seq === loadSeq.value && modeAtStart === isPublisherMode.value) {
+    if (seq === loadSeq.value && modeAtStart === `${isPublisherMode.value}:${isBrokerBoard.value}`) {
       invoices.value = data
     }
   } catch (e) {
@@ -930,7 +1361,7 @@ const load = async () => {
   }
 }
 
-watch(isPublisherMode, () => {
+watch([isPublisherMode, isBrokerBoard], () => {
   // Reset mode-specific UI state to avoid showing the wrong mode briefly
   invoices.value = []
   qualifiedDeals.value = []
@@ -988,6 +1419,18 @@ watch(calendarRange, (range) => {
 }, { deep: true })
 
 const openQualifiedDeal = (deal: QualifiedDealRow) => {
+  if (isBrokerBoard.value) {
+    if (canCreateInvoice.value) {
+      const qs = new URLSearchParams({ mode: 'broker', lead_id: deal.id })
+      if (deal.broker_id) qs.set('broker_id', deal.broker_id)
+      router.push(`/invoicing/create?${qs.toString()}`)
+      return
+    }
+
+    openLeadDetails(deal)
+    return
+  }
+
   if (isPublisherMode.value) {
     const centerId = deal.lead_vendor ? (qualifiedDealCenterIdMap.value.get(deal.lead_vendor) ?? null) : null
     const qs = new URLSearchParams({ mode: 'publisher', deal_id: deal.id, quick: '1' })
@@ -1050,11 +1493,20 @@ const confirmDeleteInvoice = async () => {
 }
 
 const editInvoice = (invoice: InvoiceRow) => {
-  const mode = isPublisherMode.value ? 'publisher' : 'lawyer'
+  const mode = invoice.invoice_type === 'broker' ? 'broker' : isPublisherMode.value ? 'publisher' : 'lawyer'
   router.push(`/invoicing/edit/${invoice.id}?mode=${mode}`)
 }
 
 const handleMarkAsPaid = async (invoice: InvoiceRow & { lawyer_name?: string | null }) => {
+  if (invoice.invoice_type === 'broker') {
+    if (!canSubmitBrokerPaymentProofForInvoice(invoice)) {
+      error.value = 'Payment proof can be uploaded by the broker or a super admin.'
+      return
+    }
+    openBrokerPaidConfirm(invoice as InvoiceListRow)
+    return
+  }
+
   try {
     const updated = await markInvoiceAsPaid(invoice.id)
     const idx = invoices.value.findIndex(i => i.id === invoice.id)
@@ -1128,20 +1580,20 @@ watch(pageCount, () => {
         <template #right>
           <div class="flex items-center gap-2">
             <ProductGuideHint
-              v-if="isAdminOrSuper"
+              v-if="canCreateInvoice"
               :title="invoicingHints.createInvoice.title"
               :description="invoicingHints.createInvoice.description"
               :guide-target="invoicingHints.createInvoice.guideTarget"
             />
             <UButton
-              v-if="isAdminOrSuper"
+              v-if="canCreateInvoice"
               color="primary"
               icon="i-lucide-plus"
               size="sm"
               class="rounded-lg"
               @click="createInvoice"
             >
-              {{ isPublisherMode ? 'Create Publisher Invoice' : 'Create Invoice' }}
+              {{ createInvoiceLabel }}
             </UButton>
 
             <UButton
@@ -1554,6 +2006,87 @@ watch(pageCount, () => {
           </template>
         </UModal>
 
+        <UModal
+          :open="brokerPaidConfirmOpen"
+          title="Confirm Payment"
+          :dismissible="false"
+          @update:open="(open) => { if (!open) closeBrokerPaidConfirm() }"
+        >
+          <template #body>
+            <div class="space-y-5">
+              <div class="flex items-start gap-3">
+                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-500/10">
+                  <UIcon name="i-lucide-image-up" class="text-lg text-green-400" />
+                </div>
+                <div>
+                  <p class="text-sm font-medium text-highlighted">
+                    Upload payment confirmation
+                  </p>
+                  <p class="mt-0.5 text-sm text-muted">
+                    Add a screenshot or image before moving
+                    <span class="font-semibold text-highlighted">{{ brokerPaidTarget?.invoice_number }}</span>
+                    to Paid Successfully (Done).
+                  </p>
+                </div>
+              </div>
+
+              <UFormField label="Payment proof image" required :error="brokerPaidFileError">
+                <input
+                  ref="brokerPaidFileInput"
+                  type="file"
+                  class="hidden"
+                  :accept="INVOICE_PAYMENT_PROOF_ACCEPT"
+                  :disabled="brokerPaidBusy"
+                  @change="handleBrokerPaidProofSelected"
+                >
+                <div class="flex min-w-0 gap-2">
+                  <button
+                    type="button"
+                    class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-green-500/30 px-3 py-2 text-xs font-medium text-muted transition hover:border-green-500/60 hover:text-green-400 disabled:pointer-events-none disabled:opacity-50"
+                    :disabled="brokerPaidBusy"
+                    @click="openBrokerPaidFilePicker"
+                  >
+                    <UIcon name="i-lucide-upload" class="size-4 text-green-400" />
+                    <span class="truncate">{{ brokerPaidFileLabel }}</span>
+                  </button>
+                  <UButton
+                    v-if="brokerPaidFile"
+                    icon="i-lucide-x"
+                    color="neutral"
+                    variant="ghost"
+                    size="sm"
+                    :disabled="brokerPaidBusy"
+                    @click="clearBrokerPaidFile"
+                  />
+                </div>
+                <p class="mt-2 text-[11px] text-muted">
+                  Accepted formats: PNG, JPG, WebP. Max 10MB.
+                </p>
+              </UFormField>
+
+              <div class="flex justify-end gap-2">
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  :disabled="brokerPaidBusy"
+                  @click="() => closeBrokerPaidConfirm()"
+                >
+                  Cancel
+                </UButton>
+                <UButton
+                  color="success"
+                  icon="i-lucide-check"
+                  :loading="brokerPaidBusy"
+                  :disabled="!brokerPaidFile || Boolean(brokerPaidFileError)"
+                  @click="confirmBrokerPaid"
+                >
+                  Mark paid
+                </UButton>
+              </div>
+            </div>
+          </template>
+        </UModal>
+
         <!-- Loading -->
         <div v-if="loading && !invoices.length" class="flex flex-1 items-center justify-center p-12">
           <div class="flex flex-col items-center gap-3">
@@ -1571,16 +2104,16 @@ watch(pageCount, () => {
             <div>
               <p class="text-sm font-medium text-highlighted">No invoices yet</p>
               <p class="mt-1 text-xs text-muted">
-                {{ isAdminOrSuper ? 'Create your first invoice to get started' : 'No invoices have been created for you yet' }}
+                {{ canCreateInvoice ? 'Create your first invoice to get started' : 'No invoices have been created for you yet' }}
               </p>
             </div>
             <UButton
-              v-if="isAdminOrSuper"
+              v-if="canCreateInvoice"
               color="primary"
               icon="i-lucide-plus"
               @click="createInvoice"
             >
-              {{ isPublisherMode ? 'Create Publisher Invoice' : 'Create Invoice' }}
+              {{ createInvoiceLabel }}
             </UButton>
           </div>
         </div>
@@ -1609,7 +2142,7 @@ watch(pageCount, () => {
                     <UIcon :name="getStatusIcon(status)" class="text-xs" :class="getStatusColorClass(status)" />
                   </div>
                   <div class="flex items-center gap-1.5">
-                    <span class="text-sm font-semibold text-highlighted">{{ getStatusLabel(status) }}</span>
+                    <span class="text-sm font-semibold text-highlighted">{{ getKanbanStatusLabel(status) }}</span>
                     <ProductGuideHint
                       :title="getKanbanGuideHint(status).title"
                       :description="getKanbanGuideHint(status).description"
@@ -1662,7 +2195,12 @@ watch(pageCount, () => {
                     </div>
                     </div>
                     <div v-if="!isPublisherMode" class="truncate text-[11px] text-muted">
-                      Attorney: {{ qualifiedDealLawyerNameMap.get(String(deal.assigned_attorney_id ?? '')) || 'Unassigned' }}
+                      <template v-if="isBrokerBoard">
+                        {{ deal.broker_name || 'Unknown broker' }} · {{ deal.broker_attorney_name || 'Unknown attorney' }}
+                      </template>
+                      <template v-else>
+                        Attorney: {{ qualifiedDealLawyerNameMap.get(String(deal.assigned_attorney_id ?? '')) || 'Unassigned' }}
+                      </template>
                     </div>
                   </div>
 
@@ -1670,10 +2208,10 @@ watch(pageCount, () => {
                   <div class="mt-auto flex justify-end pt-2.5">
                     <button
                       class="rounded-md border border-[var(--ap-accent)]/20 bg-[var(--ap-accent)]/10 px-2.5 py-1 text-[10px] font-semibold text-[var(--ap-accent)] opacity-0 transition-all hover:bg-[var(--ap-accent)]/20 group-hover:opacity-100"
-                      title="Create Invoice"
+                      :title="qualifiedLeadActionTitle"
                       @click.stop="openQualifiedDeal(deal)"
                     >
-                      + Create Invoice
+                      {{ qualifiedLeadActionLabel }}
                     </button>
                   </div>
                 </div>
@@ -1708,7 +2246,7 @@ watch(pageCount, () => {
                   <div class="mt-2 flex items-start justify-between gap-2">
                     <div class="min-w-0 space-y-0.5">
                       <div v-if="isAdminOrSuper" class="truncate text-[11px] text-muted">
-                        {{ isPublisherMode ? invoice.vendor_name : invoice.lawyer_name }}
+                        {{ getInvoicePartyName(invoice) }}
                       </div>
                       <div v-if="invoice.lead_names" class="truncate text-[11px] text-muted">
                         {{ invoice.lead_names }}
@@ -1716,7 +2254,7 @@ watch(pageCount, () => {
                     </div>
                     <div class="flex shrink-0 items-center gap-1.5">
                       <button
-                        v-if="getDisplayStatus(invoice) === 'in_review'"
+                        v-if="getDisplayStatus(invoice) === 'in_review' && (invoice.invoice_type !== 'broker' || canSubmitBrokerPaymentProofForInvoice(invoice))"
                         class="rounded-md border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-[10px] font-semibold text-green-400 opacity-0 transition-all hover:bg-green-500/20 group-hover:opacity-100"
                         title="Mark as Paid"
                         @click.stop="handleMarkAsPaid(invoice)"
@@ -1757,6 +2295,17 @@ watch(pageCount, () => {
                         <span>{{ invoice.items?.length ?? 0 }} item{{ (invoice.items?.length ?? 0) === 1 ? '' : 's' }} · Created {{ formatDate(invoice.created_at) }}</span>
                       </div>
                     </div>
+
+                    <button
+                      v-if="invoice.latest_payment_proof"
+                      type="button"
+                      class="inline-flex w-fit items-center gap-1.5 rounded-md border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-[10px] font-semibold text-green-400 transition-all hover:bg-green-500/20"
+                      title="Open payment proof"
+                      @click.stop="openPaymentProof(invoice)"
+                    >
+                      <UIcon name="i-lucide-image" class="text-xs" />
+                      Payment proof
+                    </button>
 
                     <!-- Actions row -->
                     <div class="flex items-center justify-end gap-1.5">
@@ -1799,7 +2348,7 @@ watch(pageCount, () => {
               <thead class="sticky top-0 z-10">
                 <tr class="border-b border-black/[0.06] dark:border-white/[0.08] bg-white/80 dark:bg-[#151515]/80 backdrop-blur-xl">
                   <th class="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-muted whitespace-nowrap">Invoice #</th>
-                  <th v-if="isAdminOrSuper" class="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-muted whitespace-nowrap">{{ isPublisherMode ? 'Vendor' : 'Lawyer' }}</th>
+                  <th v-if="isAdminOrSuper" class="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-muted whitespace-nowrap">{{ invoicePartyHeader }}</th>
                   <th class="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-muted whitespace-nowrap">Date Range</th>
                   <th class="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-muted whitespace-nowrap">Amount</th>
                   <th class="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-muted whitespace-nowrap">Due Date</th>
@@ -1820,7 +2369,7 @@ watch(pageCount, () => {
                     </span>
                   </td>
                   <td v-if="isAdminOrSuper" class="px-5 py-3.5">
-                    <span class="text-sm text-default">{{ isPublisherMode ? (invoice.vendor_name ?? '—') : (invoice.lawyer_name ?? '—') }}</span>
+                    <span class="text-sm text-default">{{ getInvoicePartyName(invoice) }}</span>
                   </td>
                   <td class="px-5 py-3.5">
                     <span class="text-sm text-default">{{ formatDate(invoice.date_range_start) }} - {{ formatDate(invoice.date_range_end) }}</span>
@@ -1849,7 +2398,7 @@ watch(pageCount, () => {
                   <td class="px-5 py-3.5">
                     <div class="flex items-center justify-center gap-1.5 whitespace-nowrap">
                       <button
-                        v-if="getDisplayStatus(invoice) === 'in_review'"
+                        v-if="getDisplayStatus(invoice) === 'in_review' && (invoice.invoice_type !== 'broker' || canSubmitBrokerPaymentProofForInvoice(invoice))"
                         class="inline-flex items-center gap-1 rounded-lg border border-green-500/20 bg-green-500/10 px-2.5 py-1 text-xs font-medium text-green-400 transition-all hover:bg-green-500/20"
                         @click.stop="handleMarkAsPaid(invoice)"
                       >
@@ -1863,6 +2412,14 @@ watch(pageCount, () => {
                       >
                         <UIcon name="i-lucide-alert-triangle" class="text-xs" />
                         Chargeback
+                      </button>
+                      <button
+                        v-if="invoice.latest_payment_proof"
+                        class="inline-flex items-center gap-1 rounded-lg border border-green-500/20 bg-green-500/10 px-2.5 py-1 text-xs font-medium text-green-400 transition-all hover:bg-green-500/20"
+                        @click.stop="openPaymentProof(invoice)"
+                      >
+                        <UIcon name="i-lucide-image" class="text-xs" />
+                        Proof
                       </button>
                       <button
                         v-if="isAdminOrSuper"

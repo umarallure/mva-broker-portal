@@ -134,7 +134,7 @@ const handlePrint = () => {
 }
 
 const handleMarkAsPaid = async () => {
-  if (!invoice.value || invoice.value.status !== 'pending') return
+  if (!invoice.value || invoice.value.status !== 'in_review' || isBrokerInvoice.value) return
   markingPaid.value = true
   markPaidError.value = null
   try {
@@ -282,7 +282,7 @@ onMounted(async () => {
       <!-- Action Buttons (hidden on print) -->
       <div class="print-actions no-print">
         <button
-          v-if="invoice.status === 'in_review'"
+          v-if="invoice.status === 'in_review' && !isBrokerInvoice"
           class="mark-paid-btn"
           :disabled="markingPaid"
           @click="handleMarkAsPaid"
@@ -323,7 +323,12 @@ onMounted(async () => {
             :disabled="requestingChargeback"
           />
           <div class="broker-drop-actions">
-            <button type="button" class="broker-drop-cancel" :disabled="requestingChargeback" @click="closeBrokerDropConfirm">
+            <button
+              type="button"
+              class="broker-drop-cancel"
+              :disabled="requestingChargeback"
+              @click="closeBrokerDropConfirm"
+            >
               Cancel
             </button>
             <button
