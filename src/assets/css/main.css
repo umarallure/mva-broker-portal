@@ -57,10 +57,6 @@ body {
   font-family: var(--font-sans);
 }
 
-html {
-  scrollbar-gutter: stable;
-}
-
 /* Prevent content shift when scrollbar appears/disappears inside dashboard panels */
 [id$="-panel-settings"] > [data-slot="body"] {
   scrollbar-gutter: stable;
