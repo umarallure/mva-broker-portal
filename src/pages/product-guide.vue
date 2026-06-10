@@ -70,6 +70,11 @@ const getQueryValue = (value: unknown) => {
   return typeof value === 'string' ? value : null
 }
 
+const getErrorMessage = (error: unknown, fallback = 'Unexpected error') => {
+  if (error instanceof Error) return error.message
+  return typeof error === 'string' ? error : fallback
+}
+
 const applyGuideRouteSelection = () => {
   const sectionRef = getQueryValue(route.query[PRODUCT_GUIDE_SECTION_QUERY_KEY])
   if (!sectionRef || !guide.sections.value.length) return
@@ -197,10 +202,10 @@ const handlePopulateGuide = async () => {
       description: `Imported ${createdSections.length} sections and ${topicCount} topics from the step-by-step guide template.`,
       color: 'success'
     })
-  } catch (e: any) {
+  } catch (error: unknown) {
     toast.add({
       title: 'Import failed',
-      description: e.message,
+      description: getErrorMessage(error),
       color: 'error'
     })
   } finally {
@@ -261,8 +266,8 @@ const onDropSection = async (e: DragEvent, targetId: string) => {
 
   try {
     await guide.reorderSections(ids)
-  } catch (err: any) {
-    toast.add({ title: 'Reorder failed', description: err.message, color: 'error' })
+  } catch (error: unknown) {
+    toast.add({ title: 'Reorder failed', description: getErrorMessage(error), color: 'error' })
     await guide.load()
   }
 }
@@ -290,8 +295,8 @@ const onDropTopic = async (e: DragEvent, sectionId: string, targetId: string) =>
 
   try {
     await guide.reorderTopics(sectionId, ids)
-  } catch (err: any) {
-    toast.add({ title: 'Reorder failed', description: err.message, color: 'error' })
+  } catch (error: unknown) {
+    toast.add({ title: 'Reorder failed', description: getErrorMessage(error), color: 'error' })
     await guide.load()
   }
 }
@@ -316,8 +321,8 @@ const handleSectionSubmit = async (payload: { title: string; icon: string; sort_
       toast.add({ title: 'Section created', color: 'success' })
     }
     sectionModalOpen.value = false
-  } catch (e: any) {
-    toast.add({ title: 'Error', description: e.message, color: 'error' })
+  } catch (error: unknown) {
+    toast.add({ title: 'Error', description: getErrorMessage(error), color: 'error' })
   } finally {
     modalLoading.value = false
   }
@@ -385,11 +390,11 @@ const handleTopicSubmit = async (payload: {
       toast.add({ title: 'Topic created', color: 'success' })
     }
     topicModalOpen.value = false
-  } catch (e: any) {
+  } catch (error: unknown) {
     if (uploadedMediaUrl) {
       await cleanupMediaUrls([uploadedMediaUrl], 'The topic could not be saved and the new upload cleanup was only partially successful')
     }
-    toast.add({ title: 'Error', description: e.message, color: 'error' })
+    toast.add({ title: 'Error', description: getErrorMessage(error), color: 'error' })
   } finally {
     modalLoading.value = false
   }
@@ -425,8 +430,8 @@ const handleDelete = async () => {
     }
     toast.add({ title: `${deleteTarget.value.type === 'section' ? 'Section' : 'Topic'} deleted`, color: 'success' })
     deleteModalOpen.value = false
-  } catch (e: any) {
-    toast.add({ title: 'Error', description: e.message, color: 'error' })
+  } catch (error: unknown) {
+    toast.add({ title: 'Error', description: getErrorMessage(error), color: 'error' })
   } finally {
     modalLoading.value = false
   }

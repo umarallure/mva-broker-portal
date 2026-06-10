@@ -11,8 +11,12 @@ import {
   INSURANCE_OPTIONS,
   LANGUAGE_OPTIONS,
   LIABILITY_OPTIONS,
+  MIN_COVERAGE_STATE_BID,
   MEDICAL_TREATMENT_OPTIONS,
+  formatCoverageStateBid,
+  isValidCoverageStateBid,
   listBrokerAttorneys,
+  normalizeCoverageStateBids,
   normalizeCoverageStateTraffic,
   updateBrokerAttorneyCoverage,
   type BrokerAttorneyRow,
@@ -21,6 +25,7 @@ import {
   type CoverageLiabilityStatus,
   type CoverageMedicalTreatment,
   type CoverageSolCriteria,
+  type CoverageStateBids,
   type CoverageStateTraffic,
   type CoverageTrafficLevel
 } from '../lib/broker-attorneys'
@@ -30,6 +35,7 @@ type CoverageForm = {
   broker_attorney_id: string
   coverage_states: string[]
   coverage_state_traffic: CoverageStateTraffic
+  coverage_state_bids: CoverageStateBids
   coverage_case_category: CoverageCaseCategory
   coverage_sol_criteria: CoverageSolCriteria
   coverage_liability_status: CoverageLiabilityStatus
@@ -47,6 +53,7 @@ const toast = useToast()
 const loading = ref(true)
 const saving = ref(false)
 const coverageOpen = ref(false)
+const biddingOpen = ref(false)
 const attorneys = ref<BrokerAttorneyRow[]>([])
 const selectedAttorneyId = ref('')
 const mapRoot = ref<HTMLDivElement | null>(null)
@@ -74,6 +81,7 @@ const coverageForm = ref<CoverageForm>({
   broker_attorney_id: '',
   coverage_states: [],
   coverage_state_traffic: {},
+  coverage_state_bids: {},
   coverage_case_category: 'Consumer Cases',
   coverage_sol_criteria: '6_12_months',
   coverage_liability_status: 'clear_only',
@@ -104,22 +112,38 @@ const selectedAttorney = computed(() =>
   attorneys.value.find(attorney => attorney.id === selectedAttorneyId.value) ?? null
 )
 const hasAttorneyView = computed(() => isAllAttorneysSelected.value || Boolean(selectedAttorney.value))
+const activeEditorOpen = computed(() => coverageOpen.value || biddingOpen.value)
+const draftIsActiveForSelectedAttorney = () =>
+  activeEditorOpen.value && coverageForm.value.broker_attorney_id === selectedAttorney.value?.id
 
 const getStateName = (code: string) => US_STATES.find(state => state.code === code)?.name ?? code
 const getTrafficLevel = (
   traffic: CoverageStateTraffic | null | undefined,
   stateCode: string
 ): CoverageTrafficLevel => traffic?.[normalizeStateCode(stateCode)] === 'high' ? 'high' : 'moderate'
+const getCoverageStateBid = (
+  bids: CoverageStateBids | null | undefined,
+  stateCode: string
+) => {
+  const bid = Number(bids?.[normalizeStateCode(stateCode)])
+  return Number.isFinite(bid) ? bid : MIN_COVERAGE_STATE_BID
+}
 
 const coverageFormStateRows = computed(() =>
   coverageForm.value.coverage_states
     .map(code => ({
       code,
       name: getStateName(code),
-      traffic: getTrafficLevel(coverageForm.value.coverage_state_traffic, code)
+      traffic: getTrafficLevel(coverageForm.value.coverage_state_traffic, code),
+      bid: getCoverageStateBid(coverageForm.value.coverage_state_bids, code)
     }))
     .sort((a, b) => a.name.localeCompare(b.name))
 )
+
+const invalidBidRows = computed(() =>
+  coverageFormStateRows.value.filter(row => !isValidCoverageStateBid(row.bid))
+)
+const hasInvalidCoverageStateBids = computed(() => invalidBidRows.value.length > 0)
 
 const networkTrafficByState = computed(() => {
   const trafficByState = new Map<string, CoverageTrafficLevel>()
@@ -148,6 +172,21 @@ const selectedAttorneyTrafficByState = computed(() => {
   })
 
   return trafficByState
+})
+
+const selectedAttorneyBidsByState = computed(() => {
+  const bidsByState = new Map<string, number>()
+  const attorney = selectedAttorney.value
+  if (!attorney) return bidsByState
+
+  const normalizedBids = normalizeCoverageStateBids(attorney.coverage_state_bids, attorney.coverage_states)
+  ;(attorney.coverage_states ?? []).forEach(code => {
+    const normalized = normalizeStateCode(code)
+    if (!normalized) return
+    bidsByState.set(normalized, getCoverageStateBid(normalizedBids, normalized))
+  })
+
+  return bidsByState
 })
 
 const visibleTrafficByState = computed(() =>
@@ -181,7 +220,8 @@ const focusedState = computed(() => {
     code,
     name: getStateName(code),
     covered,
-    traffic: getTrafficLevel(coverageForm.value.coverage_state_traffic, code)
+    traffic: getTrafficLevel(coverageForm.value.coverage_state_traffic, code),
+    bid: getCoverageStateBid(coverageForm.value.coverage_state_bids, code)
   }
 })
 
@@ -199,6 +239,7 @@ const hydrateCoverageForm = (attorney: BrokerAttorneyRow) => {
     broker_attorney_id: attorney.id,
     coverage_states: coverageStates,
     coverage_state_traffic: normalizeCoverageStateTraffic(attorney.coverage_state_traffic, coverageStates),
+    coverage_state_bids: normalizeCoverageStateBids(attorney.coverage_state_bids, coverageStates),
     coverage_case_category: attorney.coverage_case_category ?? 'Consumer Cases',
     coverage_sol_criteria: normalizeCoverageSolCriteria(attorney.coverage_sol_criteria),
     coverage_liability_status: attorney.coverage_liability_status ?? 'clear_only',
@@ -227,11 +268,11 @@ const applyMapColors = async () => {
 
   root.querySelectorAll<SVGPathElement>('path[data-id]').forEach((path) => {
     const code = normalizeStateCode(path.dataset.id)
-    const draftIsActive = coverageOpen.value && coverageForm.value.broker_attorney_id === selectedAttorney.value?.id
+    const draftIsActive = draftIsActiveForSelectedAttorney()
     const traffic = draftIsActive
       ? (coverageForm.value.coverage_states.includes(code) ? getTrafficLevel(coverageForm.value.coverage_state_traffic, code) : null)
       : (visibleTrafficByState.value.get(code) ?? null)
-    const isFocused = coverageOpen.value && focusedStateCode.value === code
+    const isFocused = activeEditorOpen.value && focusedStateCode.value === code
     const fill = traffic ? TRAFFIC_COLOR[traffic] : TRAFFIC_COLOR.none
 
     path.style.fill = fill
@@ -243,6 +284,16 @@ const applyMapColors = async () => {
   })
 
   applyStateLabels()
+}
+
+const getMapStateBid = (code: string, draftIsActive: boolean) => {
+  if (isAllAttorneysSelected.value) return null
+  if (draftIsActive) {
+    return coverageForm.value.coverage_states.includes(code)
+      ? getCoverageStateBid(coverageForm.value.coverage_state_bids, code)
+      : null
+  }
+  return selectedAttorneyBidsByState.value.get(code) ?? null
 }
 
 const applyStateLabels = () => {
@@ -272,9 +323,13 @@ const applyStateLabels = () => {
     const cx = bbox.x + bbox.width / 2
     const cy = bbox.y + bbox.height / 2
     const fontSize = Math.max(7, Math.min(14, Math.min(bbox.width, bbox.height) / 4))
+    const draftIsActive = draftIsActiveForSelectedAttorney()
+    const bid = getMapStateBid(code, draftIsActive)
+    const showBid = bid !== null && (draftIsActive
+      ? coverageForm.value.coverage_states.includes(code)
+      : selectedAttorneyTrafficByState.value.has(code))
 
     const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-    text.textContent = code
     text.setAttribute('x', String(cx))
     text.setAttribute('y', String(cy))
     text.setAttribute('text-anchor', 'middle')
@@ -287,6 +342,25 @@ const applyStateLabels = () => {
     text.style.setProperty('stroke', 'rgba(255,255,255,0.92)', 'important')
     text.style.setProperty('stroke-width', '2', 'important')
     text.style.setProperty('stroke-linejoin', 'round', 'important')
+
+    if (showBid) {
+      const codeLine = document.createElementNS('http://www.w3.org/2000/svg', 'tspan')
+      codeLine.textContent = code
+      codeLine.setAttribute('x', String(cx))
+      codeLine.setAttribute('dy', `${-fontSize * 0.24}`)
+
+      const bidLine = document.createElementNS('http://www.w3.org/2000/svg', 'tspan')
+      bidLine.textContent = formatCoverageStateBid(bid)
+      bidLine.setAttribute('x', String(cx))
+      bidLine.setAttribute('dy', `${fontSize * 0.95}`)
+      bidLine.style.setProperty('font-size', `${Math.max(6, fontSize * 0.68)}px`, 'important')
+      bidLine.style.setProperty('font-weight', '800', 'important')
+
+      text.appendChild(codeLine)
+      text.appendChild(bidLine)
+    } else {
+      text.textContent = code
+    }
 
     g.appendChild(text)
   })
@@ -348,12 +422,47 @@ const openCoverageEditor = () => {
 
   hydrateCoverageForm(selectedAttorney.value)
   focusedStateCode.value = null
+  biddingOpen.value = false
   coverageOpen.value = true
+}
+
+const openBidEditor = () => {
+  if (isAllAttorneysSelected.value) {
+    toast.add({
+      title: 'Select an attorney to edit',
+      description: 'All Attorneys is a read-only network view. Select one attorney before changing state bids.',
+      color: 'warning',
+      icon: 'i-lucide-alert-triangle'
+    })
+    return
+  }
+
+  if (!selectedAttorney.value) {
+    toast.add({
+      title: 'Add an attorney first',
+      description: 'Create a broker-managed attorney profile before adding state bids.',
+      color: 'warning',
+      icon: 'i-lucide-alert-triangle'
+    })
+    return
+  }
+
+  hydrateCoverageForm(selectedAttorney.value)
+  focusedStateCode.value = null
+  coverageOpen.value = false
+  biddingOpen.value = true
 }
 
 const syncCoverageTraffic = () => {
   coverageForm.value.coverage_state_traffic = normalizeCoverageStateTraffic(
     coverageForm.value.coverage_state_traffic,
+    coverageForm.value.coverage_states
+  )
+}
+
+const syncCoverageBids = () => {
+  coverageForm.value.coverage_state_bids = normalizeCoverageStateBids(
+    coverageForm.value.coverage_state_bids,
     coverageForm.value.coverage_states
   )
 }
@@ -369,6 +478,10 @@ const addCoverageState = (stateCode: string) => {
     ...coverageForm.value.coverage_state_traffic,
     [code]: coverageForm.value.coverage_state_traffic[code] ?? 'moderate'
   }, coverageForm.value.coverage_states)
+  coverageForm.value.coverage_state_bids = normalizeCoverageStateBids({
+    ...coverageForm.value.coverage_state_bids,
+    [code]: coverageForm.value.coverage_state_bids[code] ?? MIN_COVERAGE_STATE_BID
+  }, coverageForm.value.coverage_states)
 }
 
 const removeCoverageState = (stateCode: string) => {
@@ -383,6 +496,10 @@ const removeCoverageState = (stateCode: string) => {
   const nextTraffic = { ...coverageForm.value.coverage_state_traffic }
   delete nextTraffic[code]
   coverageForm.value.coverage_state_traffic = normalizeCoverageStateTraffic(nextTraffic, coverageForm.value.coverage_states)
+
+  const nextBids = { ...coverageForm.value.coverage_state_bids }
+  delete nextBids[code]
+  coverageForm.value.coverage_state_bids = normalizeCoverageStateBids(nextBids, coverageForm.value.coverage_states)
 }
 
 const setCoverageTraffic = (stateCode: string, traffic: CoverageTrafficLevel) => {
@@ -393,6 +510,18 @@ const setCoverageTraffic = (stateCode: string, traffic: CoverageTrafficLevel) =>
   coverageForm.value.coverage_state_traffic = normalizeCoverageStateTraffic({
     ...coverageForm.value.coverage_state_traffic,
     [code]: traffic
+  }, coverageForm.value.coverage_states)
+}
+
+const setCoverageStateBid = (stateCode: string, value: unknown) => {
+  const code = normalizeStateCode(stateCode)
+  if (!code) return
+  if (!coverageForm.value.coverage_states.includes(code)) return
+
+  const bid = Number(value)
+  coverageForm.value.coverage_state_bids = normalizeCoverageStateBids({
+    ...coverageForm.value.coverage_state_bids,
+    [code]: Number.isFinite(bid) ? bid : 0
   }, coverageForm.value.coverage_states)
 }
 
@@ -427,13 +556,35 @@ const handleMapClick = (event: MouseEvent) => {
   }
 
   focusedStateCode.value = code
+  if (biddingOpen.value) {
+    if (!coverageForm.value.coverage_states.includes(code)) {
+      toast.add({
+        title: 'Add coverage first',
+        description: `${getStateName(code)} needs to be added to coverage before a bid can be set.`,
+        color: 'warning',
+        icon: 'i-lucide-alert-triangle'
+      })
+    }
+    return
+  }
+
   addCoverageState(code)
   coverageOpen.value = true
 }
 
-const saveCoverage = async () => {
+const saveCoverage = async (mode: 'coverage' | 'bids' = 'coverage') => {
   const attorneyId = coverageForm.value.broker_attorney_id
   if (!attorneyId) return
+
+  if (hasInvalidCoverageStateBids.value) {
+    toast.add({
+      title: 'Update state bids',
+      description: `Each selected state needs a bid of at least ${formatCoverageStateBid(MIN_COVERAGE_STATE_BID)}.`,
+      color: 'warning',
+      icon: 'i-lucide-alert-triangle'
+    })
+    return
+  }
 
   saving.value = true
   try {
@@ -441,6 +592,10 @@ const saveCoverage = async () => {
       coverage_states: coverageForm.value.coverage_states,
       coverage_state_traffic: normalizeCoverageStateTraffic(
         coverageForm.value.coverage_state_traffic,
+        coverageForm.value.coverage_states
+      ),
+      coverage_state_bids: normalizeCoverageStateBids(
+        coverageForm.value.coverage_state_bids,
         coverageForm.value.coverage_states
       ),
       coverage_case_category: coverageForm.value.coverage_case_category,
@@ -456,10 +611,14 @@ const saveCoverage = async () => {
     const index = attorneys.value.findIndex(attorney => attorney.id === updated.id)
     if (index !== -1) attorneys.value[index] = updated
     selectedAttorneyId.value = updated.id
-    coverageOpen.value = false
-    toast.add({ title: 'Coverage saved', color: 'success', icon: 'i-lucide-check' })
+    if (mode === 'bids') {
+      biddingOpen.value = false
+    } else {
+      coverageOpen.value = false
+    }
+    toast.add({ title: mode === 'bids' ? 'State bids saved' : 'Coverage saved', color: 'success', icon: 'i-lucide-check' })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unable to save coverage'
+    const message = err instanceof Error ? err.message : mode === 'bids' ? 'Unable to save state bids' : 'Unable to save coverage'
     toast.add({ title: 'Error', description: message, color: 'error', icon: 'i-lucide-x' })
   } finally {
     saving.value = false
@@ -469,7 +628,7 @@ const saveCoverage = async () => {
 
 watch(selectedAttorneyId, () => {
   focusedStateCode.value = null
-  if (selectedAttorney.value && coverageOpen.value) hydrateCoverageForm(selectedAttorney.value)
+  if (selectedAttorney.value && activeEditorOpen.value) hydrateCoverageForm(selectedAttorney.value)
   applyMapColors()
 })
 
@@ -489,6 +648,7 @@ watch(
   () => coverageForm.value.coverage_states.slice(),
   () => {
     syncCoverageTraffic()
+    syncCoverageBids()
     applyMapColors()
   }
 )
@@ -499,7 +659,18 @@ watch(
   { deep: true }
 )
 
+watch(
+  () => coverageForm.value.coverage_state_bids,
+  () => applyMapColors(),
+  { deep: true }
+)
+
 watch(coverageOpen, (open) => {
+  if (!open) focusedStateCode.value = null
+  applyMapColors()
+})
+
+watch(biddingOpen, (open) => {
   if (!open) focusedStateCode.value = null
   applyMapColors()
 })
@@ -589,6 +760,16 @@ onMounted(loadAttorneys)
               @click="openCoverageEditor"
             >
               Edit Coverage
+            </UButton>
+            <UButton
+              :disabled="!selectedAttorney"
+              icon="i-lucide-dollar-sign"
+              variant="outline"
+              color="neutral"
+              class="rounded-lg"
+              @click="openBidEditor"
+            >
+              Edit Bids
             </UButton>
           </div>
         </div>
@@ -764,6 +945,18 @@ onMounted(loadAttorneys)
                 />
               </UFormField>
 
+              <div class="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-amber-50 px-3 py-2.5 text-amber-950 dark:border-amber-500/20 dark:bg-amber-950/25 dark:text-amber-100">
+                <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/12 text-amber-600 dark:text-amber-300">
+                  <UIcon name="i-lucide-timer" class="size-4" />
+                </div>
+                <div class="min-w-0">
+                  <p class="text-xs font-semibold">State bids are configured separately.</p>
+                  <p class="mt-0.5 text-xs leading-relaxed text-amber-800 dark:text-amber-200/80">
+                    New covered states default to {{ formatCoverageStateBid(MIN_COVERAGE_STATE_BID) }}. Use Edit Bids to adjust per-state priority after coverage is selected.
+                  </p>
+                </div>
+              </div>
+
               <div
                 v-if="focusedState"
                 class="rounded-xl border border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/[0.05] p-3"
@@ -790,6 +983,13 @@ onMounted(loadAttorneys)
                   </div>
 
                   <div class="flex flex-wrap items-center gap-2">
+                    <span
+                      v-if="focusedState.covered"
+                      class="inline-flex items-center gap-1.5 rounded-lg border border-black/[0.08] bg-white/70 px-2.5 py-1.5 text-[11px] font-semibold text-muted dark:border-white/[0.08] dark:bg-white/[0.04]"
+                    >
+                      <UIcon name="i-lucide-dollar-sign" class="size-3.5 text-amber-500" />
+                      {{ formatCoverageStateBid(focusedState.bid) }}
+                    </span>
                     <div class="inline-flex overflow-hidden rounded-lg border border-black/[0.08] bg-white/70 p-0.5 dark:border-white/[0.08] dark:bg-white/[0.04]">
                       <button
                         v-for="option in COVERAGE_TRAFFIC_OPTIONS"
@@ -847,7 +1047,11 @@ onMounted(loadAttorneys)
                       </span>
                       <span class="truncate text-xs font-medium text-highlighted">{{ state.name }}</span>
                     </div>
-                    <div class="flex shrink-0 items-center gap-2">
+                    <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                      <span class="inline-flex items-center gap-1.5 rounded-lg border border-black/[0.08] bg-white/70 px-2.5 py-1.5 text-[11px] font-semibold text-muted dark:border-white/[0.08] dark:bg-white/[0.04]">
+                        <UIcon name="i-lucide-dollar-sign" class="size-3.5 text-amber-500" />
+                        {{ formatCoverageStateBid(state.bid) }}
+                      </span>
                       <div class="inline-flex overflow-hidden rounded-lg border border-black/[0.08] bg-white/70 p-0.5 dark:border-white/[0.08] dark:bg-white/[0.04]">
                         <button
                           v-for="option in COVERAGE_TRAFFIC_OPTIONS"
@@ -992,11 +1196,209 @@ onMounted(loadAttorneys)
               <UButton
                 icon="i-lucide-check"
                 :loading="saving"
-                :disabled="!coverageForm.broker_attorney_id"
+                :disabled="!coverageForm.broker_attorney_id || hasInvalidCoverageStateBids"
                 class="justify-center rounded-lg"
-                @click="saveCoverage"
+                @click="saveCoverage()"
               >
                 Save Coverage
+              </UButton>
+            </div>
+          </div>
+        </template>
+      </UModal>
+
+      <UModal
+        v-model:open="biddingOpen"
+        title="State Bids"
+        description="Edit per-state bid priority for the selected attorney coverage."
+        :dismissible="!saving"
+        :ui="{ content: 'sm:max-w-2xl' }"
+      >
+        <template #body>
+          <div class="space-y-5">
+            <section class="rounded-xl border border-[var(--ap-card-border)] bg-white/70 p-4 dark:bg-white/[0.03]">
+              <div class="grid gap-4 sm:grid-cols-[minmax(0,1fr)_10rem] sm:items-end">
+                <UFormField label="Attorney">
+                  <USelect
+                    v-model="coverageForm.broker_attorney_id"
+                    :items="attorneyOptions"
+                    value-key="value"
+                    label-key="label"
+                    placeholder="Select attorney"
+                    icon="i-lucide-scale"
+                    class="w-full"
+                  />
+                </UFormField>
+
+                <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-hover)] px-3 py-2">
+                  <div class="flex items-center gap-2">
+                    <UIcon name="i-lucide-map-pinned" class="size-4 text-[var(--ap-accent)]" />
+                    <span class="text-[11px] font-medium text-muted">Bid States</span>
+                  </div>
+                  <div class="mt-1 text-2xl font-semibold tabular-nums text-highlighted">
+                    {{ coverageFormStateRows.length }}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="space-y-3">
+              <div class="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-amber-50 px-3 py-2.5 text-amber-950 dark:border-amber-500/20 dark:bg-amber-950/25 dark:text-amber-100">
+                <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/12 text-amber-600 dark:text-amber-300">
+                  <UIcon name="i-lucide-timer" class="size-4" />
+                </div>
+                <div class="min-w-0">
+                  <p class="text-xs font-semibold">Higher state bids are prioritized.</p>
+                  <p class="mt-0.5 text-xs leading-relaxed text-amber-800 dark:text-amber-200/80">
+                    Each covered state needs a bid of at least {{ formatCoverageStateBid(MIN_COVERAGE_STATE_BID) }}.
+                  </p>
+                </div>
+              </div>
+
+              <div
+                v-if="focusedState"
+                class="rounded-xl border border-[var(--ap-accent)]/25 bg-[var(--ap-accent)]/[0.05] p-3"
+              >
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div class="flex min-w-0 items-center gap-2.5">
+                    <div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ap-accent)]/10 text-[var(--ap-accent)]">
+                      <UIcon name="i-lucide-map-pin" class="size-4" />
+                    </div>
+                    <div class="min-w-0">
+                      <p class="text-[10px] font-medium uppercase tracking-wider text-muted">Focused State</p>
+                      <p class="truncate text-sm font-semibold text-highlighted">
+                        {{ focusedState.name }} ({{ focusedState.code }})
+                      </p>
+                    </div>
+                    <span
+                      class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
+                      :class="focusedState.covered
+                        ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                        : 'bg-red-500/10 text-red-500 dark:text-red-400'"
+                    >
+                      {{ focusedState.covered ? 'Covered' : 'No Coverage' }}
+                    </span>
+                  </div>
+
+                  <div
+                    v-if="focusedState.covered"
+                    class="flex w-full items-center gap-2 rounded-lg border border-black/[0.08] bg-white/70 px-2 py-1.5 dark:border-white/[0.08] dark:bg-white/[0.04] sm:w-auto"
+                  >
+                    <span class="shrink-0 text-[11px] font-semibold text-muted">Bid</span>
+                    <UInput
+                      :model-value="focusedState.bid"
+                      type="number"
+                      :min="MIN_COVERAGE_STATE_BID"
+                      :step="1"
+                      icon="i-lucide-dollar-sign"
+                      size="xs"
+                      class="w-full sm:w-36"
+                      :aria-label="`Bid for ${focusedState.name}`"
+                      @update:model-value="setCoverageStateBid(focusedState.code, $event)"
+                    />
+                  </div>
+                </div>
+                <p
+                  v-if="focusedState.covered && !isValidCoverageStateBid(focusedState.bid)"
+                  class="mt-2 text-xs font-medium text-red-500 dark:text-red-400"
+                >
+                  Minimum state bid is {{ formatCoverageStateBid(MIN_COVERAGE_STATE_BID) }}.
+                </p>
+                <p
+                  v-else-if="!focusedState.covered"
+                  class="mt-2 text-xs font-medium text-muted"
+                >
+                  Add this state to coverage before setting a bid.
+                </p>
+              </div>
+
+              <div class="min-h-12 rounded-lg border border-dashed border-[var(--ap-card-border)] bg-[var(--ap-card-hover)] p-3">
+                <div v-if="coverageFormStateRows.length" class="max-h-72 space-y-2 overflow-y-auto pr-1">
+                  <div
+                    v-for="state in coverageFormStateRows"
+                    :key="state.code"
+                    class="flex flex-col gap-2 rounded-lg border border-[var(--ap-card-border)] bg-white/70 px-3 py-2 dark:bg-white/[0.03] sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div class="flex min-w-0 items-center gap-2">
+                      <span
+                        class="flex h-7 w-9 shrink-0 items-center justify-center rounded-md text-[11px] font-bold"
+                        :class="state.traffic === 'high'
+                          ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                          : 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400'"
+                      >
+                        {{ state.code }}
+                      </span>
+                      <div class="min-w-0">
+                        <p class="truncate text-xs font-medium text-highlighted">{{ state.name }}</p>
+                        <p class="text-[10px] font-medium text-muted">
+                          {{ state.traffic === 'high' ? 'High traffic' : 'Moderate traffic' }}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div class="w-full sm:w-40">
+                      <UInput
+                        :model-value="state.bid"
+                        type="number"
+                        :min="MIN_COVERAGE_STATE_BID"
+                        :step="1"
+                        icon="i-lucide-dollar-sign"
+                        size="xs"
+                        class="w-full"
+                        :aria-label="`Bid for ${state.name}`"
+                        @update:model-value="setCoverageStateBid(state.code, $event)"
+                      />
+                      <p
+                        v-if="!isValidCoverageStateBid(state.bid)"
+                        class="mt-1 text-[10px] font-medium text-red-500 dark:text-red-400"
+                      >
+                        Min {{ formatCoverageStateBid(MIN_COVERAGE_STATE_BID) }}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="flex flex-col gap-3 text-xs text-muted sm:flex-row sm:items-center sm:justify-between">
+                  <div class="flex items-center gap-2">
+                    <UIcon name="i-lucide-info" class="size-4" />
+                    Add coverage states before setting bids.
+                  </div>
+                  <UButton
+                    size="xs"
+                    icon="i-lucide-map"
+                    class="self-start rounded-lg sm:self-auto"
+                    @click="openCoverageEditor"
+                  >
+                    Edit Coverage
+                  </UButton>
+                </div>
+              </div>
+
+              <p
+                v-if="hasInvalidCoverageStateBids"
+                class="text-xs font-medium text-red-500 dark:text-red-400"
+              >
+                Fix {{ invalidBidRows.length }} state bid{{ invalidBidRows.length === 1 ? '' : 's' }} before saving.
+              </p>
+            </section>
+
+            <div class="flex flex-col-reverse gap-2 border-t border-black/[0.06] pt-4 dark:border-white/[0.06] sm:flex-row sm:justify-end">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                :disabled="saving"
+                class="justify-center rounded-lg"
+                @click="biddingOpen = false"
+              >
+                Cancel
+              </UButton>
+              <UButton
+                icon="i-lucide-check"
+                :loading="saving"
+                :disabled="!coverageForm.broker_attorney_id || !coverageFormStateRows.length || hasInvalidCoverageStateBids"
+                class="justify-center rounded-lg"
+                @click="saveCoverage('bids')"
+              >
+                Save Bids
               </UButton>
             </div>
           </div>

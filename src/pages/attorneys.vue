@@ -373,7 +373,7 @@ onMounted(loadAttorneys)
                 <UInput
                   v-model="createForm.attorney_name"
                   icon="i-lucide-user"
-                  placeholder="McDonald Worly"
+                  placeholder="Attorney"
                   autocomplete="off"
                   size="lg"
                 />

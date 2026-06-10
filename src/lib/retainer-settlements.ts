@@ -53,6 +53,8 @@ const PAYMENT_STATUS_VALUES = [
   ...SETTLEMENT_COLUMNS.INVOICE_TO_PUBLISHER.matchValues,
 ]
 
+const hasSettlementMatch = (values: readonly string[], value: string) => values.includes(value)
+
 export type SettlementStageLabel = typeof SETTLEMENT_STAGE_LABELS[number]
 
 export const INBOUND_STATUS = {
@@ -131,12 +133,12 @@ function resolveSettlementColumn(status: string, paymentStatus: string | null): 
   // Check payment_status first (columns 2-4) since it's more specific
   if (paymentStatus) {
     for (const col of [SETTLEMENT_COLUMNS.INVOICE_TO_ATTORNEY, SETTLEMENT_COLUMNS.ATTORNEY_PAID, SETTLEMENT_COLUMNS.INVOICE_TO_PUBLISHER]) {
-      if (col.matchValues.includes(paymentStatus)) return col.key
+      if (hasSettlementMatch(col.matchValues, paymentStatus)) return col.key
     }
   }
   // Check status field (columns 1 and 5)
-  if (SETTLEMENT_COLUMNS.PAID_TO_BPO.matchValues.includes(status)) return SETTLEMENT_COLUMNS.PAID_TO_BPO.key
-  if (SETTLEMENT_COLUMNS.AWAITING_BILLABLE.matchValues.includes(status)) return SETTLEMENT_COLUMNS.AWAITING_BILLABLE.key
+  if (hasSettlementMatch(SETTLEMENT_COLUMNS.PAID_TO_BPO.matchValues, status)) return SETTLEMENT_COLUMNS.PAID_TO_BPO.key
+  if (hasSettlementMatch(SETTLEMENT_COLUMNS.AWAITING_BILLABLE.matchValues, status)) return SETTLEMENT_COLUMNS.AWAITING_BILLABLE.key
   // Fallback to awaiting billable
   return SETTLEMENT_COLUMNS.AWAITING_BILLABLE.key
 }

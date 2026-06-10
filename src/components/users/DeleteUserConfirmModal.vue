@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import type { ManageUserRow } from '../../lib/manage-users'
 
 const props = defineProps<{
@@ -19,8 +18,11 @@ const handleUpdateOpen = (value: boolean) => {
 </script>
 
 <template>
-  <UModal :open="props.open" title="Delete user" :dismissible="false" @update:open="handleUpdateOpen">
-    <template #body="{ close: modalClose }">
+  <UModal :open="props.open"
+title="Delete user"
+:dismissible="false"
+@update:open="handleUpdateOpen">
+    <template #body>
       <div class="space-y-4">
         <p class="text-sm text-slate-700 dark:text-white/80">
           This will delete the user from Supabase Auth and remove their profile.
@@ -39,7 +41,10 @@ const handleUpdateOpen = (value: boolean) => {
         />
 
         <div class="flex justify-end gap-2">
-          <UButton color="neutral" variant="ghost" :disabled="props.loading" @click="() => emit('update:open', false)">
+          <UButton color="neutral"
+variant="ghost"
+:disabled="props.loading"
+@click="() => emit('update:open', false)">
             Cancel
           </UButton>
           <UButton color="error" :disabled="props.loading" @click="emit('confirm')">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { DateFormatter, getLocalTimeZone, CalendarDate, today } from '@internationalized/date'
 
@@ -139,6 +139,7 @@ const query = ref('')
 const page = ref(1)
 const PAGE_SIZE = 25
 const viewMode = ref<ViewMode>('kanban')
+const highlightedInvoiceId = ref<string | null>(null)
 const showFilters = ref(false)
 const selectedStatus = ref<'all' | InvoiceStatus>('all')
 const filterVendor = ref('')
@@ -517,6 +518,48 @@ const pagedRows = computed(() => {
   const start = (page.value - 1) * PAGE_SIZE
   return filteredInvoices.value.slice(start, start + PAGE_SIZE)
 })
+
+const focusedInvoiceId = computed(() => {
+  const value = route.query.invoice_id
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+})
+
+const focusInvoiceFromRoute = async () => {
+  const invoiceId = focusedInvoiceId.value
+  if (!invoiceId || !isBrokerBoard.value) return
+
+  if (!invoices.value.some(invoice => invoice.id === invoiceId)) {
+    if (selectedStatus.value !== 'all') {
+      resetAllFilters()
+      await load()
+    }
+    return
+  }
+
+  if (!filteredInvoices.value.some(invoice => invoice.id === invoiceId)) {
+    resetAllFilters()
+    await nextTick()
+  }
+
+  const filteredIndex = filteredInvoices.value.findIndex(invoice => invoice.id === invoiceId)
+  if (filteredIndex === -1) return
+
+  viewMode.value = 'list'
+  page.value = Math.floor(filteredIndex / PAGE_SIZE) + 1
+  highlightedInvoiceId.value = invoiceId
+
+  await nextTick()
+  document.getElementById(`invoice-${invoiceId}`)?.scrollIntoView({
+    block: 'center',
+    behavior: 'smooth'
+  })
+
+  window.setTimeout(() => {
+    if (highlightedInvoiceId.value === invoiceId) {
+      highlightedInvoiceId.value = null
+    }
+  }, 3500)
+}
 
 const PUBLISHER_KANBAN_STATUSES: InvoiceStatus[] = ['pending', 'chargeback', 'in_review', 'paid']
 const LAWYER_KANBAN_STATUSES: InvoiceStatus[] = ['pending', 'chargeback', 'in_review', 'paid']
@@ -1172,6 +1215,7 @@ const load = async () => {
       await enrichBrokerInvoices(data)
       if (seq === loadSeq.value && modeAtStart === `${isPublisherMode.value}:${isBrokerBoard.value}`) {
         invoices.value = data
+        void focusInvoiceFromRoute()
       }
       return
     }
@@ -1350,6 +1394,7 @@ const load = async () => {
     // Ignore stale loads when route mode changes quickly (prevents brief UI flash)
     if (seq === loadSeq.value && modeAtStart === `${isPublisherMode.value}:${isBrokerBoard.value}`) {
       invoices.value = data
+      void focusInvoiceFromRoute()
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Failed to load invoices'
@@ -1567,6 +1612,13 @@ watch(canFilterByVendor, (allowed) => {
 watch(pageCount, () => {
   if (page.value > pageCount.value) page.value = pageCount.value
 })
+
+watch(
+  () => route.query.invoice_id,
+  () => {
+    void focusInvoiceFromRoute()
+  }
+)
 </script>
 
 <template>
@@ -1954,7 +2006,7 @@ watch(pageCount, () => {
           :open="brokerDropConfirmOpen"
           title="Drop Broker Invoice"
           :dismissible="false"
-          @update:open="(open) => { if (!open) closeBrokerDropConfirm() }"
+          @update:open="(open: boolean) => { if (!open) closeBrokerDropConfirm() }"
         >
           <template #body>
             <div class="space-y-5">
@@ -2010,7 +2062,7 @@ watch(pageCount, () => {
           :open="brokerPaidConfirmOpen"
           title="Confirm Payment"
           :dismissible="false"
-          @update:open="(open) => { if (!open) closeBrokerPaidConfirm() }"
+          @update:open="(open: boolean) => { if (!open) closeBrokerPaidConfirm() }"
         >
           <template #body>
             <div class="space-y-5">
@@ -2359,8 +2411,10 @@ watch(pageCount, () => {
               <tbody>
                 <tr
                   v-for="invoice in pagedRows"
+                  :id="`invoice-${invoice.id}`"
                   :key="invoice.id"
                   class="group cursor-pointer border-b border-black/[0.05] dark:border-white/[0.06] transition-all duration-200 hover:bg-[var(--ap-accent)]/[0.045]"
+                  :class="{ 'invoice-row--highlighted': highlightedInvoiceId === invoice.id }"
                   @click="openInvoicePdf(invoice)"
                 >
                   <td class="px-5 py-3.5">
@@ -2516,5 +2570,9 @@ watch(pageCount, () => {
 .invoicing-card:hover .invoicing-card__icon {
   background: rgb(var(--ap-accent-rgb) / 0.15);
   border-color: rgb(var(--ap-accent-rgb) / 0.22);
+}
+.invoice-row--highlighted {
+  background: rgb(var(--ap-accent-rgb) / 0.12);
+  box-shadow: inset 3px 0 0 var(--ap-accent);
 }
 </style>

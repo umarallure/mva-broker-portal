@@ -10,6 +10,9 @@ export type CoverageMedicalTreatment = 'no_medical' | 'ongoing' | 'proof_of_medi
 export type PreferredContact = 'email' | 'phone' | 'text'
 export type CoverageTrafficLevel = 'moderate' | 'high'
 export type CoverageStateTraffic = Record<string, CoverageTrafficLevel>
+export type CoverageStateBids = Record<string, number>
+
+export const MIN_COVERAGE_STATE_BID = 2250
 
 export type BrokerAttorneyIntakeDid = {
   state: string
@@ -41,6 +44,7 @@ export type BrokerAttorneyRow = {
   transfer_injury_other: string | null
   coverage_states: string[]
   coverage_state_traffic: CoverageStateTraffic
+  coverage_state_bids: CoverageStateBids
   coverage_case_category: CoverageCaseCategory
   coverage_sol_criteria: CoverageSolCriteria
   coverage_liability_status: CoverageLiabilityStatus
@@ -94,6 +98,14 @@ export const BROKER_ATTORNEY_COLUMNS = [
   'created_at',
   'updated_at'
 ].join(',')
+
+type BrokerAttorneyDbRow = Omit<BrokerAttorneyRow, 'coverage_state_bids'>
+
+type BrokerAttorneyStateBidRow = {
+  broker_attorney_id: string
+  state_code: string
+  bid_amount: number | string
+}
 
 export const LANGUAGE_OPTIONS = ['English', 'Spanish']
 
@@ -156,6 +168,7 @@ export const defaultBrokerAttorneyInput = (): Required<Pick<
   | 'transfer_injury_types'
   | 'coverage_states'
   | 'coverage_state_traffic'
+  | 'coverage_state_bids'
   | 'coverage_case_category'
   | 'coverage_sol_criteria'
   | 'coverage_liability_status'
@@ -169,6 +182,7 @@ export const defaultBrokerAttorneyInput = (): Required<Pick<
   transfer_injury_types: [],
   coverage_states: [],
   coverage_state_traffic: {},
+  coverage_state_bids: {},
   coverage_case_category: 'Consumer Cases',
   coverage_sol_criteria: '6_12_months',
   coverage_liability_status: 'clear_only',
@@ -184,6 +198,21 @@ const normalizeStringArray = (value: unknown) => {
 }
 
 const normalizeStateCode = (value: unknown) => String(value || '').trim().toUpperCase()
+const currencyFormatter = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+})
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
+const normalizeBidDollars = (value: number | string) => {
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return MIN_COVERAGE_STATE_BID
+  return amount
+}
 
 export function normalizeCoverageStateTraffic(
   value: unknown,
@@ -214,11 +243,46 @@ export function normalizeCoverageStateTraffic(
   }, {})
 }
 
+export function normalizeCoverageStateBids(
+  value: unknown,
+  coverageStates: string[] = []
+): CoverageStateBids {
+  const source = isPlainObject(value) ? value : {}
+  const sourceByCode = new Map<string, unknown>()
+
+  Object.entries(source).forEach(([key, bid]) => {
+    const code = normalizeStateCode(key)
+    if (code) sourceByCode.set(code, bid)
+  })
+
+  const stateCodes = coverageStates.length
+    ? coverageStates.map(normalizeStateCode).filter(Boolean)
+    : Array.from(sourceByCode.keys())
+
+  return Array.from(new Set(stateCodes)).reduce<CoverageStateBids>((bidsByState, code) => {
+    const rawBid = sourceByCode.get(code)
+    const bid = Number(rawBid)
+    bidsByState[code] = Number.isFinite(bid) ? bid : MIN_COVERAGE_STATE_BID
+    return bidsByState
+  }, {})
+}
+
+export function isValidCoverageStateBid(value: unknown) {
+  const bid = Number(value)
+  return Number.isFinite(bid) && bid >= MIN_COVERAGE_STATE_BID && Math.round(bid) === bid
+}
+
+export function formatCoverageStateBid(value: unknown) {
+  const bid = Number(value)
+  return currencyFormatter.format(Number.isFinite(bid) ? bid : MIN_COVERAGE_STATE_BID)
+}
+
 const buildPayload = (input: BrokerAttorneyInput) => {
   const payload: Record<string, unknown> = {}
 
   Object.entries(input).forEach(([key, value]) => {
     if (value === undefined) return
+    if (key === 'coverage_state_bids') return
     payload[key] = value
   })
 
@@ -250,6 +314,44 @@ const buildPayload = (input: BrokerAttorneyInput) => {
   return payload
 }
 
+async function hydrateCoverageStateBids(rows: BrokerAttorneyDbRow[]): Promise<BrokerAttorneyRow[]> {
+  if (!rows.length) return []
+
+  const attorneyIds = rows.map(row => row.id).filter(Boolean)
+  if (!attorneyIds.length) {
+    return rows.map(row => ({
+      ...row,
+      coverage_state_bids: normalizeCoverageStateBids({}, row.coverage_states)
+    }))
+  }
+
+  const { data, error } = await supabase
+    .from('broker_attorney_state_bids')
+    .select('broker_attorney_id,state_code,bid_amount')
+    .in('broker_attorney_id', attorneyIds)
+
+  if (error) throw new Error(error.message)
+
+  const bidsByAttorney = new Map<string, CoverageStateBids>()
+  ;((data ?? []) as BrokerAttorneyStateBidRow[]).forEach((row) => {
+    const attorneyId = row.broker_attorney_id
+    const stateCode = normalizeStateCode(row.state_code)
+    if (!attorneyId || !stateCode) return
+
+    const attorneyBids = bidsByAttorney.get(attorneyId) ?? {}
+    attorneyBids[stateCode] = normalizeBidDollars(row.bid_amount)
+    bidsByAttorney.set(attorneyId, attorneyBids)
+  })
+
+  return rows.map(row => ({
+    ...row,
+    coverage_state_bids: normalizeCoverageStateBids(
+      bidsByAttorney.get(row.id) ?? {},
+      row.coverage_states
+    )
+  }))
+}
+
 export function getBrokerAttorneyDisplayName(attorney: Pick<BrokerAttorneyRow, 'attorney_name' | 'firm_name'>) {
   return attorney.firm_name ? `${attorney.attorney_name} - ${attorney.firm_name}` : attorney.attorney_name
 }
@@ -262,7 +364,7 @@ export async function listBrokerAttorneys(brokerId: string): Promise<BrokerAttor
     .order('attorney_name', { ascending: true })
 
   if (error) throw new Error(error.message)
-  return (data ?? []) as unknown as BrokerAttorneyRow[]
+  return hydrateCoverageStateBids((data ?? []) as unknown as BrokerAttorneyDbRow[])
 }
 
 export async function getBrokerAttorney(attorneyId: string): Promise<BrokerAttorneyRow | null> {
@@ -273,7 +375,10 @@ export async function getBrokerAttorney(attorneyId: string): Promise<BrokerAttor
     .maybeSingle()
 
   if (error) throw new Error(error.message)
-  return (data as unknown as BrokerAttorneyRow | null) ?? null
+  if (!data) return null
+
+  const [attorney] = await hydrateCoverageStateBids([data as unknown as BrokerAttorneyDbRow])
+  return attorney ?? null
 }
 
 export async function createBrokerAttorney(
@@ -299,7 +404,9 @@ export async function createBrokerAttorney(
     .single()
 
   if (error) throw new Error(error.message)
-  return data as unknown as BrokerAttorneyRow
+  const [attorney] = await hydrateCoverageStateBids([data as unknown as BrokerAttorneyDbRow])
+  if (!attorney) throw new Error('Unable to load created attorney')
+  return attorney
 }
 
 export async function updateBrokerAttorney(
@@ -322,7 +429,9 @@ export async function updateBrokerAttorney(
     .single()
 
   if (error) throw new Error(error.message)
-  return data as unknown as BrokerAttorneyRow
+  const [attorney] = await hydrateCoverageStateBids([data as unknown as BrokerAttorneyDbRow])
+  if (!attorney) throw new Error('Unable to load updated attorney')
+  return attorney
 }
 
 export async function updateBrokerAttorneyCoverage(
@@ -340,13 +449,21 @@ export async function updateBrokerAttorneyCoverage(
     | 'coverage_notes'
   > & {
     coverage_state_traffic?: CoverageStateTraffic
+    coverage_state_bids?: CoverageStateBids
   }
 ): Promise<BrokerAttorneyRow> {
   const coverageStates = normalizeStringArray(input.coverage_states)
-  const { data, error } = await supabase.rpc('update_broker_attorney_coverage_with_traffic', {
+  const coverageStateBids = normalizeCoverageStateBids(input.coverage_state_bids, coverageStates)
+  const invalidBidState = coverageStates.find(state => !isValidCoverageStateBid(coverageStateBids[state]))
+  if (invalidBidState) {
+    throw new Error(`Bid for ${invalidBidState} must be a whole dollar amount of at least ${formatCoverageStateBid(MIN_COVERAGE_STATE_BID)}`)
+  }
+
+  const { data, error } = await supabase.rpc('update_broker_attorney_coverage_with_bids', {
     p_broker_attorney_id: attorneyId,
     p_coverage_states: coverageStates,
     p_coverage_state_traffic: normalizeCoverageStateTraffic(input.coverage_state_traffic, coverageStates),
+    p_coverage_state_bids: coverageStateBids,
     p_coverage_case_category: input.coverage_case_category,
     p_coverage_sol_criteria: input.coverage_sol_criteria,
     p_coverage_liability_status: input.coverage_liability_status,
@@ -358,7 +475,9 @@ export async function updateBrokerAttorneyCoverage(
   })
 
   if (error) throw new Error(error.message)
-  return data as unknown as BrokerAttorneyRow
+  const [attorney] = await hydrateCoverageStateBids([data as unknown as BrokerAttorneyDbRow])
+  if (!attorney) throw new Error('Unable to load updated attorney coverage')
+  return attorney
 }
 
 export async function deleteBrokerAttorney(attorneyId: string): Promise<void> {

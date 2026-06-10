@@ -52,6 +52,29 @@ export interface Notification {
   date: string
 }
 
+export type NotificationCategory =
+  | 'new_lead'
+  | 'lead_assigned'
+  | 'stage_updated'
+  | 'pipeline_changed'
+  | 'note_added'
+  | 'invoice_created'
+
+export interface AppNotification {
+  id: string
+  recipient_id: string
+  actor_id: string | null
+  category: NotificationCategory
+  title: string
+  description: string | null
+  redirect_url: string | null
+  is_read: boolean
+  created_at: string
+  lead_id: string | null
+  lead_name: string | null
+  invoice_id?: string | null
+}
+
 export type Period = 'daily' | 'weekly' | 'monthly'
 
 export interface Range {
