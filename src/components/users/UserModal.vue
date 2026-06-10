@@ -159,11 +159,17 @@ const handleUpdateOpen = (value: boolean) => {
         </UFormField>
 
         <UFormField label="Role">
-          <USelect v-model="role" :items="roleOptions" value-key="value" label-key="label" />
+          <USelect v-model="role"
+:items="roleOptions"
+value-key="value"
+label-key="label" />
         </UFormField>
 
         <UFormField label="Center" description="Optional: Assign user to a center">
-          <USelect v-model="centerId" :items="centerOptions" value-key="value" label-key="label" />
+          <USelect v-model="centerId"
+:items="centerOptions"
+value-key="value"
+label-key="label" />
         </UFormField>
 
         <UFormField
@@ -178,7 +184,10 @@ const handleUpdateOpen = (value: boolean) => {
         </UFormField>
 
         <div class="flex justify-end gap-2">
-          <UButton color="neutral" variant="ghost" :disabled="props.loading" @click="handleClose">
+          <UButton color="neutral"
+variant="ghost"
+:disabled="props.loading"
+@click="handleClose">
             Cancel
           </UButton>
           <UButton :disabled="props.loading || !canSubmit()" @click="handleSubmit">

@@ -311,7 +311,10 @@ const reset = () => {
                     v-model="form.state"
                     class="w-full rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-white focus:border-white/40 focus:outline-none"
                   >
-                    <option v-for="st in states" :key="st" :value="st" class="bg-[var(--ap-bg)]">
+                    <option v-for="st in states"
+:key="st"
+:value="st"
+class="bg-[var(--ap-bg)]">
                       {{ st }}
                     </option>
                   </select>

@@ -633,6 +633,8 @@ onBeforeRouteLeave((to) => {
           :holiday-hours="team.draft.value.holiday_hours"
           :persisted-holiday-hours="persistedHolidayHours"
           :show-holiday-hours="false"
+          @update:weekly-availability="team.draft.value.weekly_availability = $event"
+          @update:holiday-hours="team.draft.value.holiday_hours = $event"
         />
 
         <div class="flex flex-col gap-3 border-t border-[var(--ap-accent)]/10 pt-4 sm:flex-row sm:items-center sm:justify-between">
@@ -810,6 +812,8 @@ onBeforeRouteLeave((to) => {
                 :weekly-availability="team.draft.value.weekly_availability"
                 :holiday-hours="team.draft.value.holiday_hours"
                 :persisted-holiday-hours="persistedHolidayHours"
+                @update:weekly-availability="team.draft.value.weekly_availability = $event"
+                @update:holiday-hours="team.draft.value.holiday_hours = $event"
               />
 
               <div class="flex justify-end gap-2 pt-1">

@@ -26,6 +26,11 @@ const props = withDefaults(defineProps<{
   showHolidayHours: true
 })
 
+const emit = defineEmits<{
+  (e: 'update:weeklyAvailability', value: TeamMemberWeeklyAvailability): void
+  (e: 'update:holidayHours', value: TeamMemberHolidayHours): void
+}>()
+
 const weeklyEditorOpen = ref(false)
 const weeklySummary = computed(() => formatWeeklyAvailabilitySummary(props.weeklyAvailability))
 const showHolidayHours = computed(() => props.showHolidayHours)
@@ -62,14 +67,34 @@ const openNativePicker = (event: Event) => {
   }
 }
 
+const cloneSlot = (slot: AvailabilityTimeSlot): AvailabilityTimeSlot => ({
+  start: slot.start,
+  end: slot.end
+})
+
+const cloneWeeklyAvailability = (source: TeamMemberWeeklyAvailability): TeamMemberWeeklyAvailability => {
+  return Object.fromEntries(
+    WEEKDAY_KEYS.map(day => [
+      day,
+      {
+        enabled: source[day].enabled,
+        slots: source[day].slots.map(cloneSlot)
+      }
+    ])
+  ) as TeamMemberWeeklyAvailability
+}
+
+const cloneHolidayHours = (source: TeamMemberHolidayHours): TeamMemberHolidayHours => {
+  return source.map(holiday => ({
+    date: holiday.date,
+    label: holiday.label,
+    is_closed: holiday.is_closed,
+    slots: holiday.slots.map(cloneSlot)
+  }))
+}
+
 const replaceWeeklyAvailability = (nextAvailability: TeamMemberWeeklyAvailability) => {
-  for (const day of WEEKDAY_KEYS) {
-    props.weeklyAvailability[day].enabled = nextAvailability[day].enabled
-    props.weeklyAvailability[day].slots = nextAvailability[day].slots.map(slot => ({
-      start: slot.start,
-      end: slot.end
-    }))
-  }
+  emit('update:weeklyAvailability', cloneWeeklyAvailability(nextAvailability))
 }
 
 const resetWeeklyAvailability = () => {
@@ -84,12 +109,15 @@ const daySummary = (day: TeamMemberWeekday) => {
 
 const setDayEnabled = (day: TeamMemberWeekday, value: boolean) => {
   const nextEnabled = Boolean(value)
-  const availability = props.weeklyAvailability[day]
+  const nextAvailability = cloneWeeklyAvailability(props.weeklyAvailability)
+  const availability = nextAvailability[day]
 
   availability.enabled = nextEnabled
   availability.slots = nextEnabled
     ? (availability.slots.length ? availability.slots : [createAvailabilitySlot()])
     : []
+
+  emit('update:weeklyAvailability', nextAvailability)
 }
 
 const dayRangeStart = (day: TeamMemberWeekday) => {
@@ -106,21 +134,29 @@ const hasMultipleDaySlots = (day: TeamMemberWeekday) => {
 }
 
 const updateDayRange = (day: TeamMemberWeekday, field: keyof AvailabilityTimeSlot, value: string) => {
-  const availability = props.weeklyAvailability[day]
+  const nextAvailability = cloneWeeklyAvailability(props.weeklyAvailability)
+  const availability = nextAvailability[day]
   const nextValue = typeof value === 'string' ? value : ''
   const nextStart = field === 'start' ? nextValue : dayRangeStart(day)
   const nextEnd = field === 'end' ? nextValue : dayRangeEnd(day)
 
   availability.enabled = true
   availability.slots = [{ start: nextStart, end: nextEnd }]
+
+  emit('update:weeklyAvailability', nextAvailability)
 }
 
 const addHolidayOverride = () => {
-  props.holidayHours.push(createHolidayHoursEntry())
+  emit('update:holidayHours', [
+    ...cloneHolidayHours(props.holidayHours),
+    createHolidayHoursEntry()
+  ])
 }
 
 const removeHolidayOverride = (index: number) => {
-  props.holidayHours.splice(index, 1)
+  const nextHolidayHours = cloneHolidayHours(props.holidayHours)
+  nextHolidayHours.splice(index, 1)
+  emit('update:holidayHours', nextHolidayHours)
 }
 
 const createEmptyHolidaySlot = (): AvailabilityTimeSlot => ({
@@ -133,14 +169,17 @@ const holidayTimeValue = (index: number, field: keyof AvailabilityTimeSlot) => {
 }
 
 const updateHolidayDate = (index: number, value: string) => {
-  const holiday = props.holidayHours[index]
+  const nextHolidayHours = cloneHolidayHours(props.holidayHours)
+  const holiday = nextHolidayHours[index]
   if (!holiday) return
 
   holiday.date = typeof value === 'string' ? value : ''
+  emit('update:holidayHours', nextHolidayHours)
 }
 
 const updateHolidayTime = (index: number, field: keyof AvailabilityTimeSlot, value: string) => {
-  const holiday = props.holidayHours[index]
+  const nextHolidayHours = cloneHolidayHours(props.holidayHours)
+  const holiday = nextHolidayHours[index]
   if (!holiday) return
 
   const nextValue = typeof value === 'string' ? value : ''
@@ -153,11 +192,13 @@ const updateHolidayTime = (index: number, field: keyof AvailabilityTimeSlot, val
   if (!nextSlot.start && !nextSlot.end) {
     holiday.is_closed = true
     holiday.slots = []
+    emit('update:holidayHours', nextHolidayHours)
     return
   }
 
   holiday.is_closed = false
   holiday.slots = [nextSlot]
+  emit('update:holidayHours', nextHolidayHours)
 }
 
 const isHolidayPersisted = (index: number) => {

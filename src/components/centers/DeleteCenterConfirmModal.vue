@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import type { CenterRow } from '../../lib/centers'
 
 const props = defineProps<{
@@ -19,7 +18,10 @@ const handleUpdateOpen = (value: boolean) => {
 </script>
 
 <template>
-  <UModal :open="props.open" title="Delete center" :dismissible="false" @update:open="handleUpdateOpen">
+  <UModal :open="props.open"
+title="Delete center"
+:dismissible="false"
+@update:open="handleUpdateOpen">
     <template #body="{ close: modalClose }">
       <div class="space-y-4">
         <p class="text-sm text-white/80">

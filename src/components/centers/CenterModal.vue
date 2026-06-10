@@ -124,7 +124,10 @@ const handleUpdateOpen = (value: boolean) => {
         </UFormField>
 
         <div class="flex justify-end gap-2">
-          <UButton color="neutral" variant="ghost" :disabled="props.loading" @click="handleClose">
+          <UButton color="neutral"
+variant="ghost"
+:disabled="props.loading"
+@click="handleClose">
             Cancel
           </UButton>
           <UButton :disabled="props.loading || !canSubmit()" @click="handleSubmit">

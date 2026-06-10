@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { h, resolveComponent, ref, watch } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
-import { randomInt, randomFrom } from '../../utils'
 import type { Period, Range, Sale } from '../../types'
 
 const props = defineProps<{
@@ -10,14 +9,6 @@ const props = defineProps<{
 }>()
 
 const UBadge = resolveComponent('UBadge')
-
-const sampleEmails = [
-  'james.anderson@example.com',
-  'mia.white@example.com',
-  'william.brown@example.com',
-  'emma.davis@example.com',
-  'ethan.harris@example.com'
-]
 
 const data = ref<Sale[]>([])
 

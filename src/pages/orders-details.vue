@@ -395,30 +395,52 @@ onMounted(load)
                 <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
                   <div class="text-[11px] text-muted mb-1.5">Languages</div>
                   <div class="flex flex-wrap gap-1.5">
-                    <UBadge v-for="l in criteriaLanguages" :key="l" color="primary" variant="subtle" size="sm" :label="l" />
+                    <UBadge v-for="l in criteriaLanguages"
+:key="l"
+color="primary"
+variant="subtle"
+size="sm"
+:label="l" />
                     <span v-if="!criteriaLanguages.length" class="text-xs text-muted">—</span>
                   </div>
                 </div>
                 <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
                   <div class="text-[11px] text-muted mb-1.5">Injury Severity</div>
                   <div class="flex flex-wrap gap-1.5">
-                    <UBadge v-for="s in criteriaInjurySeverities" :key="s" color="warning" variant="subtle" size="sm" :label="s" />
+                    <UBadge v-for="s in criteriaInjurySeverities"
+:key="s"
+color="warning"
+variant="subtle"
+size="sm"
+:label="s" />
                     <span v-if="!criteriaInjurySeverities.length" class="text-xs text-muted">—</span>
                   </div>
                 </div>
                 <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
                   <div class="text-[11px] text-muted mb-1.5">Liability Status</div>
-                  <UBadge v-if="criteriaLiability" color="neutral" variant="subtle" size="sm" :label="criteriaLiability" />
+                  <UBadge v-if="criteriaLiability"
+color="neutral"
+variant="subtle"
+size="sm"
+:label="criteriaLiability" />
                   <span v-else class="text-xs text-muted">—</span>
                 </div>
                 <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
                   <div class="text-[11px] text-muted mb-1.5">Insurance Status</div>
-                  <UBadge v-if="criteriaInsurance" color="neutral" variant="subtle" size="sm" :label="criteriaInsurance" />
+                  <UBadge v-if="criteriaInsurance"
+color="neutral"
+variant="subtle"
+size="sm"
+:label="criteriaInsurance" />
                   <span v-else class="text-xs text-muted">—</span>
                 </div>
                 <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
                   <div class="text-[11px] text-muted mb-1.5">Medical Treatment</div>
-                  <UBadge v-if="criteriaMedical" color="neutral" variant="subtle" size="sm" :label="criteriaMedical" />
+                  <UBadge v-if="criteriaMedical"
+color="neutral"
+variant="subtle"
+size="sm"
+:label="criteriaMedical" />
                   <span v-else class="text-xs text-muted">—</span>
                 </div>
                 <div class="rounded-lg border border-[var(--ap-card-border)] bg-[var(--ap-card-divide)] p-3">
@@ -482,7 +504,10 @@ onMounted(load)
                       <td class="px-4 py-3 font-medium text-highlighted">{{ lead.clientName }}</td>
                       <td class="px-4 py-3 text-muted tabular-nums">{{ lead.phone }}</td>
                       <td class="px-4 py-3">
-                        <UBadge color="primary" variant="subtle" size="sm" :label="lead.state.toUpperCase()" />
+                        <UBadge color="primary"
+variant="subtle"
+size="sm"
+:label="lead.state.toUpperCase()" />
                       </td>
                       <td class="px-4 py-3 text-muted tabular-nums">{{ lead.date }}</td>
                       <td class="px-4 py-3">

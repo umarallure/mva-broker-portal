@@ -12,7 +12,7 @@ export type ManageUserRow = {
 }
 
 const EDGE_FUNCTION_PATH = '/functions/v1/manage-users'
-const EDGE_FUNCTION_BASE = (import.meta as any).env?.VITE_SUPABASE_FUNCTIONS_BASE
+const EDGE_FUNCTION_BASE = import.meta.env?.VITE_SUPABASE_FUNCTIONS_BASE
 
 const edgeFunctionUrl = EDGE_FUNCTION_BASE
   ? `${String(EDGE_FUNCTION_BASE).replace(/\/$/, '')}${EDGE_FUNCTION_PATH}`
@@ -22,6 +22,15 @@ const buildHeaders = (token: string) => ({
   Authorization: `Bearer ${token}`,
   'Content-Type': 'application/json'
 })
+
+const getEdgeErrorMessage = (payload: unknown) => {
+  if (!payload || typeof payload !== 'object' || !('error' in payload)) {
+    return null
+  }
+
+  const error = (payload as { error?: unknown }).error
+  return typeof error === 'string' ? error : null
+}
 
 const callEdge = async <T>(options: {
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE'
@@ -43,8 +52,8 @@ const callEdge = async <T>(options: {
   const payload = isJson ? await response.json().catch(() => ({})) : await response.text().catch(() => '')
 
   if (!response.ok) {
-    const errMsg = isJson && typeof (payload as any)?.error === 'string'
-      ? (payload as any).error
+    const errMsg = isJson
+      ? getEdgeErrorMessage(payload) ?? `Request failed (${response.status})`
       : `Request failed (${response.status})`
     throw new Error(errMsg)
   }
