@@ -525,7 +525,13 @@ const billableCount = computed(() => (leadsByStage.value.get('billable') ?? []).
 
 const { startDrag, endDrag } = useDragGhost()
 
+const isRejectedStatus = (lead: LeadCard) => lead.status === 'attorney_rejected'
+
 const onDragStartLead = (e: DragEvent, lead: LeadCard) => {
+  if (isRejectedStatus(lead)) {
+    e.preventDefault()
+    return
+  }
   startDrag(e)
   suppressNextCardClick.value = true
   dragLeadId.value = lead.id
@@ -1100,9 +1106,9 @@ const confirmMove = async () => {
                 <div
                   v-for="lead in (leadsByStage.get(stage.key) ?? [])"
                   :key="lead.id"
-                  class="case-card group rounded-lg border border-black/[0.05] dark:border-white/[0.06] bg-white/60 dark:bg-white/[0.03] p-3 transition-all duration-200 cursor-pointer active:cursor-grabbing"
+                  :class="['case-card group rounded-lg border border-black/[0.05] dark:border-white/[0.06] bg-white/60 dark:bg-white/[0.03] p-3 transition-all duration-200', isRejectedStatus(lead) ? 'cursor-not-allowed opacity-70' : 'cursor-pointer active:cursor-grabbing']"
                   :style="stageCardAccentStyle(stage.key)"
-                  :draggable="!isPaidApprovedLead(lead)"
+                  :draggable="!isRejectedStatus(lead)"
                   role="button"
                   tabindex="0"
                   :aria-label="`View details for ${lead.clientName}`"
@@ -1121,16 +1127,23 @@ const confirmMove = async () => {
                         {{ lead.clientName }}
                       </div>
                       <div class="mt-0.5 text-[11px] text-muted">
-                        {{ formatPhone(lead.phone) }}
+                        <template v-if="isRejectedStatus(lead)">
+                          <UIcon name="i-lucide-lock" class="size-3 inline-block mr-1" />
+                          <span>Rejected</span>
+                        </template>
+                        <template v-else>
+                          {{ formatPhone(lead.phone) }}
+                        </template>
                       </div>
                     </div>
-                    <UTooltip text="View lead details">
+                    <UTooltip :text="isRejectedStatus(lead) ? 'Lead rejected - details locked' : 'View lead details'">
                       <UButton
-                        color="neutral"
+                        :color="isRejectedStatus(lead) ? 'error' : 'neutral'"
                         variant="ghost"
-                        icon="i-lucide-eye"
+                        :icon="isRejectedStatus(lead) ? 'i-lucide-lock' : 'i-lucide-eye'"
                         size="xs"
-                        class="case-card__view shrink-0 rounded-lg opacity-70 transition-all duration-200 group-hover:opacity-100"
+                        class="case-card__view shrink-0 rounded-lg transition-all duration-200"
+                        :class="isRejectedStatus(lead) ? '' : 'opacity-70 group-hover:opacity-100'"
                         :aria-label="`View details for ${lead.clientName}`"
                         draggable="false"
                         @mousedown.stop
