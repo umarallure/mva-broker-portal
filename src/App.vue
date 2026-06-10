@@ -5,6 +5,13 @@ import { useStorage } from '@vueuse/core'
 import type { NavigationMenuItem } from '@nuxt/ui'
 
 import { useAuth } from './composables/useAuth'
+import { useNotifications } from './composables/useNotifications'
+import {
+  getNotificationMessage,
+  getNotificationMeta,
+  getNotificationsLocation
+} from './lib/notifications'
+import type { AppNotification } from './types'
 
 type HubSpotWindow = Window & typeof globalThis & {
   HubSpotConversations?: {
@@ -21,13 +28,25 @@ const toast = useToast()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuth()
+const {
+  unreadCount,
+  lastRealtimeNotification,
+  fetchInitialNotifications,
+  initializeRealtimeListener,
+  cleanup: cleanupNotifications,
+  markAsRead
+} = useNotifications()
 
 const open = ref(false)
 const sidebarCollapsed = ref(false)
 const chatOpen = ref(false)
 
+// Routes render without the dashboard shell when they are marked `public` in
+// the router (single source of truth), plus a couple of standalone routes that
+// intentionally use the blank layout (the public intake form and invoice PDFs).
 const isPublicPage = computed(() =>
-  ['/login', '/', '/get-started', '/launch-auth', '/managed-auth/callback'].includes(route.path) ||
+  Boolean(route.meta.public) ||
+  route.path === '/get-started' ||
   route.path.endsWith('/pdf')
 )
 
@@ -80,6 +99,24 @@ const role = computed(() => auth.state.value.profile?.role)
 const managedLaunch = computed(() => auth.managedLaunch.value)
 const isManagedSession = computed(() => auth.isManagedSession.value)
 const isSuperAdmin = computed(() => role.value === 'super_admin')
+const hasPortalSession = computed(() => {
+  if (!auth.state.value.user) return false
+  if (role.value === 'super_admin' || role.value === 'admin') return true
+  if (role.value === 'broker' || role.value === 'broker_member') {
+    return Boolean(auth.state.value.brokerContext)
+  }
+  return false
+})
+const canRenderPortalShell = computed(() =>
+  !isPublicPage.value &&
+  auth.state.value.ready &&
+  hasPortalSession.value
+)
+const canSeeNotifications = computed(() =>
+  Boolean(auth.state.value.user)
+  && ['super_admin', 'admin', 'broker', 'broker_member'].includes(role.value ?? '')
+)
+const unreadBadge = computed(() => unreadCount.value > 99 ? '99+' : String(unreadCount.value))
 const canSee = (section: Parameters<typeof auth.hasBrokerSection>[0]) => auth.hasBrokerSection(section)
 
 const links = computed(() => [
@@ -106,6 +143,13 @@ const links = computed(() => [
       label: 'Invoicing',
       icon: 'i-lucide-receipt',
       to: '/invoicing/broker',
+      onSelect: () => { open.value = false }
+    }] : []),
+    ...(canSeeNotifications.value ? [{
+      label: 'Notifications',
+      icon: unreadCount.value > 0 ? 'i-lucide-bell-ring' : 'i-lucide-bell',
+      to: '/notifications',
+      badge: unreadCount.value > 0 ? unreadBadge.value : undefined,
       onSelect: () => { open.value = false }
     }] : []),
     ...(canSee('attorneys') ? [{
@@ -188,6 +232,51 @@ const handleEndManagedSession = async () => {
   }
 }
 
+const openRealtimeNotification = async (notification: AppNotification) => {
+  if (!notification.is_read) {
+    await markAsRead(notification.id)
+  }
+
+  await router.push(notification.redirect_url || getNotificationsLocation(notification.id))
+}
+
+watch(
+  [() => auth.state.value.user?.id ?? null, isPublicPage],
+  ([userId, publicPage]) => {
+    if (publicPage || !userId) {
+      cleanupNotifications()
+      return
+    }
+
+    void fetchInitialNotifications(userId).then(() => {
+      if (auth.state.value.user?.id !== userId || isPublicPage.value) return
+      initializeRealtimeListener(userId)
+    })
+  },
+  { immediate: true }
+)
+
+watch(lastRealtimeNotification, (notification) => {
+  if (!notification) return
+
+  const meta = getNotificationMeta(notification.category)
+
+  toast.add({
+    title: notification.title,
+    description: getNotificationMessage(notification),
+    icon: meta.icon,
+    color: notification.category === 'invoice_created' ? 'success' : 'primary',
+    actions: [{
+      label: 'Open',
+      color: 'neutral',
+      variant: 'outline',
+      onClick: () => {
+        void openRealtimeNotification(notification)
+      }
+    }]
+  })
+})
+
 const cookie = useStorage('cookie-consent', 'pending')
 if (cookie.value !== 'accepted') {
   toast.add({
@@ -216,6 +305,13 @@ if (cookie.value !== 'accepted') {
       <template v-if="isPublicPage">
         <RouterView />
       </template>
+
+      <div
+        v-else-if="!canRenderPortalShell"
+        class="flex min-h-screen items-center justify-center bg-[var(--ap-bg)] text-[var(--ap-text-muted)]"
+      >
+        <UIcon name="i-lucide-loader-2" class="size-6 animate-spin" />
+      </div>
 
       <UDashboardGroup
         v-else
@@ -281,7 +377,9 @@ if (cookie.value !== 'accepted') {
                 <UIcon name="i-lucide-shield-check" class="size-4" />
               </div>
               <div class="space-y-1">
-                <p class="text-sm font-semibold text-amber-50">Managed broker session</p>
+                <p class="text-sm font-semibold text-amber-50">
+                  Managed broker session
+                </p>
                 <p class="text-xs leading-5 text-amber-100/75">
                   {{ managedBannerLabel }}
                 </p>

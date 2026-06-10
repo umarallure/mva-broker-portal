@@ -13,15 +13,31 @@ const app = createApp(App)
 // hidden from the broker-only nav in App.vue.
 const router = createRouter({
   routes: [
-    { path: '/', component: () => import('./pages/index.vue'), meta: { public: true } },
+    // '/' lands on the login page, which is now the public entry point.
+    { path: '/', redirect: '/login', meta: { public: true } },
+    { path: '/home', redirect: '/login', meta: { public: true } },
     { path: '/get-started', component: () => import('./pages/get-started.vue') },
     { path: '/login', component: () => import('./pages/login.vue'), meta: { public: true } },
+    { path: '/privacy-policy', component: () => import('./pages/privacy-policy.vue'), meta: { public: true } },
+    { path: '/terms', component: () => import('./pages/terms.vue'), meta: { public: true } },
     { path: '/launch-auth', component: () => import('./pages/launch-auth.vue'), meta: { public: true } },
     { path: '/managed-auth/callback', component: () => import('./pages/managed-auth-callback.vue'), meta: { public: true } },
     // Dashboard is intentionally hidden for now. Keep this route here to
     // re-enable later without touching page code.
     { path: '/dashboard', component: () => import('./pages/dashboard.vue'), meta: { brokerSection: 'dashboard' } },
-    { path: '/inbox', component: () => import('./pages/not-found.vue') },
+    { path: '/notifications', component: () => import('./pages/notifications.vue') },
+    {
+      path: '/inbox',
+      redirect: to => ({
+        path: '/notifications',
+        query: {
+          ...to.query,
+          ...(typeof to.query.id === 'string' && !to.query.notificationId
+            ? { notificationId: to.query.id }
+            : {})
+        }
+      })
+    },
     { path: '/intake-map', component: () => import('./pages/intake-map.vue'), meta: { brokerSection: 'order_map' } },
     { path: '/orders/:id', component: () => import('./pages/orders-details.vue'), meta: { brokerSection: 'order_map' } },
     { path: '/retainers', component: () => import('./pages/retainers.vue'), meta: { brokerSection: 'cases' } },
@@ -125,4 +141,10 @@ app.use(router)
 
 app.use(ui)
 
-app.mount('#app')
+void router.isReady()
+  .catch((error) => {
+    console.error('[router] initial navigation failed', error)
+  })
+  .finally(() => {
+    app.mount('#app')
+  })
