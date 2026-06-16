@@ -295,6 +295,15 @@ Deno.serve(async (req) => {
       const userId = String(body?.user_id ?? '').trim()
       if (!userId) return json(400, { error: 'user_id is required' })
 
+      const { data: appUser, error: appUserErr } = await supabaseAdmin
+        .from('app_users')
+        .select('role')
+        .eq('user_id', userId)
+        .maybeSingle()
+
+      if (appUserErr) return json(500, { error: appUserErr.message })
+      if (appUser?.role === 'broker') return json(400, { error: 'Broker accounts must be soft deleted from Broker Management so DQ/deleted reporting and notes are preserved.' })
+
       const del = await supabaseAdmin.auth.admin.deleteUser(userId)
       if (del.error) return json(500, { error: del.error.message })
 

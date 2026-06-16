@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
 
-type Role = 'super_admin' | 'admin' | 'lawyer' | 'agent'
+type Role = 'super_admin' | 'admin' | 'lawyer' | 'agent' | 'broker'
 
 type AppUserRow = {
   user_id: string
@@ -218,6 +218,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body
       const userId = String(body?.user_id ?? '').trim()
       if (!userId.length) return json(res, 400, { error: 'user_id is required' })
+
+      const { data: appUser, error: appUserErr } = await supabaseAdmin
+        .from('app_users')
+        .select('role')
+        .eq('user_id', userId)
+        .maybeSingle()
+
+      if (appUserErr) return json(res, 500, { error: appUserErr.message })
+      if (appUser?.role === 'broker') return json(res, 400, { error: 'Broker accounts must be soft deleted from Broker Management so DQ/deleted reporting and notes are preserved.' })
 
       const { error: delAuthErr } = await createClient(supabaseUrl, serviceRoleKey)
         .auth.admin.deleteUser(userId)
