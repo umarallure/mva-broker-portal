@@ -65,7 +65,6 @@ type TaskGroup = {
   createdAt: string
   updatedAt: string
   createdByName: string
-  assigneeNames: string[]
   assignmentCount: number
   statusCounts: Record<TaskStatus, number>
   stage: TaskStatus
@@ -267,16 +266,9 @@ function deadlineSignal(group: TaskGroup) {
 }
 
 function statusSummary(group: TaskGroup) {
-  if (group.assignmentCount <= 1) return TASK_STATUS_META[group.stage].label
-  if (group.statusCounts.completed === group.assignmentCount) return 'All completed'
-  if (group.statusCounts.completed > 0) return `${group.statusCounts.completed}/${group.assignmentCount} completed`
+  if (group.stage === 'completed') return 'Completed'
+  if (group.statusCounts.completed > 0) return 'In progress'
   return TASK_STATUS_META[group.stage].label
-}
-
-function assigneePreview(group: TaskGroup) {
-  const visible = group.assigneeNames.slice(0, 3)
-  const remaining = group.assignmentCount - visible.length
-  return remaining > 0 ? `${visible.join(', ')} +${remaining}` : visible.join(', ')
 }
 
 function resetForm() {
@@ -328,7 +320,6 @@ const groupedTasks = computed<TaskGroup[]>(() => {
         createdAt: task.created_at,
         updatedAt: task.updated_at,
         createdByName: task.created_by_name,
-        assigneeNames: [task.assignee_name],
         assignmentCount: 1,
         statusCounts: {
           todo: task.status === 'todo' ? 1 : 0,
@@ -344,9 +335,6 @@ const groupedTasks = computed<TaskGroup[]>(() => {
     existing.taskIds.push(task.id)
     existing.assignmentCount += 1
     existing.statusCounts[task.status] += 1
-    if (!existing.assigneeNames.includes(task.assignee_name)) {
-      existing.assigneeNames.push(task.assignee_name)
-    }
     if (new Date(task.updated_at).getTime() > new Date(existing.updatedAt).getTime()) {
       existing.updatedAt = task.updated_at
     }
@@ -354,8 +342,7 @@ const groupedTasks = computed<TaskGroup[]>(() => {
 
   return Array.from(map.values()).map(group => ({
     ...group,
-    stage: deriveStage(group.statusCounts, group.assignmentCount),
-    assigneeNames: [...group.assigneeNames].sort((left, right) => left.localeCompare(right))
+    stage: deriveStage(group.statusCounts, group.assignmentCount)
   }))
 })
 
@@ -375,8 +362,7 @@ const filteredGroups = computed(() => {
         group.leadName,
         group.leadPhoneNumber,
         group.createdByName,
-        ...group.tags,
-        ...group.assigneeNames
+        ...group.tags
       ].filter(Boolean).join(' ').toLowerCase().includes(q)
     })
     .sort((left, right) => {
@@ -402,25 +388,13 @@ const groupsByStatus = computed(() => {
 })
 
 const openCount = computed(() => groupedTasks.value.filter(isOpenTask).length)
-const pendingCount = computed(() => groupedTasks.value.filter(group => group.statusCounts.waiting > 0).length)
 const overdueCount = computed(() => groupedTasks.value.filter(isOverdue).length)
 const completedCount = computed(() => groupedTasks.value.filter(group => group.stage === 'completed').length)
-const totalAssignmentCount = computed(() =>
-  groupedTasks.value.reduce((total, group) => total + group.assignmentCount, 0)
-)
-const activeAgentCount = computed(() => {
-  const names = new Set<string>()
-  groupedTasks.value.forEach(group => {
-    group.assigneeNames.forEach(name => names.add(name))
-  })
-  return names.size
-})
-const completedAssignmentCount = computed(() =>
-  groupedTasks.value.reduce((total, group) => total + group.statusCounts.completed, 0)
-)
-const completionRate = computed(() => {
-  if (totalAssignmentCount.value === 0) return 0
-  return Math.round((completedAssignmentCount.value / totalAssignmentCount.value) * 100)
+const totalBroadcastCount = computed(() => groupedTasks.value.length)
+const completedBroadcastCount = computed(() => completedCount.value)
+const broadcastCompletionRate = computed(() => {
+  if (totalBroadcastCount.value === 0) return 0
+  return Math.round((completedBroadcastCount.value / totalBroadcastCount.value) * 100)
 })
 const nextDeadline = computed(() => {
   const upcoming = groupedTasks.value
@@ -438,11 +412,11 @@ const activeFilterCount = computed(() => {
 })
 const hasActiveFilters = computed(() => activeFilterCount.value > 0)
 
-const assignmentSegments = computed(() => [
-  { label: 'To Do', value: groupedTasks.value.reduce((total, group) => total + group.statusCounts.todo, 0), color: 'bg-slate-400' },
-  { label: 'Pending', value: groupedTasks.value.reduce((total, group) => total + group.statusCounts.waiting, 0), color: 'bg-amber-400' },
-  { label: 'Active', value: groupedTasks.value.reduce((total, group) => total + group.statusCounts.in_progress, 0), color: 'bg-sky-400' },
-  { label: 'Done', value: completedAssignmentCount.value, color: 'bg-emerald-500' }
+const broadcastSegments = computed(() => [
+  { label: 'To Do', value: groupedTasks.value.filter(group => group.stage === 'todo').length, color: 'bg-slate-400' },
+  { label: 'Pending', value: groupedTasks.value.filter(group => group.stage === 'waiting').length, color: 'bg-amber-400' },
+  { label: 'Active', value: groupedTasks.value.filter(group => group.stage === 'in_progress').length, color: 'bg-sky-400' },
+  { label: 'Done', value: completedBroadcastCount.value, color: 'bg-emerald-500' }
 ])
 
 function segmentWidth(value: number, total: number) {
@@ -475,7 +449,7 @@ function formatLeadDisplay(lead: LeadOption | null) {
   if (!lead) return ''
   const ref = (lead.reference ?? '').trim()
   const name = (lead.customerName ?? '').trim()
-  if (ref && name) return `${name} · ${ref}`
+  if (ref && name) return `${name} - ${ref}`
   return name || ref
 }
 
@@ -485,10 +459,37 @@ function selectLeadOption(lead: LeadOption) {
   showLeadResults.value = false
 }
 
+let leadSearchTimer: number | null = null
+
+function queueLeadOptionsLoad(search = leadSearch.value) {
+  if (leadSearchTimer !== null) {
+    window.clearTimeout(leadSearchTimer)
+  }
+
+  leadSearchTimer = window.setTimeout(() => {
+    leadSearchTimer = null
+    loadLeadOptions(search).catch(() => {})
+  }, 180)
+}
+
+function handleLeadSearchFocus() {
+  showLeadResults.value = true
+  if (leadOptions.value.length === 0) {
+    queueLeadOptionsLoad()
+  }
+}
+
+function handleLeadSearchInput() {
+  form.leadId = NO_LEAD
+  showLeadResults.value = true
+  queueLeadOptionsLoad()
+}
+
 function clearAttachedLead() {
   form.leadId = NO_LEAD
   leadSearch.value = ''
   showLeadResults.value = false
+  queueLeadOptionsLoad('')
 }
 
 function openDeadlinePicker() {
@@ -526,26 +527,24 @@ const dedupedNotes = computed(() => {
   return unique
 })
 
-async function loadLeadOptions() {
+async function loadLeadOptions(search = '') {
   const { data, error } = await supabase
-    .from('leads')
-    .select('id,submission_id,customer_full_name,phone_number')
-    .eq('is_active', true)
-    .in('status', ['attorney_review', 'attorney_approved', 'attorney_rejected'])
-    .order('submission_date', { ascending: false })
-    .limit(200)
+    .rpc('get_broker_task_lead_options', {
+      p_search: search,
+      p_limit: 30
+    })
 
   if (error) throw error
 
   leadOptions.value = ((data ?? []) as Array<{
     id: string
-    submission_id: string
-    customer_full_name: string | null
+    reference: string
+    customer_name: string | null
     phone_number: string | null
   }>).map(row => ({
     id: row.id,
-    reference: row.submission_id,
-    customerName: row.customer_full_name ?? 'Unknown Client',
+    reference: row.reference,
+    customerName: row.customer_name ?? 'Unknown Client',
     phoneNumber: row.phone_number
   }))
 }
@@ -658,11 +657,11 @@ async function submitTask() {
 
   try {
     const lead = selectedLead()
-    const { data, error } = await supabase.rpc('create_broker_closer_task_for_all_agents', {
+    const { error } = await supabase.rpc('create_broker_closer_task_for_all_agents', {
       p_title: title,
       p_description: form.description.trim() || null,
       p_lead_id: lead?.id ?? null,
-      p_lead_reference: lead?.reference ?? null,
+      p_lead_reference: null,
       p_priority: form.priority,
       p_deadline_date: form.deadlineDate,
       p_tags: form.tags,
@@ -671,10 +670,9 @@ async function submitTask() {
 
     if (error) throw error
 
-    const assignmentCount = Array.isArray(data) ? data.length : 0
     toast.add({
       title: 'Task assigned',
-      description: assignmentCount > 0 ? `Created for ${assignmentCount} agents.` : 'Created for all agents.',
+      description: 'Task forwarded to the agents portal.',
       color: 'success',
       icon: 'i-lucide-check-circle'
     })
@@ -802,6 +800,11 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (leadSearchTimer !== null) {
+    window.clearTimeout(leadSearchTimer)
+    leadSearchTimer = null
+  }
+
   if (realtimeChannel) {
     supabase.removeChannel(realtimeChannel)
     realtimeChannel = null
@@ -829,7 +832,7 @@ watch(
     </template>
 
     <template #body>
-      <div class="mx-auto flex h-full min-h-0 w-full max-w-[1800px] flex-col gap-5 px-1 pb-2">
+      <div class="flex min-h-full w-full flex-col gap-5 px-1 pb-2">
         <UModal
           :open="createOpen"
           :dismissible="!saving"
@@ -843,7 +846,7 @@ watch(
               <div class="relative space-y-1">
                 <h3 class="text-lg font-semibold text-white">New Task</h3>
                 <p class="text-sm text-zinc-500">
-                  Broadcasts to every active sales rep with broker context, lead, deadline, and priority.
+                  Forward tasks to the agents portal with broker-scoped lead context.
                 </p>
               </div>
             </div>
@@ -851,15 +854,14 @@ watch(
             <!-- Body -->
             <div class="max-h-[min(60vh,560px)] overflow-y-auto task-modal-scroll">
               <div class="space-y-4 p-5">
-                <!-- Recipients banner -->
                 <div class="flex items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3">
                   <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/15">
                     <UIcon name="i-lucide-users-2" class="size-4 text-primary" />
                   </div>
                   <div class="min-w-0">
-                    <p class="text-sm font-semibold text-white">Sent to all sales reps</p>
+                    <p class="text-sm font-semibold text-white">Agent portal delivery</p>
                     <p class="text-xs text-zinc-500">
-                      {{ activeAgentCount > 0 ? `${activeAgentCount} agents currently in your sales team` : 'Every active agent receives a copy of this task' }}
+                      Recipient routing is handled internally after you send the task.
                     </p>
                   </div>
                 </div>
@@ -879,7 +881,7 @@ watch(
                   />
                 </div>
 
-                <!-- 4-up grid: Deadline, Priority, Tags, (filler/agents) -->
+                <!-- 4-up grid: Deadline, Priority, Tags -->
                 <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   <div class="space-y-2">
                     <label for="task-deadline" class="block text-xs font-medium uppercase tracking-wider text-zinc-400">
@@ -959,8 +961,8 @@ watch(
                           autocomplete="off"
                           placeholder="Search customer or phone"
                           class="h-10 w-full rounded-md border border-zinc-800 bg-zinc-900 pl-9 pr-10 text-sm text-white outline-none transition-colors placeholder:text-zinc-500 focus:border-primary"
-                          @focus="showLeadResults = true"
-                          @input="form.leadId = NO_LEAD"
+                          @focus="handleLeadSearchFocus"
+                          @input="handleLeadSearchInput"
                         >
                         <button
                           v-if="attachedLead"
@@ -988,7 +990,7 @@ watch(
                             v-if="leadSearchResults.length === 0"
                             class="rounded-xl px-3 py-3 text-sm text-zinc-500"
                           >
-                            {{ leadSearch.trim() ? 'No active leads matched that search.' : 'No active leads are available right now.' }}
+                            {{ leadSearch.trim() ? 'No assigned leads matched that search.' : 'No assigned leads are available right now.' }}
                           </div>
                           <button
                             v-for="lead in leadSearchResults"
@@ -1028,7 +1030,7 @@ watch(
                     id="task-note"
                     v-model="form.note"
                     :rows="3"
-                    placeholder="Anything else the sales rep should know? Sent as the first note on every broadcast copy."
+                    placeholder="Anything else the agents should know? Added as the first note on the forwarded task."
                     class="task-textarea w-full"
                     :ui="{ base: 'border-zinc-800 bg-zinc-900' }"
                   />
@@ -1053,7 +1055,7 @@ watch(
                 :disabled="saving || !form.title.trim() || !form.deadlineDate"
                 @click="submitTask"
               >
-                {{ saving ? 'Sending…' : 'Assign to all sales reps' }}
+                {{ saving ? 'Sending...' : 'Forward to agent portal' }}
               </UButton>
             </div>
           </template>
@@ -1105,16 +1107,16 @@ watch(
                   <div class="rounded-2xl border border-zinc-800 bg-zinc-900/55 p-4">
                     <div class="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
                       <UIcon name="i-lucide-users-2" class="size-4 text-primary" />
-                      Recipients
+                      Delivery
                     </div>
                     <p class="text-sm font-semibold text-white">
-                      {{ selectedGroup.assignmentCount }} sales {{ selectedGroup.assignmentCount === 1 ? 'rep' : 'reps' }}
+                      Forwarded to agent portal
                     </p>
                     <p class="mt-1 text-sm text-zinc-500">
                       {{ statusSummary(selectedGroup) }}
                     </p>
                     <p class="mt-2 text-xs text-zinc-500 line-clamp-2">
-                      {{ assigneePreview(selectedGroup) || '—' }}
+                      Recipient routing is managed internally.
                     </p>
                   </div>
 
@@ -1185,7 +1187,7 @@ watch(
                       id="task-note-draft"
                       v-model="noteDraft"
                       :rows="3"
-                      placeholder="Write a concise update, blocker, or client detail. Sent to every sales rep on this task."
+                      placeholder="Write a concise update, blocker, or client detail for the forwarded task thread."
                       class="task-textarea mt-2 w-full"
                       :ui="{ base: 'border-zinc-800 bg-zinc-950' }"
                     />
@@ -1207,7 +1209,7 @@ watch(
                       v-if="notesLoading"
                       class="rounded-2xl border border-dashed border-zinc-800 px-4 py-8 text-center text-sm text-zinc-500"
                     >
-                      Loading notes…
+                      Loading notes...
                     </div>
                     <div
                       v-else-if="dedupedNotes.length === 0"
@@ -1248,161 +1250,24 @@ watch(
           </template>
         </USlideover>
 
-        <section class="min-w-0 space-y-3">
-          <UBadge
-            variant="outline"
-            class="w-fit rounded-full border-primary/30 bg-primary/10 px-3 py-1 text-primary"
-            label="Broker task workspace"
-          />
-          <div class="space-y-2">
-            <h1 class="text-3xl font-semibold tracking-tight text-highlighted lg:text-4xl">
-              Hello, {{ currentUserLabel }}
-            </h1>
-            <p class="max-w-2xl text-sm leading-6 text-muted">
-              All-agent sales team queue with broker notes, case context, and deadline pressure in one place.
-            </p>
-          </div>
-        </section>
-
-        <section class="grid gap-4 rounded-xl border border-white/10 bg-zinc-950 p-4 text-white shadow-xl shadow-black/20 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
-          <div class="flex min-w-0 flex-col justify-between gap-4 rounded-lg border border-zinc-800 bg-zinc-900/55 p-4">
-            <div class="min-w-0 space-y-1">
-              <div class="flex items-center gap-2">
-                <UIcon name="i-lucide-users-2" class="size-4 text-primary" />
-                <p class="text-sm font-semibold text-white">Sales Team Broadcast</p>
-              </div>
-              <p class="text-sm text-zinc-500">
-                {{ activeAgentCount }} agents currently represented across {{ totalAssignmentCount }} task assignments.
-              </p>
-            </div>
-
-            <div class="flex flex-wrap gap-2">
-              <UButton
-                color="neutral"
-                variant="outline"
-                class="border-zinc-800 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
-                icon="i-lucide-refresh-cw"
-                :loading="refreshing"
-                @click="load(true)"
-              >
-                Refresh
-              </UButton>
-              <UButton
-                icon="i-lucide-plus"
-                @click="createOpen = true"
-              >
-                New Task
-              </UButton>
-            </div>
-          </div>
-
-          <div class="rounded-lg border border-zinc-800 bg-zinc-900/55 p-4">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <p class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Completion</p>
-                <p class="mt-1 text-2xl font-semibold text-white tabular-nums">
-                  {{ completionRate }}%
-                </p>
-              </div>
-              <div class="text-right text-xs text-zinc-500">
-                <p>{{ completedAssignmentCount }}/{{ totalAssignmentCount }} done</p>
-                <p class="mt-1">
-                  Next due {{ nextDeadline ? formatDate(nextDeadline, { month: 'short', day: 'numeric' }) : '-' }}
-                </p>
-              </div>
-            </div>
-
-            <div class="mt-4 flex h-2 overflow-hidden rounded-full bg-zinc-800">
-              <div
-                v-for="segment in assignmentSegments"
-                :key="segment.label"
-                class="h-full"
-                :class="segment.color"
-                :style="{ width: segmentWidth(segment.value, Math.max(totalAssignmentCount, 1)) }"
-              />
-            </div>
-
-            <div class="mt-3 grid grid-cols-2 gap-2">
-              <div
-                v-for="segment in assignmentSegments"
-                :key="segment.label"
-                class="flex items-center justify-between gap-2 text-xs"
-              >
-                <span class="flex items-center gap-2 text-zinc-500">
-                  <span class="h-2 w-2 rounded-full" :class="segment.color" />
-                  {{ segment.label }}
-                </span>
-                <span class="font-semibold text-white tabular-nums">{{ segment.value }}</span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <div class="hidden grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div class="ap-fade-in rounded-xl border border-black/[0.06] bg-white/90 p-4 shadow-lg backdrop-blur-sm dark:border-white/[0.08] dark:bg-[#1a1a1a]/60">
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-sky-500 dark:text-sky-400">Open Tasks</p>
-                <p class="mt-1 text-2xl font-bold text-sky-500 dark:text-sky-400 tabular-nums">{{ openCount }}</p>
-              </div>
-              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/10">
-                <UIcon name="i-lucide-list-checks" class="text-lg text-sky-400" />
-              </div>
-            </div>
-          </div>
-
-          <div class="ap-fade-in ap-delay-1 rounded-xl border border-black/[0.06] bg-white/90 p-4 shadow-lg backdrop-blur-sm dark:border-white/[0.08] dark:bg-[#1a1a1a]/60">
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-amber-500 dark:text-amber-400">Pending</p>
-                <p class="mt-1 text-2xl font-bold text-amber-500 dark:text-amber-400 tabular-nums">{{ pendingCount }}</p>
-              </div>
-              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
-                <UIcon name="i-lucide-clock-3" class="text-lg text-amber-400" />
-              </div>
-            </div>
-          </div>
-
-          <div class="ap-fade-in ap-delay-2 rounded-xl border border-black/[0.06] bg-white/90 p-4 shadow-lg backdrop-blur-sm dark:border-white/[0.08] dark:bg-[#1a1a1a]/60">
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-rose-500 dark:text-rose-400">Overdue</p>
-                <p class="mt-1 text-2xl font-bold text-rose-500 dark:text-rose-400 tabular-nums">{{ overdueCount }}</p>
-              </div>
-              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/10">
-                <UIcon name="i-lucide-triangle-alert" class="text-lg text-rose-400" />
-              </div>
-            </div>
-          </div>
-
-          <div class="ap-fade-in ap-delay-3 rounded-xl border border-black/[0.06] bg-white/90 p-4 shadow-lg backdrop-blur-sm dark:border-white/[0.08] dark:bg-[#1a1a1a]/60">
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <p class="text-[10px] font-medium uppercase tracking-wider text-emerald-500 dark:text-emerald-400">Completed</p>
-                <p class="mt-1 text-2xl font-bold text-emerald-500 dark:text-emerald-400 tabular-nums">{{ completedCount }}</p>
-              </div>
-              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10">
-                <UIcon name="i-lucide-check-circle-2" class="text-lg text-emerald-400" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-zinc-950 text-white shadow-xl shadow-black/20">
-          <div class="border-b border-zinc-800 px-4 py-4 lg:px-5">
-            <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div class="min-w-0">
-                <div class="flex flex-wrap items-center gap-2">
-                  <h2 class="text-xl font-semibold text-white">All Agent Tasks</h2>
-                  <UBadge
-                    variant="subtle"
-                    class="rounded-full"
-                    :label="`${filteredGroups.length} tasks`"
-                  />
+        <section class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <div class="relative overflow-hidden rounded-xl border border-white/10 bg-zinc-950 p-5 text-white shadow-xl shadow-black/20">
+            <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgb(var(--ap-accent-rgb,217_70_30)/0.24),transparent_36%)]" />
+            <div class="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+              <div class="min-w-0 space-y-3">
+                <UBadge
+                  variant="outline"
+                  class="w-fit rounded-full border-primary/30 bg-primary/10 px-3 py-1 text-primary"
+                  label="Broker task workspace"
+                />
+                <div>
+                  <h1 class="text-3xl font-semibold tracking-tight text-white lg:text-4xl">
+                    Task Assignment
+                  </h1>
+                  <p class="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
+                    Create broker tasks and forward them to the agents portal while keeping routing details internal.
+                  </p>
                 </div>
-                <p class="mt-1 text-sm text-zinc-500">
-                  Broker-originated work grouped by broadcast assignment.
-                </p>
               </div>
 
               <div class="flex flex-wrap gap-2">
@@ -1424,13 +1289,127 @@ watch(
                 </UButton>
               </div>
             </div>
+          </div>
 
-            <div class="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div class="flex flex-wrap items-center gap-2">
-                <div class="grid h-11 w-full grid-cols-2 rounded-xl border border-zinc-800 bg-zinc-900 p-1 sm:w-[270px]">
+          <div class="rounded-xl border border-white/10 bg-zinc-950 p-5 text-white shadow-xl shadow-black/20">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <p class="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                  Broadcast Health
+                </p>
+                <p class="mt-1 text-3xl font-semibold text-white tabular-nums">
+                  {{ broadcastCompletionRate }}%
+                </p>
+              </div>
+              <div class="text-right text-xs text-zinc-500">
+                <p>{{ completedBroadcastCount }}/{{ totalBroadcastCount }} broadcasts completed</p>
+                <p class="mt-1">
+                  Next due {{ nextDeadline ? formatDate(nextDeadline, { month: 'short', day: 'numeric' }) : '-' }}
+                </p>
+              </div>
+            </div>
+
+            <div class="mt-5 flex h-2 overflow-hidden rounded-full bg-zinc-800">
+              <div
+                v-for="segment in broadcastSegments"
+                :key="segment.label"
+                class="h-full"
+                :class="segment.color"
+                :style="{ width: segmentWidth(segment.value, Math.max(totalBroadcastCount, 1)) }"
+              />
+            </div>
+
+            <div class="mt-4 grid grid-cols-2 gap-2">
+              <div
+                v-for="segment in broadcastSegments"
+                :key="segment.label"
+                class="rounded-lg border border-zinc-800 bg-zinc-900/55 px-3 py-2"
+              >
+                <span class="flex items-center gap-2 text-xs text-zinc-500">
+                  <span class="h-2 w-2 rounded-full" :class="segment.color" />
+                  {{ segment.label }}
+                </span>
+                <p class="mt-1 text-lg font-semibold text-white tabular-nums">
+                  {{ segment.value }}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div class="rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-white shadow-lg shadow-black/10">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <p class="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                  Open Tasks
+                </p>
+                <p class="mt-1 text-2xl font-semibold text-sky-400 tabular-nums">
+                  {{ openCount }}
+                </p>
+              </div>
+              <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-500/10">
+                <UIcon name="i-lucide-list-checks" class="size-5 text-sky-400" />
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-white shadow-lg shadow-black/10">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <p class="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                  Overdue
+                </p>
+                <p class="mt-1 text-2xl font-semibold text-rose-400 tabular-nums">
+                  {{ overdueCount }}
+                </p>
+              </div>
+              <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-rose-500/10">
+                <UIcon name="i-lucide-triangle-alert" class="size-5 text-rose-400" />
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-white shadow-lg shadow-black/10">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <p class="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                  Completed
+                </p>
+                <p class="mt-1 text-2xl font-semibold text-emerald-400 tabular-nums">
+                  {{ completedCount }}
+                </p>
+              </div>
+              <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10">
+                <UIcon name="i-lucide-check-circle-2" class="size-5 text-emerald-400" />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="flex min-h-[620px] flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-zinc-950 text-white shadow-xl shadow-black/20">
+          <div class="border-b border-zinc-800 px-4 py-4 lg:px-5">
+            <div class="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h2 class="text-xl font-semibold text-white">
+                    Agent Task Queue
+                  </h2>
+                  <UBadge
+                    variant="subtle"
+                    class="rounded-full"
+                    :label="`${filteredGroups.length} visible`"
+                  />
+                </div>
+                <p class="mt-1 text-sm text-zinc-500">
+                  Broadcast assignments are grouped so each card shows the task and its current stage.
+                </p>
+              </div>
+
+              <div class="grid h-10 w-full grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-900 p-1 sm:w-[240px]">
                 <button
                   type="button"
-                  class="inline-flex items-center justify-center gap-2 rounded-lg text-sm transition-colors"
+                  class="inline-flex items-center justify-center gap-2 rounded-md text-sm transition-colors"
                   :class="taskViewMode === 'list' ? 'bg-white text-zinc-950' : 'text-zinc-400 hover:text-white'"
                   @click="taskViewMode = 'list'"
                 >
@@ -1439,239 +1418,241 @@ watch(
                 </button>
                 <button
                   type="button"
-                  class="inline-flex items-center justify-center gap-2 rounded-lg text-sm transition-colors"
+                  class="inline-flex items-center justify-center gap-2 rounded-md text-sm transition-colors"
                   :class="taskViewMode === 'kanban' ? 'bg-white text-zinc-950' : 'text-zinc-400 hover:text-white'"
                   @click="taskViewMode = 'kanban'"
                 >
                   <UIcon name="i-lucide-columns-3" class="size-4" />
-                  Kanban
+                  Board
                 </button>
               </div>
+            </div>
 
-                <UPopover :content="{ align: 'start' }">
-                  <UButton
-                    color="neutral"
-                    variant="outline"
-                    class="h-11 border-zinc-800 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
-                    icon="i-lucide-filter"
-                  >
-                    Filters
-                    <template v-if="activeFilterCount > 0" #trailing>
-                      <span class="flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1 text-[10px] font-bold text-zinc-950">
-                        {{ activeFilterCount }}
-                      </span>
-                    </template>
-                  </UButton>
-
-                  <template #content>
-                    <div class="w-[min(92vw,760px)] space-y-4 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-white shadow-2xl">
-                      <div class="grid gap-3 md:grid-cols-3">
-                        <UFormField label="Search" class="md:col-span-3">
-                          <UInput
-                            v-model="searchTerm"
-                            icon="i-lucide-search"
-                            placeholder="Title, case, agent, tag..."
-                          />
-                        </UFormField>
-
-                        <UFormField label="Status">
-                          <USelect
-                            v-model="statusFilter"
-                            :items="TASK_STATUS_OPTIONS"
-                            value-key="value"
-                            label-key="label"
-                          />
-                        </UFormField>
-
-                        <UFormField label="Priority">
-                          <USelect
-                            v-model="priorityFilter"
-                            :items="TASK_PRIORITY_OPTIONS"
-                            value-key="value"
-                            label-key="label"
-                          />
-                        </UFormField>
-
-                        <div class="flex items-end">
-                          <UButton
-                            v-if="hasActiveFilters"
-                            color="neutral"
-                            variant="ghost"
-                            icon="i-lucide-x"
-                            @click="resetFilters"
-                          >
-                            Clear filters
-                          </UButton>
-                        </div>
-                      </div>
-                    </div>
-                  </template>
-                </UPopover>
-              </div>
-
-              <p class="text-sm font-medium text-zinc-500 tabular-nums">
-                {{ filteredGroups.length }} visible tasks
-              </p>
+            <div class="mt-4 grid gap-3 lg:grid-cols-[minmax(240px,1fr)_180px_180px_auto]">
+              <UInput
+                v-model="searchTerm"
+                icon="i-lucide-search"
+                placeholder="Search title, case, tag..."
+                class="min-w-0"
+              />
+              <USelect
+                v-model="statusFilter"
+                :items="TASK_STATUS_OPTIONS"
+                value-key="value"
+                label-key="label"
+              />
+              <USelect
+                v-model="priorityFilter"
+                :items="TASK_PRIORITY_OPTIONS"
+                value-key="value"
+                label-key="label"
+              />
+              <UButton
+                color="neutral"
+                variant="ghost"
+                icon="i-lucide-x"
+                :disabled="!hasActiveFilters"
+                @click="resetFilters"
+              >
+                Clear
+              </UButton>
             </div>
           </div>
 
           <div class="min-h-0 flex-1 overflow-hidden p-4 lg:p-5">
-          <div
-            v-if="loading"
-            class="flex h-full min-h-[360px] items-center justify-center rounded-xl border border-dashed border-zinc-800 text-sm text-zinc-500"
-          >
-            Loading tasks...
-          </div>
+            <div
+              v-if="loading"
+              class="flex h-full min-h-[360px] items-center justify-center rounded-xl border border-dashed border-zinc-800 text-sm text-zinc-500"
+            >
+              Loading tasks...
+            </div>
 
-          <div
-            v-else-if="filteredGroups.length === 0"
-            class="flex h-full min-h-[360px] items-center justify-center rounded-xl border border-dashed border-zinc-800 px-4 text-center text-sm text-zinc-500"
-          >
-            No tasks found.
-          </div>
+            <div
+              v-else-if="filteredGroups.length === 0"
+              class="flex h-full min-h-[360px] flex-col items-center justify-center rounded-xl border border-dashed border-zinc-800 px-4 text-center"
+            >
+              <UIcon name="i-lucide-list-x" class="size-8 text-zinc-600" />
+              <p class="mt-3 text-sm font-semibold text-zinc-300">
+                No tasks match this view.
+              </p>
+              <p class="mt-1 max-w-sm text-sm text-zinc-500">
+                Clear filters or create a new task for the agents portal.
+              </p>
+              <div class="mt-4 flex flex-wrap justify-center gap-2">
+                <UButton
+                  v-if="hasActiveFilters"
+                  color="neutral"
+                  variant="outline"
+                  class="border-zinc-800 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
+                  @click="resetFilters"
+                >
+                  Clear filters
+                </UButton>
+                <UButton
+                  icon="i-lucide-plus"
+                  @click="createOpen = true"
+                >
+                  New Task
+                </UButton>
+              </div>
+            </div>
 
-          <div v-else-if="taskViewMode === 'list'" class="task-scroll h-full overflow-y-auto pr-1">
-            <div class="space-y-3">
-              <button
-                v-for="group in filteredGroups"
-                :key="group.key"
-                type="button"
-                class="group relative w-full overflow-hidden rounded-xl border bg-zinc-900/55 px-4 py-3 text-left transition hover:bg-zinc-900 hover:shadow-md"
-                :class="TASK_PRIORITY_META[group.priority].cardAccent"
-                @click="openDetails(group)"
-              >
-                <div class="grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(170px,0.7fr)_minmax(150px,0.6fr)_minmax(130px,0.55fr)]">
-                  <div class="flex min-w-0 items-start gap-3">
-                    <span class="mt-1 h-10 w-1.5 shrink-0 rounded-full" :class="TASK_PRIORITY_META[group.priority].railClass" />
-                    <div class="min-w-0 flex-1">
-                      <div class="flex flex-wrap items-center gap-2">
+            <div v-else-if="taskViewMode === 'list'" class="task-scroll h-full overflow-y-auto pr-1">
+              <div class="space-y-3">
+                <button
+                  v-for="group in filteredGroups"
+                  :key="group.key"
+                  type="button"
+                  class="group relative w-full overflow-hidden rounded-xl border bg-zinc-900/55 px-4 py-3 text-left transition hover:bg-zinc-900 hover:shadow-md"
+                  :class="TASK_PRIORITY_META[group.priority].cardAccent"
+                  @click="openDetails(group)"
+                >
+                  <div class="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(170px,0.65fr)_minmax(150px,0.55fr)_minmax(130px,0.5fr)]">
+                    <div class="flex min-w-0 items-start gap-3">
+                      <span class="mt-1 h-10 w-1.5 shrink-0 rounded-full" :class="TASK_PRIORITY_META[group.priority].railClass" />
+                      <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-center gap-2">
                           <p class="min-w-0 max-w-full truncate text-base font-semibold text-white">
-                          {{ group.title }}
+                            {{ group.title }}
+                          </p>
+                          <UBadge
+                            variant="outline"
+                            :class="TASK_STATUS_META[group.stage].badgeClass"
+                            :label="statusSummary(group)"
+                          />
+                        </div>
+                        <p v-if="group.description" class="mt-1 line-clamp-2 text-sm leading-5 text-zinc-500">
+                          {{ group.description }}
                         </p>
+                        <div class="mt-2 flex flex-wrap gap-1.5">
+                          <UBadge
+                            v-for="tag in group.tags.slice(0, 3)"
+                            :key="tag"
+                            variant="subtle"
+                            :label="formatTaskTag(tag)"
+                          />
+                          <UBadge
+                            v-if="group.tags.length > 3"
+                            variant="subtle"
+                            :label="`+${group.tags.length - 3}`"
+                          />
+                          <UBadge
+                            v-if="group.leadName || group.leadReference"
+                            variant="outline"
+                            :label="group.leadName || group.leadReference || ''"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="min-w-0 space-y-1">
+                      <p class="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                        Delivery
+                      </p>
+                      <p class="text-sm font-semibold text-white">
+                        Agent portal
+                      </p>
+                      <p class="truncate text-sm text-zinc-500">
+                        {{ statusSummary(group) }}
+                      </p>
+                    </div>
+
+                    <div class="space-y-1">
+                      <p class="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                        Dates
+                      </p>
+                      <p class="text-sm font-medium text-white">
+                        Due {{ formatDate(group.deadlineDate, { month: 'short', day: 'numeric' }) }}
+                      </p>
+                      <p class="text-sm text-zinc-500">
+                        Assigned {{ formatDate(group.assignedDate, { month: 'short', day: 'numeric' }) }}
+                      </p>
+                    </div>
+
+                    <div class="space-y-2">
+                      <p class="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                        Signal
+                      </p>
+                      <p class="text-sm font-semibold" :class="isOverdue(group) ? 'text-rose-400' : 'text-primary'">
+                        {{ deadlineSignal(group) }}
+                      </p>
+                      <UBadge
+                        variant="outline"
+                        :class="TASK_PRIORITY_META[group.priority].badgeClass"
+                        :label="TASK_PRIORITY_META[group.priority].label"
+                      />
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div v-else class="task-scroll h-full overflow-auto pr-1">
+              <div class="grid min-w-[980px] gap-3 lg:grid-cols-4">
+                <div
+                  v-for="status in KANBAN_COLUMNS"
+                  :key="status"
+                  class="flex min-h-[520px] flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/45"
+                >
+                  <div
+                    class="flex items-center justify-between border-b border-zinc-800 bg-gradient-to-r to-transparent px-4 py-3"
+                    :class="TASK_STATUS_META[status].columnClass"
+                  >
+                    <div class="flex items-center gap-2">
+                      <UIcon :name="TASK_STATUS_META[status].icon" class="size-4 text-primary" />
+                      <span class="text-sm font-semibold text-white">{{ TASK_STATUS_META[status].label }}</span>
+                    </div>
+                    <UBadge variant="subtle" :label="`${groupsByStatus.get(status)?.length ?? 0}`" />
+                  </div>
+
+                  <div class="task-scroll min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+                    <button
+                      v-for="group in groupsByStatus.get(status) ?? []"
+                      :key="group.key"
+                      type="button"
+                      class="group w-full rounded-lg border bg-zinc-950/45 p-3 text-left transition hover:bg-zinc-950/75 hover:shadow-md"
+                      :class="TASK_PRIORITY_META[group.priority].cardAccent"
+                      @click="openDetails(group)"
+                    >
+                      <div class="flex items-start gap-2.5">
+                        <span class="mt-1 h-9 w-1.5 shrink-0 rounded-full" :class="TASK_PRIORITY_META[group.priority].railClass" />
+                        <div class="min-w-0 flex-1">
+                          <p class="truncate text-sm font-semibold text-white">{{ group.title }}</p>
+                          <p class="mt-1 text-xs font-medium" :class="isOverdue(group) ? 'text-rose-400' : 'text-primary'">
+                            {{ deadlineSignal(group) }}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div class="mt-3 flex flex-wrap gap-1.5">
                         <UBadge
                           variant="outline"
                           :class="TASK_STATUS_META[group.stage].badgeClass"
                           :label="statusSummary(group)"
                         />
-                      </div>
-                      <p v-if="group.description" class="mt-1 line-clamp-2 text-sm leading-5 text-zinc-500">
-                        {{ group.description }}
-                      </p>
-                      <div class="mt-2 flex flex-wrap gap-1.5">
                         <UBadge
-                          v-for="tag in group.tags.slice(0, 3)"
-                          :key="tag"
-                          variant="subtle"
-                          :label="formatTaskTag(tag)"
-                        />
-                        <UBadge
-                          v-if="group.tags.length > 3"
-                          variant="subtle"
-                          :label="`+${group.tags.length - 3}`"
-                        />
-                        <UBadge
-                          v-if="group.leadName || group.leadReference"
                           variant="outline"
-                          :label="group.leadName || group.leadReference || ''"
+                          :class="TASK_PRIORITY_META[group.priority].badgeClass"
+                          :label="TASK_PRIORITY_META[group.priority].label.replace(' Priority', '')"
                         />
                       </div>
-                    </div>
-                  </div>
 
-                  <div class="min-w-0 space-y-1">
-                    <p class="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Agents</p>
-                    <p class="text-sm font-semibold text-white">{{ group.assignmentCount }} assigned</p>
-                    <p class="truncate text-sm text-zinc-500">{{ assigneePreview(group) || '-' }}</p>
-                  </div>
-
-                  <div class="space-y-1">
-                    <p class="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Dates</p>
-                    <p class="text-sm font-medium text-white">Due {{ formatDate(group.deadlineDate, { month: 'short', day: 'numeric' }) }}</p>
-                    <p class="text-sm text-zinc-500">Assigned {{ formatDate(group.assignedDate, { month: 'short', day: 'numeric' }) }}</p>
-                  </div>
-
-                  <div class="space-y-2">
-                    <p class="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Signal</p>
-                    <p class="text-sm font-semibold" :class="isOverdue(group) ? 'text-rose-400' : 'text-primary'">
-                      {{ deadlineSignal(group) }}
-                    </p>
-                    <UBadge
-                      variant="outline"
-                      :class="TASK_PRIORITY_META[group.priority].badgeClass"
-                      :label="TASK_PRIORITY_META[group.priority].label"
-                    />
-                  </div>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          <div v-else class="task-scroll h-full overflow-auto pr-1">
-            <div class="grid min-w-[980px] gap-3 lg:grid-cols-4">
-              <div
-                v-for="status in KANBAN_COLUMNS"
-                :key="status"
-                class="flex min-h-[520px] flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/45"
-              >
-                <div
-                  class="flex items-center justify-between border-b border-zinc-800 bg-gradient-to-r to-transparent px-4 py-3"
-                  :class="TASK_STATUS_META[status].columnClass"
-                >
-                  <div class="flex items-center gap-2">
-                    <UIcon :name="TASK_STATUS_META[status].icon" class="size-4 text-primary" />
-                    <span class="text-sm font-semibold text-white">{{ TASK_STATUS_META[status].label }}</span>
-                  </div>
-                  <UBadge variant="subtle" :label="`${groupsByStatus.get(status)?.length ?? 0}`" />
-                </div>
-
-                <div class="task-scroll min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-                  <button
-                    v-for="group in groupsByStatus.get(status) ?? []"
-                    :key="group.key"
-                    type="button"
-                    class="group w-full rounded-lg border bg-zinc-950/45 p-3 text-left transition hover:bg-zinc-950/75 hover:shadow-md"
-                    :class="TASK_PRIORITY_META[group.priority].cardAccent"
-                    @click="openDetails(group)"
-                  >
-                    <div class="flex items-start gap-2.5">
-                      <span class="mt-1 h-9 w-1.5 shrink-0 rounded-full" :class="TASK_PRIORITY_META[group.priority].railClass" />
-                      <div class="min-w-0 flex-1">
-                        <p class="truncate text-sm font-semibold text-white">{{ group.title }}</p>
-                        <p class="mt-1 text-xs font-medium" :class="isOverdue(group) ? 'text-rose-400' : 'text-primary'">
-                          {{ deadlineSignal(group) }}
-                        </p>
+                      <div class="mt-3 flex items-center justify-between gap-2 text-xs text-zinc-500">
+                        <span class="truncate">{{ group.leadName || group.leadReference || 'No case' }}</span>
+                        <span class="shrink-0">{{ statusSummary(group) }}</span>
                       </div>
-                    </div>
+                    </button>
 
-                    <div class="mt-3 flex flex-wrap gap-1.5">
-                      <UBadge
-                        variant="outline"
-                        :class="TASK_STATUS_META[group.stage].badgeClass"
-                        :label="statusSummary(group)"
-                      />
-                      <UBadge
-                        variant="outline"
-                        :class="TASK_PRIORITY_META[group.priority].badgeClass"
-                        :label="TASK_PRIORITY_META[group.priority].label.replace(' Priority', '')"
-                      />
+                    <div
+                      v-if="(groupsByStatus.get(status)?.length ?? 0) === 0"
+                      class="rounded-lg border border-dashed border-zinc-800 px-3 py-8 text-center text-sm text-zinc-500"
+                    >
+                      No tasks.
                     </div>
-
-                    <div class="mt-3 flex items-center justify-between gap-2 text-xs text-zinc-500">
-                      <span class="truncate">{{ group.leadName || group.leadReference || 'No case' }}</span>
-                      <span class="shrink-0">{{ group.assignmentCount }} agents</span>
-                    </div>
-                  </button>
-
-                  <div
-                    v-if="(groupsByStatus.get(status)?.length ?? 0) === 0"
-                    class="rounded-lg border border-dashed border-zinc-800 px-3 py-8 text-center text-sm text-zinc-500"
-                  >
-                    No tasks.
                   </div>
                 </div>
               </div>
             </div>
-          </div>
           </div>
         </section>
       </div>
